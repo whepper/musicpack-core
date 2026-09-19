@@ -1,0 +1,74 @@
+[package]
+name = "musicpack-core-fuzz"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# cargo-fuzz target crate. It is deliberately NOT part of the repository
+# workspace (`exclude = ["fuzz"]` in the root manifest) and is never built
+# by `cargo test`/CI: libFuzzer linking requires a nightly toolchain.
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+musicpack-core = { path = ".." }
+musicpack-engine = { path = "../crates/musicpack-engine" }
+
+[[bin]]
+name = "json_manifest"
+path = "fuzz_targets/json_manifest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mpak_scan"
+path = "fuzz_targets/mpak_scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "audio_decode"
+path = "fuzz_targets/audio_decode.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "analysis_feed"
+path = "fuzz_targets/analysis_feed.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "player_state"
+path = "fuzz_targets/player_state.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "engine_adapter"
+path = "fuzz_targets/engine_adapter.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "policy"
+path = "fuzz_targets/policy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "musepack"
+path = "fuzz_targets/musepack.rs"
+test = false
+doc = false
+bench = false

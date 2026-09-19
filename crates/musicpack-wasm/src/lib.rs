@@ -1,0 +1,1514 @@
+//! `musicpack-wasm`: a thin `wasm-bindgen` binding foundation.
+//!
+//! This crate is deliberately **not** the browser player application, the Web
+//! Audio engine, an HTTP layer, persistence, or UI. It exposes the smallest
+//! API that lets JavaScript drive the deterministic Rust decoder and player
+//! core over byte-backed sources:
+//!
+//! - `decode_open / decode_info / decode_read / decode_seek / decode_close`
+//!   over the engine's [`musicpack_engine::DecodeSession`];
+//! - `WasmPlayer`, a handle over `musicpack_core`'s `Player` plus a
+//!   [`musicpack_engine::DecoderEngine`], with `add_source`, `load`,
+//!   `command`, `render`, model/snapshot access.
+//!
+//! Everything real (async range fetching, OPFS, `AudioContext`, Media
+//! Session, persistence scheduling) stays in JavaScript. The binding works
+//! from complete byte buffers only.
+//!
+//! The plain-Rust logic lives in [`core_impl`] and is unit-tested natively;
+//! the `#[wasm_bindgen]` surface is a thin conversion layer.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+use musicpack_core::audio;
+use musicpack_core::json::{self, Value};
+use musicpack_core::player::engine::{CrossfadeStart, Engine, EngineCapabilities, EngineResult};
+use musicpack_core::player::events::PlayerEvent;
+use musicpack_core::player::player::{Player, PlayerOptions, PlayerPorts, PlayerState};
+use musicpack_core::player::queue::QueueModel;
+use musicpack_core::player::types::{
+    EngineKind, NormalizationMode, PlaybackItem, PlaybackSource, RepeatMode, SourceKind, StreamInfo,
+};
+use musicpack_core::policy::{
+    AudioPreference, Candidate, Playability, RepresentationRef, SourceRef, TrackAudio,
+    resolve_audio,
+};
+use musicpack_engine::{
+    DecodeSession, DecoderEngine, DecoderEngineConfig, MemorySourceBackend, SourceBackend,
+    SourceError,
+};
+
+/// Plain-Rust logic behind the bindings (natively testable).
+pub mod core_impl {
+    use super::*;
+
+    /// A slab of open decode sessions.
+    #[derive(Default)]
+    pub struct Decodes {
+        slots: Vec<Option<Box<DecodeSession>>>,
+    }
+
+    impl Decodes {
+        /// Opens a session over complete fixture bytes.
+        pub fn open(
+            &mut self,
+            bytes: &[u8],
+            output_rate: u32,
+            output_channels: u32,
+        ) -> Result<u32, String> {
+            let decoder = audio::open(Box::new(std::io::Cursor::new(bytes.to_vec())))
+                .map_err(|e| e.to_string())?;
+            let session = DecodeSession::new(
+                decoder,
+                output_rate,
+                output_channels as usize,
+                (output_rate as usize) * 8,
+            )
+            .map_err(|e| e.0)?;
+            let handle = self
+                .slots
+                .iter()
+                .position(|s| s.is_none())
+                .unwrap_or(self.slots.len());
+            if handle == self.slots.len() {
+                self.slots.push(Some(Box::new(session)));
+            } else {
+                self.slots[handle] = Some(Box::new(session));
+            }
+            Ok(handle as u32)
+        }
+
+        /// Stream facts as a JSON object.
+        pub fn info(&self, handle: u32) -> Result<String, String> {
+            let session = self.get(handle)?;
+            let info = session.info();
+            Ok(json::print_canonical(&Value::Object(vec![
+                ("rate".into(), Value::Number(info.rate as f64)),
+                ("channels".into(), Value::Number(info.channels as f64)),
+                (
+                    "lengthSamples".into(),
+                    Value::Number(info.length_samples as f64),
+                ),
+                (
+                    "sourceRate".into(),
+                    Value::Number(session.source_rate() as f64),
+                ),
+                (
+                    "sourceChannels".into(),
+                    Value::Number(session.source_channels() as f64),
+                ),
+            ])))
+        }
+
+        /// Decodes and returns up to `frames` interleaved frames.
+        pub fn read(&mut self, handle: u32, frames: u32) -> Result<Vec<f32>, String> {
+            let session = self.get_mut(handle)?;
+            let channels = session.output_channels();
+            let wanted = frames as usize;
+            // Pump to fill, then drain one contiguous span.
+            let mut guard = 0usize;
+            while (session.ring().available_frames() as usize) < wanted
+                && !session.exhausted()
+                && guard < 4096
+            {
+                let free = session.ring().free_frames() as usize;
+                if free == 0 {
+                    break;
+                }
+                let before = session.ring().available_frames();
+                session.pump(free).map_err(|e| e.0)?;
+                if session.ring().available_frames() == before && !session.has_pending() {
+                    break;
+                }
+                guard += 1;
+            }
+            let available = session.ring().available_frames() as usize;
+            let take = wanted.min(available);
+            let mut out = vec![0.0f32; wanted * channels];
+            session
+                .ring_mut()
+                .read_interleaved(&mut out[..take * channels], take);
+            out.truncate(take * channels);
+            Ok(out)
+        }
+
+        /// Repositions by reopening and skipping `frame` output frames.
+        pub fn seek(&mut self, handle: u32, frame: u64) -> Result<(), String> {
+            let session = self.get_mut(handle)?;
+            let mut remaining = frame;
+            let channels = session.output_channels();
+            let mut scratch = vec![0.0f32; 4096 * channels];
+            let mut guard = 0usize;
+            while remaining > 0 && guard < 1_000_000 {
+                let free = session.ring().free_frames() as usize;
+                if free == 0 {
+                    break;
+                }
+                let before = session.ring().available_frames();
+                session.pump(free).map_err(|e| e.0)?;
+                if session.exhausted() && session.ring().available_frames() == 0 {
+                    break;
+                }
+                let available = session.ring().available_frames() as usize;
+                if available > 0 {
+                    let take = remaining.min(available as u64).min(4096) as usize;
+                    session
+                        .ring_mut()
+                        .read_interleaved(&mut scratch[..take * channels], take);
+                    remaining -= take as u64;
+                } else if session.ring().available_frames() == before {
+                    break;
+                }
+                guard += 1;
+            }
+            session.rebase_playhead();
+            Ok(())
+        }
+
+        /// Closes a session.
+        pub fn close(&mut self, handle: u32) {
+            if let Some(slot) = self.slots.get_mut(handle as usize) {
+                *slot = None;
+            }
+        }
+
+        fn get(&self, handle: u32) -> Result<&DecodeSession, String> {
+            self.slots
+                .get(handle as usize)
+                .and_then(|s| s.as_deref())
+                .ok_or_else(|| "invalid decode handle".to_string())
+        }
+        fn get_mut(&mut self, handle: u32) -> Result<&mut DecodeSession, String> {
+            self.slots
+                .get_mut(handle as usize)
+                .and_then(|s| s.as_deref_mut())
+                .ok_or_else(|| "invalid decode handle".to_string())
+        }
+    }
+
+    /// Shared host-side engine wrapper (single-threaded wasm).
+    #[derive(Clone)]
+    pub struct SharedEngine(pub Rc<RefCell<DecoderEngine>>);
+
+    impl Engine for SharedEngine {
+        fn capabilities(&self) -> EngineCapabilities {
+            self.0.borrow().capabilities()
+        }
+        fn open(&mut self, item: &PlaybackItem) -> EngineResult<StreamInfo> {
+            self.0.borrow_mut().open(item)
+        }
+        fn play(&mut self) -> EngineResult<()> {
+            self.0.borrow_mut().play()
+        }
+        fn pause(&mut self) {
+            self.0.borrow_mut().pause();
+        }
+        fn seek(&mut self, samples: u64) {
+            self.0.borrow_mut().seek(samples);
+        }
+        fn set_gain(&mut self, linear: f64) {
+            self.0.borrow_mut().set_gain(linear);
+        }
+        fn rendered_samples(&self) -> u64 {
+            self.0.borrow().rendered_samples()
+        }
+        fn close(&mut self) {
+            self.0.borrow_mut().close();
+        }
+        fn prepare_next(&mut self, item: &PlaybackItem) -> Option<StreamInfo> {
+            self.0.borrow_mut().prepare_next(item)
+        }
+        fn advance(&mut self, expected: Option<&PlaybackItem>) -> Option<StreamInfo> {
+            self.0.borrow_mut().advance(expected)
+        }
+        fn begin_crossfade(&mut self, next: &PlaybackItem, fade_seconds: f64) -> CrossfadeStart {
+            self.0.borrow_mut().begin_crossfade(next, fade_seconds)
+        }
+        fn is_output_drained(&self) -> bool {
+            self.0.borrow().is_output_drained()
+        }
+        fn start_pumping(&mut self) {
+            self.0.borrow_mut().start_pumping();
+        }
+        fn pause_pumping(&mut self) {
+            self.0.borrow_mut().pause_pumping();
+        }
+    }
+
+    #[derive(Clone)]
+    struct SharedBackend(Rc<RefCell<MemorySourceBackend>>);
+
+    impl SourceBackend for SharedBackend {
+        fn open_source(
+            &self,
+            source: &PlaybackSource,
+        ) -> Result<Box<dyn std::io::Read>, SourceError> {
+            self.0.borrow().open_source(source)
+        }
+    }
+
+    /// A player handle over the Rust core.
+    pub struct PlayerCore {
+        player: Player,
+        engine: Rc<RefCell<DecoderEngine>>,
+        backend: Rc<RefCell<MemorySourceBackend>>,
+        channels: usize,
+    }
+
+    impl PlayerCore {
+        /// Creates a player with an empty byte-source registry.
+        pub fn new(output_rate: u32, output_channels: u32) -> Self {
+            let backend = Rc::new(RefCell::new(MemorySourceBackend::new()));
+            let engine = Rc::new(RefCell::new(DecoderEngine::new(
+                Box::new(musicpack_engine::SniffingDecoderFactory::new(
+                    SharedBackend(backend.clone()),
+                )),
+                DecoderEngineConfig {
+                    output_rate,
+                    output_channels,
+                    ..Default::default()
+                },
+            )));
+            let engine_for_factory = engine.clone();
+            let ports = PlayerPorts {
+                engine_factory: Box::new(move |_kind: EngineKind| {
+                    Box::new(SharedEngine(engine_for_factory.clone())) as Box<dyn Engine>
+                }),
+                resolve_kind: Box::new(|_item: &PlaybackItem| Ok(EngineKind::Musepack)),
+                plan_transition: None,
+            };
+            let player = Player::new(
+                QueueModel::new(Box::new(|| 0.5)),
+                ports,
+                PlayerOptions::default(),
+            );
+            Self {
+                player,
+                engine,
+                backend,
+                channels: output_channels as usize,
+            }
+        }
+
+        /// Registers the complete bytes of a source URL.
+        pub fn add_source(&mut self, url: &str, bytes: &[u8]) {
+            self.backend.borrow_mut().insert(url, bytes.to_vec());
+        }
+
+        /// Loads a JSON array of items and starts playback.
+        pub fn load(&mut self, items_json: &str) -> Result<String, String> {
+            let items = parse_items(items_json)?;
+            let mut events = self.player.play_sequence(items, 0);
+            events.extend(self.player.on_primed());
+            Ok(state_json(&self.player, &events))
+        }
+
+        /// Executes a command and returns `{model, events}` JSON.
+        pub fn command(&mut self, cmd_json: &str) -> Result<String, String> {
+            let cmd: Value = json::parse(cmd_json.as_bytes()).map_err(|e| e.to_string())?;
+            let op = match cmd.get("op") {
+                Some(Value::String(s)) => s.as_str(),
+                _ => return Err("command needs an 'op' string".into()),
+            };
+            let number = |k: &str| match cmd.get(k) {
+                Some(Value::Number(n)) => Some(*n),
+                _ => None,
+            };
+            let events = match op {
+                "play" => self.player.toggle_play(),
+                "pause" => self.player.pause(),
+                "resume" => self.player.resume(),
+                "next" => self.player.next(),
+                "previous" => self.player.previous(),
+                "stop" => self.player.stop(),
+                "teardown" => self.player.teardown(),
+                "seek" => self.player.seek(number("seconds").unwrap_or(0.0)),
+                "set_volume" => self.player.set_volume(number("volume").unwrap_or(0.8)),
+                "set_crossfade" => self.player.set_crossfade(number("seconds").unwrap_or(0.0)),
+                "set_repeat" => {
+                    let mode = match cmd.get("mode") {
+                        Some(Value::String(s)) => RepeatMode::parse(s),
+                        _ => RepeatMode::Off,
+                    };
+                    self.player.set_repeat(mode)
+                }
+                "set_shuffle" => {
+                    let on = matches!(cmd.get("on"), Some(Value::Bool(true)));
+                    self.player.set_shuffle(on)
+                }
+                "set_normalize" => {
+                    let mode = match cmd.get("mode") {
+                        Some(Value::String(s)) => NormalizationMode::parse(s),
+                        _ => NormalizationMode::Album,
+                    };
+                    self.player.set_normalize_mode(mode)
+                }
+                other => return Err(format!("unknown command '{other}'")),
+            };
+            Ok(state_json(&self.player, &events))
+        }
+
+        /// Renders `frames` output frames, feeding engine facts back to the player.
+        pub fn render(&mut self, frames: u32) -> Vec<f32> {
+            let mut buf = vec![0.0f32; frames as usize * self.channels];
+            self.engine.borrow_mut().consume(frames as usize, &mut buf);
+            self.sync();
+            buf
+        }
+
+        fn sync(&mut self) {
+            let result = { self.engine.borrow_mut().take_crossfade_result() };
+            if let Some(result) = result {
+                self.player.on_crossfade_complete(Some(result));
+            }
+            let error = { self.engine.borrow_mut().take_error() };
+            if let Some(err) = error {
+                self.player.on_engine_error(&err.0);
+            }
+            let drained = { self.engine.borrow().is_output_drained() };
+            if drained {
+                self.player.on_eos();
+            }
+            self.player.on_tick();
+        }
+
+        /// The player model as JSON.
+        pub fn info(&self) -> String {
+            json::print_canonical(&model_value(&self.player))
+        }
+
+        /// Takes a session snapshot (or `None`).
+        pub fn snapshot(&self) -> Option<String> {
+            self.player
+                .take_snapshot()
+                .map(|s| musicpack_core::player::snapshot::encode_snapshot(&s))
+        }
+
+        /// Restores a session snapshot.
+        pub fn restore(&mut self, snapshot: &str) -> Result<String, String> {
+            let decoded = musicpack_core::player::snapshot::decode_snapshot(snapshot)
+                .ok_or_else(|| "invalid snapshot".to_string())?;
+            let events = self.player.restore(&decoded);
+            Ok(state_json(&self.player, &events))
+        }
+    }
+
+    fn parse_items(items_json: &str) -> Result<Vec<PlaybackItem>, String> {
+        let value: Value = json::parse(items_json.as_bytes()).map_err(|e| e.to_string())?;
+        let Value::Array(items) = value else {
+            return Err("items must be a JSON array".into());
+        };
+        let mut out = Vec::with_capacity(items.len());
+        for item in &items {
+            out.push(item_from_value(item)?);
+        }
+        Ok(out)
+    }
+
+    fn item_from_value(v: &Value) -> Result<PlaybackItem, String> {
+        let id = match v.get("id") {
+            Some(Value::String(s)) => s.clone(),
+            _ => return Err("item needs a string id".into()),
+        };
+        let track_id = match v.get("trackId") {
+            Some(Value::Number(n)) => *n as i64,
+            _ => return Err("item needs a numeric trackId".into()),
+        };
+        let url = match v.get("url") {
+            Some(Value::String(s)) => s.clone(),
+            _ => return Err("item needs a string url".into()),
+        };
+        let duration = match v.get("durationHintSeconds") {
+            Some(Value::Number(n)) => Some(*n),
+            _ => None,
+        };
+        let string = |k: &str| match v.get(k) {
+            Some(Value::String(s)) => Some(s.clone()),
+            _ => None,
+        };
+        let kind = string("kind")
+            .map(|k| SourceKind::parse(&k))
+            .unwrap_or_else(|| SourceKind::Other("memory".into()));
+        Ok(PlaybackItem {
+            id,
+            track_id,
+            source: PlaybackSource {
+                kind,
+                url,
+                byte_size: None,
+            },
+            duration_hint_seconds: duration,
+            title: string("title").unwrap_or_default(),
+            artist: string("artist").unwrap_or_default(),
+            album_title: string("albumTitle").unwrap_or_default(),
+            edition: None,
+            artwork_url: None,
+            loudness: None,
+            album_loudness: None,
+            codec: string("codec"),
+            mime_type: None,
+            extra: Vec::new(),
+        })
+    }
+
+    fn state_str(state: PlayerState) -> &'static str {
+        match state {
+            PlayerState::Idle => "idle",
+            PlayerState::Loading => "loading",
+            PlayerState::Buffering => "buffering",
+            PlayerState::Playing => "playing",
+            PlayerState::Paused => "paused",
+            PlayerState::Ended => "ended",
+            PlayerState::Error => "error",
+            _ => "unknown",
+        }
+    }
+
+    fn model_value(player: &Player) -> Value {
+        let m = player.model();
+        Value::Object(vec![
+            ("state".into(), Value::String(state_str(m.state).into())),
+            ("positionSeconds".into(), Value::Number(m.position_seconds)),
+            ("durationSeconds".into(), Value::Number(m.duration_seconds)),
+            (
+                "currentTrackStartSeconds".into(),
+                Value::Number(m.current_track_start_seconds),
+            ),
+            (
+                "currentTrackDurationSeconds".into(),
+                Value::Number(m.current_track_duration_seconds),
+            ),
+            ("volume".into(), Value::Number(m.volume)),
+            ("normDb".into(), Value::Number(m.norm_db)),
+            ("repeat".into(), Value::String(m.repeat.as_str().into())),
+            ("shuffle".into(), Value::Bool(m.shuffle)),
+            (
+                "crossfadeSeconds".into(),
+                Value::Number(m.crossfade_seconds),
+            ),
+            (
+                "current".into(),
+                match &m.current {
+                    Some(item) => Value::String(item.id.clone()),
+                    None => Value::Null,
+                },
+            ),
+        ])
+    }
+
+    fn event_value(event: &PlayerEvent) -> Value {
+        match event {
+            PlayerEvent::State { state } => Value::Object(vec![
+                ("t".into(), Value::String("state".into())),
+                ("state".into(), Value::String(state_str(*state).into())),
+            ]),
+            PlayerEvent::Track { item } => Value::Object(vec![
+                ("t".into(), Value::String("track".into())),
+                (
+                    "item".into(),
+                    match item {
+                        Some(i) => Value::String(i.id.clone()),
+                        None => Value::Null,
+                    },
+                ),
+            ]),
+            PlayerEvent::Position {
+                position_seconds,
+                track_start_seconds,
+                track_duration_seconds,
+            } => Value::Object(vec![
+                ("t".into(), Value::String("position".into())),
+                ("positionSeconds".into(), Value::Number(*position_seconds)),
+                (
+                    "trackStartSeconds".into(),
+                    Value::Number(*track_start_seconds),
+                ),
+                (
+                    "trackDurationSeconds".into(),
+                    Value::Number(*track_duration_seconds),
+                ),
+            ]),
+            PlayerEvent::Policy { repeat, shuffle } => Value::Object(vec![
+                ("t".into(), Value::String("policy".into())),
+                ("repeat".into(), Value::String(repeat.as_str().into())),
+                ("shuffle".into(), Value::Bool(*shuffle)),
+            ]),
+            PlayerEvent::Crossfade { seconds } => Value::Object(vec![
+                ("t".into(), Value::String("crossfade".into())),
+                ("seconds".into(), Value::Number(*seconds)),
+            ]),
+            PlayerEvent::Gain { norm_db } => Value::Object(vec![
+                ("t".into(), Value::String("gain".into())),
+                ("normDb".into(), Value::Number(*norm_db)),
+            ]),
+            PlayerEvent::Error { message } => Value::Object(vec![
+                ("t".into(), Value::String("error".into())),
+                ("message".into(), Value::String(message.clone())),
+            ]),
+            PlayerEvent::BoundaryDrift {
+                expected_index,
+                observed_index,
+                position_samples,
+            } => Value::Object(vec![
+                ("t".into(), Value::String("boundary-drift".into())),
+                (
+                    "expectedIndex".into(),
+                    Value::Number(*expected_index as f64),
+                ),
+                (
+                    "observedIndex".into(),
+                    Value::Number(*observed_index as f64),
+                ),
+                (
+                    "positionSamples".into(),
+                    Value::Number(*position_samples as f64),
+                ),
+            ]),
+            _ => Value::Null,
+        }
+    }
+
+    fn state_json(player: &Player, events: &[PlayerEvent]) -> String {
+        let events: Vec<Value> = events.iter().map(event_value).collect();
+        json::print_canonical(&Value::Object(vec![
+            ("model".into(), model_value(player)),
+            ("events".into(), Value::Array(events)),
+        ]))
+    }
+
+    fn string_at(v: &Value, key: &str) -> Option<String> {
+        match v.get(key) {
+            Some(Value::String(s)) => Some(s.clone()),
+            _ => None,
+        }
+    }
+
+    fn number_at(v: &Value, key: &str) -> Option<f64> {
+        match v.get(key) {
+            Some(Value::Number(n)) => Some(*n),
+            _ => None,
+        }
+    }
+
+    fn track_audio_from_value(v: &Value) -> Result<TrackAudio, String> {
+        let representations = match v.get("representations") {
+            Some(Value::Array(items)) => items
+                .iter()
+                .map(|r| {
+                    let id = number_at(r, "id").ok_or("representation needs a numeric id")?;
+                    Ok(RepresentationRef {
+                        id,
+                        codec: string_at(r, "codec"),
+                        mime_type: string_at(r, "mimeType"),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?,
+            _ => Vec::new(),
+        };
+        Ok(TrackAudio {
+            codec: string_at(v, "codec"),
+            mime_type: string_at(v, "mimeType"),
+            representations,
+        })
+    }
+
+    /// The binding's compact playability predicate (JSON), so a JS host can
+    /// describe what it can play without a per-candidate callback.
+    struct PredicateSpec {
+        codecs: Option<Vec<String>>,
+        reject_mimes: Vec<String>,
+        reject_ids: Vec<f64>,
+    }
+
+    impl PredicateSpec {
+        fn from_value(v: &Value) -> Self {
+            let strings = |key: &str| -> Option<Vec<String>> {
+                match v.get(key) {
+                    Some(Value::Array(items)) => Some(
+                        items
+                            .iter()
+                            .filter_map(|i| match i {
+                                Value::String(s) => Some(s.clone()),
+                                _ => None,
+                            })
+                            .collect(),
+                    ),
+                    _ => None,
+                }
+            };
+            let numbers = |key: &str| -> Vec<f64> {
+                match v.get(key) {
+                    Some(Value::Array(items)) => items
+                        .iter()
+                        .filter_map(|i| match i {
+                            Value::Number(n) => Some(*n),
+                            _ => None,
+                        })
+                        .collect(),
+                    _ => Vec::new(),
+                }
+            };
+            Self {
+                codecs: strings("codecs").map(|c| c.iter().map(|s| s.to_lowercase()).collect()),
+                reject_mimes: strings("rejectMimes")
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|s| s.to_lowercase())
+                    .collect(),
+                reject_ids: numbers("rejectIds"),
+            }
+        }
+    }
+
+    impl Playability for PredicateSpec {
+        fn can_play(&self, candidate: &Candidate<'_>) -> bool {
+            if let SourceRef::Representation { id } = candidate.source {
+                if self.reject_ids.contains(&id) {
+                    return false;
+                }
+            }
+            let mime = candidate.mime_type.unwrap_or("").to_lowercase();
+            if self.reject_mimes.contains(&mime) {
+                return false;
+            }
+            match &self.codecs {
+                Some(codecs) => {
+                    let codec = candidate.codec.unwrap_or("").to_lowercase();
+                    codecs.contains(&codec)
+                }
+                None => true,
+            }
+        }
+    }
+
+    /// Resolves a track's representation under a preference (browser host).
+    ///
+    /// `track_json` is `{codec?, mimeType?, representations:[{id, codec?, mimeType?}]}`;
+    /// `pref_json` is the persisted `musicpack.audio-preference.v1` value (or
+    /// absent/`null`); `predicate_json` is `{codecs?, rejectMimes?, rejectIds?}`.
+    /// Returns `{"representationId": number|null}`.
+    pub fn representation_select(
+        track_json: &str,
+        pref_json: Option<&str>,
+        predicate_json: &str,
+    ) -> Result<String, String> {
+        let track_value: Value = json::parse(track_json.as_bytes()).map_err(|e| e.to_string())?;
+        let track = track_audio_from_value(&track_value)?;
+        let pref = match pref_json {
+            Some(text) if !text.trim().is_empty() && text.trim() != "null" => {
+                let value: Value = json::parse(text.as_bytes()).map_err(|e| e.to_string())?;
+                AudioPreference::from_value(&value)
+            }
+            _ => None,
+        };
+        let predicate_value: Value =
+            json::parse(predicate_json.as_bytes()).map_err(|e| e.to_string())?;
+        let spec = PredicateSpec::from_value(&predicate_value);
+        let selected = resolve_audio(&track, pref.as_ref(), &spec);
+        let id = match selected.representation_id(&track) {
+            Some(id) => Value::Number(id),
+            None => Value::Null,
+        };
+        Ok(json::print_canonical(&Value::Object(vec![(
+            "representationId".into(),
+            id,
+        )])))
+    }
+
+    fn stream_info_value(info: &StreamInfo) -> Value {
+        Value::Object(vec![
+            ("rate".into(), Value::Number(info.rate as f64)),
+            ("channels".into(), Value::Number(info.channels as f64)),
+            ("version".into(), Value::Number(info.version as f64)),
+            (
+                "lengthSamples".into(),
+                Value::Number(info.length_samples as f64),
+            ),
+        ])
+    }
+
+    /// A synchronous range fetch (the host's source). Offset/length in bytes;
+    /// returns the bytes available at that offset (`Ok(empty)` at EOF,
+    /// `Err` on a source failure). Implemented natively for tests and over a
+    /// JS callback inside the decoder worker for the browser.
+    pub trait RangeFetch {
+        /// Fetches up to `len` bytes at `offset` for `url`.
+        fn fetch(&self, url: &str, offset: u64, len: usize) -> Result<Vec<u8>, String>;
+    }
+
+    struct RangeRead {
+        fetch: Rc<dyn RangeFetch>,
+        url: String,
+        pos: u64,
+    }
+
+    impl std::io::Read for RangeRead {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if buf.is_empty() {
+                return Ok(0);
+            }
+            let want = buf.len().min(64 * 1024);
+            let bytes = self
+                .fetch
+                .fetch(&self.url, self.pos, want)
+                .map_err(std::io::Error::other)?;
+            let n = bytes.len().min(buf.len());
+            buf[..n].copy_from_slice(&bytes[..n]);
+            self.pos += n as u64;
+            Ok(n)
+        }
+    }
+
+    /// A `SourceBackend` over a synchronous [`RangeFetch`].
+    pub struct RangeBackend {
+        fetch: Rc<dyn RangeFetch>,
+    }
+
+    impl RangeBackend {
+        /// Wraps a synchronous range fetch.
+        pub fn new(fetch: Rc<dyn RangeFetch>) -> Self {
+            Self { fetch }
+        }
+    }
+
+    impl SourceBackend for RangeBackend {
+        fn open_source(
+            &self,
+            source: &musicpack_core::player::types::PlaybackSource,
+        ) -> Result<Box<dyn std::io::Read>, SourceError> {
+            Ok(Box::new(RangeRead {
+                fetch: self.fetch.clone(),
+                url: source.url.clone(),
+                pos: 0,
+            }))
+        }
+    }
+
+    /// Browser control-plane seam over [`DecoderEngine`].
+    ///
+    /// Exposes the engine operations the TypeScript `Engine`/`PreloadEngine`/
+    /// `CrossfadeEngine`/`DecodeGate` contracts need, over byte-backed sources.
+    /// It is **not** a second `Player`: the TS `player-core` remains the
+    /// orchestrator. No browser API enters Rust.
+    pub struct EngineCore {
+        engine: DecoderEngine,
+        backend: Rc<RefCell<MemorySourceBackend>>,
+        sync_result: Option<String>,
+    }
+
+    impl EngineCore {
+        /// Creates an engine at the given output format.
+        pub fn new(output_rate: u32, output_channels: u32) -> Self {
+            let backend = Rc::new(RefCell::new(MemorySourceBackend::new()));
+            let factory =
+                musicpack_engine::SniffingDecoderFactory::new(SharedBackend(backend.clone()));
+            let engine = DecoderEngine::new(
+                Box::new(factory),
+                DecoderEngineConfig {
+                    output_rate,
+                    output_channels,
+                    ..Default::default()
+                },
+            );
+            Self {
+                engine,
+                backend,
+                sync_result: None,
+            }
+        }
+
+        /// Creates an engine over a synchronous range source (browser host).
+        ///
+        /// The fetch callback must be synchronous and, in the browser, must
+        /// only be invoked from the decoder worker (where `Atomics.wait` is
+        /// legal). No browser API enters Rust.
+        pub fn new_range(
+            output_rate: u32,
+            output_channels: u32,
+            fetch: Rc<dyn RangeFetch>,
+        ) -> Self {
+            let engine = DecoderEngine::new(
+                Box::new(musicpack_engine::SniffingDecoderFactory::new(
+                    RangeBackend::new(fetch),
+                )),
+                DecoderEngineConfig {
+                    output_rate,
+                    output_channels,
+                    ..Default::default()
+                },
+            );
+            Self {
+                engine,
+                backend: Rc::new(RefCell::new(MemorySourceBackend::new())),
+                sync_result: None,
+            }
+        }
+
+        /// Registers the complete bytes of a source URL (the host's job).
+        pub fn add_source(&mut self, url: &str, bytes: &[u8]) {
+            self.backend.borrow_mut().insert(url, bytes.to_vec());
+        }
+
+        /// Opens an item (JSON) and returns its `StreamInfo` JSON.
+        pub fn open(&mut self, item_json: &str) -> Result<String, String> {
+            let value: Value = json::parse(item_json.as_bytes()).map_err(|e| e.to_string())?;
+            let item = item_from_value(&value)?;
+            let info = self.engine.open(&item).map_err(|e| e.0)?;
+            Ok(json::print_canonical(&stream_info_value(&info)))
+        }
+
+        /// Enables the decode pump (`DecodeGate::start`).
+        pub fn start(&mut self) {
+            self.engine.start_pumping();
+        }
+
+        /// Disables the decode pump (`DecodeGate::stop`).
+        pub fn stop(&mut self) {
+            self.engine.pause_pumping();
+        }
+
+        /// Starts playback.
+        pub fn play(&mut self) {
+            let _ = self.engine.play();
+        }
+
+        /// Pauses output.
+        pub fn pause(&mut self) {
+            self.engine.pause();
+        }
+
+        /// Seeks within the open track (output-rate frames).
+        pub fn seek(&mut self, samples: f64) {
+            if samples.is_finite() && samples > 0.0 {
+                self.engine.seek(samples as u64);
+            } else {
+                self.engine.seek(0);
+            }
+        }
+
+        /// Applies the combined linear gain.
+        pub fn set_gain(&mut self, linear: f64) {
+            self.engine.set_gain(linear);
+        }
+
+        /// Output-rate frames rendered since the last open/seek reset.
+        pub fn rendered_samples(&self) -> f64 {
+            self.engine.rendered_samples() as f64
+        }
+
+        /// Preloads the next item; returns its `StreamInfo` JSON or `None`.
+        pub fn prepare_next(&mut self, item_json: &str) -> Option<String> {
+            let value = json::parse(item_json.as_bytes()).ok()?;
+            let item = item_from_value(&value).ok()?;
+            self.engine
+                .prepare_next(&item)
+                .map(|info| json::print_canonical(&stream_info_value(&info)))
+        }
+
+        /// Promotes the standby when it matches `expected`.
+        pub fn advance(&mut self, expected_json: Option<&str>) -> Option<String> {
+            let expected = match expected_json {
+                Some(text) => {
+                    let value = json::parse(text.as_bytes()).ok()?;
+                    Some(item_from_value(&value).ok()?)
+                }
+                None => None,
+            };
+            self.engine
+                .advance(expected.as_ref())
+                .map(|info| json::print_canonical(&stream_info_value(&info)))
+        }
+
+        /// Begins a crossfade; returns `declined` | `pending` | `completed`.
+        pub fn begin_crossfade(&mut self, next_json: &str, fade_seconds: f64) -> String {
+            let Ok(value) = json::parse(next_json.as_bytes()) else {
+                return "declined".into();
+            };
+            let Ok(item) = item_from_value(&value) else {
+                return "declined".into();
+            };
+            match self.engine.begin_crossfade(&item, fade_seconds) {
+                CrossfadeStart::Declined => "declined".into(),
+                CrossfadeStart::Pending => "pending".into(),
+                CrossfadeStart::Completed(result) => {
+                    self.sync_result =
+                        Some(json::print_canonical(&crossfade_result_value(&result)));
+                    "completed".into()
+                }
+                _ => "declined".into(),
+            }
+        }
+
+        /// Whether the audible output is fully drained.
+        pub fn is_output_drained(&self) -> bool {
+            self.engine.is_output_drained()
+        }
+
+        /// Whether the decode pump is backpressured (output buffered).
+        pub fn backpressured(&self) -> bool {
+            self.engine.backpressured()
+        }
+
+        /// Renders `frames` interleaved output frames.
+        pub fn render(&mut self, frames: u32) -> Vec<f32> {
+            let mut buffer = vec![0.0f32; frames as usize * self.engine.output_channels() as usize];
+            self.engine.consume(frames as usize, &mut buffer);
+            buffer
+        }
+
+        /// Takes the completed crossfade result as JSON, if any.
+        pub fn take_crossfade_result(&mut self) -> Option<String> {
+            if let Some(result) = self.sync_result.take() {
+                return Some(result);
+            }
+            self.engine
+                .take_crossfade_result()
+                .map(|r| json::print_canonical(&crossfade_result_value(&r)))
+        }
+
+        /// Takes the last engine error, if any.
+        pub fn take_error(&mut self) -> Option<String> {
+            self.engine.take_error().map(|e| e.0)
+        }
+
+        /// Releases the engine and any decoders.
+        pub fn close(&mut self) {
+            self.engine.close();
+            self.sync_result = None;
+        }
+    }
+
+    fn crossfade_result_value(result: &musicpack_core::player::engine::CrossfadeResult) -> Value {
+        Value::Object(vec![
+            ("info".into(), stream_info_value(&result.info)),
+            (
+                "overlapFrames".into(),
+                Value::Number(result.overlap_frames as f64),
+            ),
+        ])
+    }
+}
+
+// ---- wasm-bindgen surface (thin conversions only) -------------------------
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use super::core_impl::{Decodes, EngineCore, PlayerCore};
+    use js_sys::Float32Array;
+    use wasm_bindgen::JsValue;
+    use wasm_bindgen::prelude::*;
+
+    fn err(message: String) -> JsValue {
+        JsValue::from_str(&message)
+    }
+
+    thread_local! {
+        static DECODES: std::cell::RefCell<Decodes> = std::cell::RefCell::new(Decodes::default());
+    }
+
+    /// Opens a decode session over complete bytes; returns a handle.
+    #[wasm_bindgen]
+    pub fn decode_open(
+        bytes: &[u8],
+        output_rate: u32,
+        output_channels: u32,
+    ) -> Result<u32, JsValue> {
+        DECODES.with(|d| {
+            d.borrow_mut()
+                .open(bytes, output_rate, output_channels)
+                .map_err(err)
+        })
+    }
+
+    /// Stream facts as a JSON string.
+    #[wasm_bindgen]
+    pub fn decode_info(handle: u32) -> Result<String, JsValue> {
+        DECODES.with(|d| d.borrow().info(handle).map_err(err))
+    }
+
+    /// Reads up to `frames` interleaved frames as a `Float32Array`.
+    ///
+    /// The frames are copied once from WASM memory into a JS-owned typed
+    /// array; no zero-copy claim is made.
+    #[wasm_bindgen]
+    pub fn decode_read(handle: u32, frames: u32) -> Result<Float32Array, JsValue> {
+        DECODES.with(|d| {
+            d.borrow_mut()
+                .read(handle, frames)
+                .map(|samples| Float32Array::from(&samples[..]))
+                .map_err(err)
+        })
+    }
+
+    /// Seeks within the open track (output-rate frames, as a JS number).
+    #[wasm_bindgen]
+    pub fn decode_seek(handle: u32, frame: f64) -> Result<(), JsValue> {
+        DECODES.with(|d| {
+            d.borrow_mut()
+                .seek(handle, frame.max(0.0) as u64)
+                .map_err(err)
+        })
+    }
+
+    /// Closes a decode session.
+    #[wasm_bindgen]
+    pub fn decode_close(handle: u32) {
+        DECODES.with(|d| d.borrow_mut().close(handle));
+    }
+
+    /// Resolves a track's representation under a preference (browser host).
+    ///
+    /// See `core_impl::representation_select` for the JSON shapes. Returns
+    /// `{"representationId": number|null}`.
+    #[wasm_bindgen]
+    pub fn representation_select(
+        track_json: &str,
+        pref_json: Option<String>,
+        predicate_json: &str,
+    ) -> Result<String, JsValue> {
+        super::core_impl::representation_select(track_json, pref_json.as_deref(), predicate_json)
+            .map_err(err)
+    }
+
+    /// A synchronous range fetch backed by a JS callback.
+    struct JsRangeFetch(js_sys::Function);
+
+    impl super::core_impl::RangeFetch for JsRangeFetch {
+        fn fetch(&self, url: &str, offset: u64, len: usize) -> Result<Vec<u8>, String> {
+            let result = self.0.call3(
+                &JsValue::NULL,
+                &JsValue::from_str(url),
+                &JsValue::from_f64(offset as f64),
+                &JsValue::from_f64(len as f64),
+            );
+            match result {
+                Ok(value) => {
+                    if value.is_null() || value.is_undefined() {
+                        Ok(Vec::new())
+                    } else {
+                        let array = js_sys::Uint8Array::new(&value);
+                        let mut out = vec![0u8; array.length() as usize];
+                        array.copy_to(&mut out);
+                        Ok(out)
+                    }
+                }
+                Err(e) => Err(format!("range source error: {e:?}")),
+            }
+        }
+    }
+
+    /// A browser engine control-plane handle (not a second Player).
+    #[wasm_bindgen]
+    pub struct WasmEngine {
+        core: EngineCore,
+    }
+
+    #[wasm_bindgen]
+    impl WasmEngine {
+        /// Creates an engine at the given output format.
+        #[wasm_bindgen(constructor)]
+        pub fn new(output_rate: u32, output_channels: u32) -> WasmEngine {
+            WasmEngine {
+                core: EngineCore::new(output_rate, output_channels),
+            }
+        }
+
+        /// Creates an engine over a synchronous range callback.
+        ///
+        /// `read(url, offset, len) -> Uint8Array` must be synchronous and, in
+        /// the browser, invoked only from the decoder worker.
+        #[wasm_bindgen(js_name = newRangeSource)]
+        pub fn new_range_source(
+            output_rate: u32,
+            output_channels: u32,
+            read: js_sys::Function,
+        ) -> WasmEngine {
+            WasmEngine {
+                core: EngineCore::new_range(
+                    output_rate,
+                    output_channels,
+                    std::rc::Rc::new(JsRangeFetch(read)),
+                ),
+            }
+        }
+
+        /// Registers the complete bytes of a source URL.
+        pub fn add_source(&mut self, url: &str, bytes: &[u8]) {
+            self.core.add_source(url, bytes);
+        }
+
+        /// Opens an item (JSON); returns `StreamInfo` JSON.
+        pub fn open(&mut self, item_json: &str) -> Result<String, JsValue> {
+            self.core.open(item_json).map_err(err)
+        }
+
+        /// Enables the decode pump (`DecodeGate::start`).
+        pub fn start(&mut self) {
+            self.core.start();
+        }
+
+        /// Disables the decode pump (`DecodeGate::stop`).
+        pub fn stop(&mut self) {
+            self.core.stop();
+        }
+
+        /// Starts playback.
+        pub fn play(&mut self) {
+            self.core.play();
+        }
+
+        /// Pauses output.
+        pub fn pause(&mut self) {
+            self.core.pause();
+        }
+
+        /// Seeks within the open track (output-rate frames).
+        pub fn seek(&mut self, samples: f64) {
+            self.core.seek(samples);
+        }
+
+        /// Applies the combined linear gain.
+        pub fn set_gain(&mut self, linear: f64) {
+            self.core.set_gain(linear);
+        }
+
+        /// Output-rate frames rendered since the last open/seek reset.
+        pub fn rendered_samples(&self) -> f64 {
+            self.core.rendered_samples()
+        }
+
+        /// Preloads the next item; returns `StreamInfo` JSON or `undefined`.
+        pub fn prepare_next(&mut self, item_json: &str) -> Option<String> {
+            self.core.prepare_next(item_json)
+        }
+
+        /// Promotes the standby when it matches `expected`.
+        pub fn advance(&mut self, expected_json: Option<String>) -> Option<String> {
+            self.core.advance(expected_json.as_deref())
+        }
+
+        /// Begins a crossfade; returns `declined` | `pending` | `completed`.
+        pub fn begin_crossfade(&mut self, next_json: &str, fade_seconds: f64) -> String {
+            self.core.begin_crossfade(next_json, fade_seconds)
+        }
+
+        /// Whether the audible output is fully drained.
+        pub fn is_output_drained(&self) -> bool {
+            self.core.is_output_drained()
+        }
+
+        /// Whether the decode pump is backpressured (output buffered).
+        pub fn backpressured(&self) -> bool {
+            self.core.backpressured()
+        }
+
+        /// Renders `frames` interleaved output frames as a `Float32Array`.
+        pub fn render(&mut self, frames: u32) -> Float32Array {
+            let samples = self.core.render(frames);
+            Float32Array::from(&samples[..])
+        }
+
+        /// Takes the completed crossfade result as JSON, if any.
+        pub fn take_crossfade_result(&mut self) -> Option<String> {
+            self.core.take_crossfade_result()
+        }
+
+        /// Takes the last engine error, if any.
+        pub fn take_error(&mut self) -> Option<String> {
+            self.core.take_error()
+        }
+
+        /// Releases the engine and any decoders.
+        pub fn close(&mut self) {
+            self.core.close();
+        }
+    }
+
+    /// A player handle.
+    #[wasm_bindgen]
+    pub struct WasmPlayer {
+        core: PlayerCore,
+    }
+
+    #[wasm_bindgen]
+    impl WasmPlayer {
+        /// Creates a player at the given output format.
+        #[wasm_bindgen(constructor)]
+        pub fn new(output_rate: u32, output_channels: u32) -> WasmPlayer {
+            WasmPlayer {
+                core: PlayerCore::new(output_rate, output_channels),
+            }
+        }
+
+        /// Registers the complete bytes of a source URL.
+        pub fn add_source(&mut self, url: &str, bytes: &[u8]) {
+            self.core.add_source(url, bytes);
+        }
+
+        /// Loads a JSON item array (see the crate docs) and starts playback.
+        pub fn load(&mut self, items_json: &str) -> Result<String, JsValue> {
+            self.core.load(items_json).map_err(err)
+        }
+
+        /// Executes a command; returns `{model, events}` JSON.
+        pub fn command(&mut self, cmd_json: &str) -> Result<String, JsValue> {
+            self.core.command(cmd_json).map_err(err)
+        }
+
+        /// Renders `frames` output frames as a `Float32Array`.
+        pub fn render(&mut self, frames: u32) -> Float32Array {
+            let samples = self.core.render(frames);
+            Float32Array::from(&samples[..])
+        }
+
+        /// The player model as JSON.
+        pub fn info(&self) -> String {
+            self.core.info()
+        }
+
+        /// Takes a snapshot, or `undefined`/`null` when there is nothing.
+        pub fn snapshot(&self) -> Option<String> {
+            self.core.snapshot()
+        }
+
+        /// Restores a snapshot; returns `{model, events}` JSON.
+        pub fn restore(&mut self, snapshot: &str) -> Result<String, JsValue> {
+            self.core.restore(snapshot).map_err(err)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::core_impl::{Decodes, EngineCore, PlayerCore, RangeFetch, representation_select};
+
+    struct VecFetch {
+        data: Vec<u8>,
+        calls: std::cell::RefCell<Vec<(u64, usize)>>,
+    }
+
+    impl RangeFetch for VecFetch {
+        fn fetch(&self, _url: &str, offset: u64, len: usize) -> Result<Vec<u8>, String> {
+            self.calls.borrow_mut().push((offset, len));
+            let start = (offset as usize).min(self.data.len());
+            let end = (start + len).min(self.data.len());
+            Ok(self.data[start..end].to_vec())
+        }
+    }
+
+    fn oracle_pcm_sha(file: &str) -> Option<String> {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/data/musepack_oracle.jsonl"
+        );
+        let text = std::fs::read_to_string(path).ok()?;
+        for line in text.lines() {
+            let v = musicpack_core::json::parse(line.as_bytes()).ok()?;
+            let name = match v.get("file") {
+                Some(musicpack_core::json::Value::String(s)) => s.clone(),
+                _ => continue,
+            };
+            if name == file {
+                if let Some(musicpack_core::json::Value::String(sha)) = v.get("pcmSha256") {
+                    return Some(sha.clone());
+                }
+            }
+        }
+        None
+    }
+
+    #[test]
+    fn range_source_decodes_and_open_does_not_read_the_whole_member() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/musepack/sine44-q5.mpc"
+        );
+        let Ok(bytes) = std::fs::read(path) else {
+            return; // fixture corpus unavailable; covered by core tests
+        };
+        let size = bytes.len();
+        let fetch = std::rc::Rc::new(VecFetch {
+            data: bytes,
+            calls: std::cell::RefCell::new(Vec::new()),
+        });
+        let mut core = EngineCore::new_range(44_100, 2, fetch.clone());
+        let item = r#"{"id":"t","trackId":1,"url":"/f.mpc","codec":"musepack-sv8"}"#;
+        let info = core.open(item).expect("open");
+        assert!(info.contains("44100"), "{info}");
+
+        // Open reads only the header region, never the whole member.
+        let max_end = fetch
+            .calls
+            .borrow()
+            .iter()
+            .map(|(o, l)| o + *l as u64)
+            .max()
+            .unwrap_or(0);
+        assert!(max_end < size as u64, "open read to {max_end} of {size}");
+
+        core.start();
+        core.play();
+        let mut pcm: Vec<f32> = Vec::new();
+        for _ in 0..400 {
+            let block = core.render(1152);
+            pcm.extend_from_slice(&block);
+            if core.rendered_samples() >= 44_100.0 {
+                break;
+            }
+        }
+        assert!(pcm.iter().any(|s| s.abs() > 0.01), "decoded audio audible");
+        pcm.truncate(44_100 * 2);
+
+        if let Some(want) = oracle_pcm_sha("sine44-q5.mpc") {
+            let mut le = Vec::with_capacity(pcm.len() * 4);
+            for sample in &pcm {
+                le.extend_from_slice(&sample.to_le_bytes());
+            }
+            assert_eq!(
+                musicpack_core::format::checksum::sha256_hex(&le),
+                want,
+                "range-source PCM differs from the reference oracle"
+            );
+        }
+        core.close();
+    }
+
+    #[test]
+    fn engine_core_decodes_and_reports_rendered_samples() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/musepack/sine44-q5.mpc"
+        );
+        let Ok(bytes) = std::fs::read(path) else {
+            return; // fixture corpus unavailable; covered by core tests
+        };
+        let mut core = EngineCore::new(44_100, 2);
+        core.add_source("/f.mpc", &bytes);
+        let item = r#"{"id":"t","trackId":1,"url":"/f.mpc","durationHintSeconds":1.0,"codec":"musepack-sv8"}"#;
+        let info = core.open(item).expect("open");
+        assert!(info.contains("44100"), "{info}");
+        core.start();
+        core.play();
+        let mut audible = false;
+        for _ in 0..400 {
+            let pcm = core.render(1152);
+            if pcm.iter().any(|s| s.abs() > 0.001) {
+                audible = true;
+            }
+            if core.is_output_drained() {
+                break;
+            }
+        }
+        assert!(audible, "decoded PCM is audible");
+        assert!(core.rendered_samples() > 0.0);
+        core.close();
+    }
+
+    fn selected(result: &str) -> Option<f64> {
+        let value = musicpack_core::json::parse(result.as_bytes()).unwrap();
+        match value.get("representationId") {
+            Some(musicpack_core::json::Value::Number(n)) => Some(*n),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn representation_select_matches_the_policy_contract() {
+        let track = r#"{"codec":"musepack-sv8","mimeType":"audio/musepack","representations":[{"id":10,"codec":"flac","mimeType":"audio/flac"},{"id":11,"codec":"wav","mimeType":"audio/wav"}]}"#;
+        // Default + accept-all -> primary.
+        assert_eq!(
+            selected(&representation_select(track, None, "{}").unwrap()),
+            None
+        );
+        // Codec preference.
+        assert_eq!(
+            selected(
+                &representation_select(track, Some(r#"{"mode":"codec","codec":"flac"}"#), "{}")
+                    .unwrap()
+            ),
+            Some(10.0)
+        );
+        // Explicit id.
+        assert_eq!(
+            selected(
+                &representation_select(track, Some(r#"{"mode":"representation","id":11}"#), "{}")
+                    .unwrap()
+            ),
+            Some(11.0)
+        );
+        // Malformed preference -> primary.
+        assert_eq!(
+            selected(&representation_select(track, Some(r#"{"mode":"shiny"}"#), "{}").unwrap()),
+            None
+        );
+        // Unplayable primary -> rescue (no codecs accepted -> none).
+        assert_eq!(
+            selected(&representation_select(track, None, r#"{"codecs":["flac"]}"#).unwrap()),
+            Some(10.0)
+        );
+    }
+
+    fn wav(frames: usize) -> Vec<u8> {
+        let channels = 2u16;
+        let block = channels * 2;
+        let data = (frames * channels as usize * 2) as u32;
+        let mut out = Vec::new();
+        out.extend_from_slice(b"RIFF");
+        out.extend_from_slice(&(36 + data).to_le_bytes());
+        out.extend_from_slice(b"WAVE");
+        out.extend_from_slice(b"fmt ");
+        out.extend_from_slice(&16u32.to_le_bytes());
+        out.extend_from_slice(&1u16.to_le_bytes());
+        out.extend_from_slice(&channels.to_le_bytes());
+        out.extend_from_slice(&44_100u32.to_le_bytes());
+        out.extend_from_slice(&(44_100 * block as u32).to_le_bytes());
+        out.extend_from_slice(&block.to_le_bytes());
+        out.extend_from_slice(&16u16.to_le_bytes());
+        out.extend_from_slice(b"data");
+        out.extend_from_slice(&data.to_le_bytes());
+        for i in 0..frames {
+            let v = ((i as f32 * 0.02).sin() * 0.5 * 32767.0) as i16;
+            out.extend_from_slice(&v.to_le_bytes());
+            out.extend_from_slice(&v.to_le_bytes());
+        }
+        out
+    }
+
+    #[test]
+    fn decode_handle_round_trip() {
+        let bytes = wav(44_100);
+        let mut decodes = Decodes::default();
+        let h = decodes.open(&bytes, 44_100, 2).unwrap();
+        let info = decodes.info(h).unwrap();
+        assert!(info.contains("44100"), "info: {info}");
+        let samples = decodes.read(h, 4410).unwrap();
+        assert_eq!(samples.len(), 4410 * 2);
+        assert!(samples.iter().any(|s| s.abs() > 0.01));
+        decodes.seek(h, 22_050).unwrap();
+        let after = decodes.read(h, 441).unwrap();
+        assert_eq!(after.len(), 441 * 2);
+        decodes.close(h);
+        assert!(decodes.read(h, 10).is_err());
+    }
+
+    #[test]
+    fn player_handle_play_render_snapshot_restore() {
+        let bytes = wav(44_100);
+        let mut core = PlayerCore::new(44_100, 2);
+        core.add_source("/a.wav", &bytes);
+        let items =
+            r#"[{"id":"t1","trackId":1,"url":"/a.wav","durationHintSeconds":1.0,"codec":"wav"}]"#;
+        let state = core.load(items).unwrap();
+        assert!(
+            state.contains("buffering") || state.contains("playing"),
+            "state: {state}"
+        );
+        let out = core.render(4410);
+        assert_eq!(out.len(), 4410 * 2);
+        assert!(core.info().contains("state"));
+        let snapshot = core.snapshot().unwrap();
+        let restored = core.restore(&snapshot).unwrap();
+        assert!(restored.contains("model"), "restored: {restored}");
+    }
+}

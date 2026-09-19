@@ -1,0 +1,46 @@
+{
+  "format": "musicpack",
+  "version": 1,
+  "album": {
+    "title": "Reference Container",
+    "artists": [
+      {
+        "name": "Tester"
+      }
+    ],
+    "releaseType": "ep"
+  },
+  "media": [
+    {
+      "disc": 1,
+      "format": "Digital",
+      "tracks": [
+        {
+          "track": 1,
+          "title": "One",
+          "audio": {
+            "path": "audio/01.bin",
+            "sha256": "4316a7c22e294efa862dc3c26ab8705ad9c3c1d68d1f8def399ddb709f049bdd"
+          }
+        }
+      ]
+    }
+  ],
+  "artwork": [
+    {
+      "role": "front",
+      "path": "artwork/front.bin",
+      "sha256": "4be2f94051e6f771a9968d00994c867cb99537088a09389ae582ecd1bff8df47"
+    }
+  ],
+  "extras": [
+    {
+      "path": "extras/notes.txt",
+      "sha256": "444e0fffbd825e9610ff5b199485707a0c895339ae80c15cc8a8aee41b106fda"
+    }
+  ],
+  "provenance": {
+    "tool": "reference",
+    "toolVersion": "1"
+  }
+}

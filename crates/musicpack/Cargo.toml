@@ -1,0 +1,21 @@
+[package]
+name = "musicpack"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Thin command-line front end for the MusicPack .mpack/MPAK formats, built on musicpack-core"
+license = "BSD-3-Clause"
+repository = "https://github.com/whepper/musicpack-core"
+readme = "README.md"
+keywords = ["musicpack", "mpack", "mpak", "cli"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "musicpack"
+path = "src/main.rs"
+
+[dependencies]
+# The CLI is deliberately a thin consumer: all format, verification and
+# container semantics live in the core.  No argument-parsing or other
+# dependencies are needed for this initial command surface.
+musicpack-core = { path = "../.." }

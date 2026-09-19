@@ -1,0 +1,180 @@
+{
+ "format": "musicpack",
+ "version": 1,
+ "album": {
+  "title": "Thrasher Like (fixture)",
+  "artists": [
+   {
+    "name": "Fixture Artist",
+    "role": "main"
+   }
+  ],
+  "releaseType": "album",
+  "originalReleaseDate": "2026-08-26",
+  "genres": [
+   "Test"
+  ]
+ },
+ "release": {
+  "releaseDate": "2026-08-26",
+  "country": "XW",
+  "label": "MusicPack Fixtures"
+ },
+ "media": [
+  {
+   "disc": 1,
+   "tracks": [
+    {
+     "track": 1,
+     "title": "First Light",
+     "artists": [
+      {
+       "name": "Fixture Artist",
+       "role": "main"
+      }
+     ],
+     "duration": 3.0,
+     "audio": {
+      "path": "audio/01 - First Light.mpc",
+      "sha256": "d1362204cd776a4676bc27a9ef6f8a1210024a6cfbc9d2e2ab173ca74f811c52"
+     }
+    },
+    {
+     "track": 2,
+     "title": "Second Wind",
+     "artists": [
+      {
+       "name": "Fixture Artist",
+       "role": "main"
+      }
+     ],
+     "duration": 3.1,
+     "audio": {
+      "path": "audio/02 - Second Wind.mpc",
+      "sha256": "cbba36c6afb88cc64b56e861252fc76ef571012e835bc626a9999619a3e4c66a"
+     }
+    },
+    {
+     "track": 3,
+     "title": "Third Degree",
+     "artists": [
+      {
+       "name": "Fixture Artist",
+       "role": "main"
+      }
+     ],
+     "duration": 3.2,
+     "audio": {
+      "path": "audio/03 - Third Degree.mpc",
+      "sha256": "9a1f5393b0f8f7a1954fa7a3bf715d6f4fe58213fc5e267dd248adb09aa9878a"
+     }
+    },
+    {
+     "track": 4,
+     "title": "Fourth Wall",
+     "artists": [
+      {
+       "name": "Fixture Artist",
+       "role": "main"
+      }
+     ],
+     "duration": 3.3,
+     "audio": {
+      "path": "audio/04 - Fourth Wall.mpc",
+      "sha256": "39cfbdb017dbe5c15310c49805d2db1f1329420487e925f1b11f87c6dd9eeb2d"
+     }
+    },
+    {
+     "track": 5,
+     "title": "Fifth Avenue",
+     "artists": [
+      {
+       "name": "Fixture Artist",
+       "role": "main"
+      }
+     ],
+     "duration": 3.4,
+     "audio": {
+      "path": "audio/05 - Fifth Avenue.mpc",
+      "sha256": "915291a62e3f142dc0dee275f090fa919ca7cc845d7d238ee76374839294f10d"
+     }
+    },
+    {
+     "track": 6,
+     "title": "Sixth Sense",
+     "artists": [
+      {
+       "name": "Fixture Artist",
+       "role": "main"
+      }
+     ],
+     "duration": 3.5,
+     "audio": {
+      "path": "audio/06 - Sixth Sense.mpc",
+      "sha256": "bb303135608bbb1e16a504431ba023f9c89759b75b33cb92095c0a1690b1d67a"
+     }
+    },
+    {
+     "track": 7,
+     "title": "Seventh Seal",
+     "artists": [
+      {
+       "name": "Fixture Artist",
+       "role": "main"
+      }
+     ],
+     "duration": 3.6,
+     "audio": {
+      "path": "audio/07 - Seventh Seal.mpc",
+      "sha256": "3acb02209841fb3481e8a388a5f2905aacf1d98658e4745b357c4935c90bd42e"
+     }
+    },
+    {
+     "track": 8,
+     "title": "Eighth Note",
+     "artists": [
+      {
+       "name": "Fixture Artist",
+       "role": "main"
+      }
+     ],
+     "duration": 3.7,
+     "audio": {
+      "path": "audio/08 - Eighth Note.mpc",
+      "sha256": "19a01fbb9bfeea370d9ba5e703f8149ec1664b0d944c5359fce877c6a5f6d0fc"
+     }
+    },
+    {
+     "track": 9,
+     "title": "Ninth Cloud",
+     "artists": [
+      {
+       "name": "Fixture Artist",
+       "role": "main"
+      }
+     ],
+     "duration": 3.8,
+     "audio": {
+      "path": "audio/09 - Ninth Cloud.mpc",
+      "sha256": "212a73fc147db65426f4ce7f4da230a0123613e6a4f712d5a6876fa226289144"
+     }
+    },
+    {
+     "track": 10,
+     "title": "Tenth Frame",
+     "artists": [
+      {
+       "name": "Fixture Artist",
+       "role": "main"
+      }
+     ],
+     "duration": 3.9,
+     "audio": {
+      "path": "audio/10 - Tenth Frame.mpc",
+      "sha256": "4e5c1ef3c0d8e6316b5950aa6188150b0cc20649e5b530abf787626e8c84c2e5"
+     }
+    }
+   ]
+  }
+ ]
+}

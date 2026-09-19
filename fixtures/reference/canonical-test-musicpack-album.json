@@ -1,0 +1,154 @@
+{
+  "format": "musicpack",
+  "version": 1,
+  "album": {
+    "title": "Synthetic Test Compilation",
+    "artists": [
+      {
+        "name": "Alphaville"
+      },
+      {
+        "name": "Bleachers"
+      }
+    ],
+    "releaseType": "compilation",
+    "originalReleaseDate": "1984-06-01"
+  },
+  "release": {
+    "releaseDate": "2016-09-23",
+    "edition": "2016 Digital Remaster",
+    "country": "XE",
+    "label": "Example Records",
+    "catalogueNumber": "ERCD 001"
+  },
+  "media": [
+    {
+      "disc": 1,
+      "format": "Digital",
+      "tracks": [
+        {
+          "track": 1,
+          "title": "Alphaville - Big in Japan",
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.1915088,
+            "truePeakDbTP": -4.1897838
+          },
+          "audio": {
+            "path": "audio/01 - Alphaville - Big in Japan.mpc",
+            "sha256": "96fc6a680e8c6b9279df4765e96e9fea53c5787c33cce4d0f47d986f8be612cf"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-01.wfm",
+            "sha256": "6b0717ecd2f1dc1ede6358a2e12f5395f0dad458ed47dcbe58c55362c5908479",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 10
+          }
+        },
+        {
+          "track": 2,
+          "title": "Bleachers - The Van",
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.1860582,
+            "truePeakDbTP": -4.230453
+          },
+          "audio": {
+            "path": "audio/02 - Bleachers - The Van.mpc",
+            "sha256": "a851e3aaca96c713a6951eec527c75726694d9c811a270761a5574b30a9dd79c"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-02.wfm",
+            "sha256": "82b9a9729bd18ce54f827fa7dffca78ce1cf686ebc8faa21aff6386324020f60",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 10
+          }
+        },
+        {
+          "track": 3,
+          "title": "Synthwave - Night Drive",
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.3781085,
+            "truePeakDbTP": -4.2659945
+          },
+          "audio": {
+            "path": "audio/03 - Synthwave - Night Drive.mpc",
+            "sha256": "7f2a66e8d1758dedef339260054ee35db98951176678b0fa82cec26085b1e747"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-03.wfm",
+            "sha256": "f8656d3ed196f5a38b7bba3a8a00576a06145f0c9cfbb11b6e55adc7c7e6f645",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 10
+          }
+        },
+        {
+          "track": 4,
+          "title": "Test Artist - Fourth Track",
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.3654852,
+            "truePeakDbTP": -4.2588095
+          },
+          "audio": {
+            "path": "audio/04 - Test Artist - Fourth Track.mpc",
+            "sha256": "e99002a619704d137611bf928f4d328a5d3cf5cb0e0bba62a343f6281e79bd29"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-04.wfm",
+            "sha256": "221c65abb961c5a4f3eebedc52b4802a5ff0de592f8e03c75f938b8f70d7b0f7",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 10
+          }
+        }
+      ]
+    }
+  ],
+  "artwork": [
+    {
+      "role": "front",
+      "path": "artwork/front.jpg",
+      "sha256": "53351839f90e50ddff3e3fef04175f1af0150536fa90ae45d5863171fb3d22ca"
+    }
+  ],
+  "booklet": [
+    {
+      "path": "booklet/booklet.pdf",
+      "sha256": "e67f5bbc0a2af0340621fe52d44c557ebe70920346e0319cfba82b13a6d568e0"
+    }
+  ],
+  "lyrics": [
+    {
+      "path": "lyrics/01 - Big in Japan.lrc",
+      "sha256": "77842ef83aa748cbcc39874317e1fd80765ec6be0857718c4c1d8c3cb66ca3b2"
+    },
+    {
+      "path": "lyrics/02 - The Van.lrc",
+      "sha256": "86168c1a4b2594abca6f221086d10ef07bf356ee5a7c03a301884d610ef62e02"
+    }
+  ],
+  "extras": [
+    {
+      "path": "extras/notes.txt",
+      "sha256": "67e7a48bca29ab66eb141759661593b9a30f090c4b1e942365bedb1dd13380d3"
+    }
+  ],
+  "loudness": {
+    "algorithm": "ITU-R BS.1770-5",
+    "albumLUFS": -7.2792484,
+    "albumTruePeakDbTP": -4.1897838
+  }
+}

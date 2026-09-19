@@ -1,0 +1,16 @@
+[package]
+name = "musicpack-engine"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Deterministic, platform-neutral decode/ring/resample/mix adapter implementing the musicpack-core player Engine seam"
+license = "BSD-3-Clause"
+repository = "https://github.com/whepper/musicpack-core"
+
+[dependencies]
+# The adapter depends on the core, never the reverse.  No dependencies beyond
+# the standard library: ring buffering, linear resampling and equal-power
+# mixing are hand-portable, dependency-free DSP with a TypeScript reference.
+musicpack-core = { path = "../.." }
+
+[dev-dependencies]

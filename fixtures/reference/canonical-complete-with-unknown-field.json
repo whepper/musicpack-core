@@ -1,0 +1,151 @@
+{
+  "format": "musicpack",
+  "version": 1,
+  "album": {
+    "title": "Complete",
+    "artists": [
+      {
+        "name": "Alpha",
+        "role": "main"
+      },
+      {
+        "name": "Beta"
+      }
+    ],
+    "releaseType": "compilation",
+    "originalReleaseDate": "2001-02-03",
+    "genres": [
+      "Rock",
+      "Pop"
+    ]
+  },
+  "media": [
+    {
+      "disc": 1,
+      "format": "Digital",
+      "title": "Main",
+      "tracks": [
+        {
+          "track": 1,
+          "title": "One",
+          "artists": [
+            {
+              "name": "Alpha"
+            }
+          ],
+          "identifiers": {
+            "isrc": "ISRC",
+            "musicbrainzTrackId": "track",
+            "musicbrainzRecordingId": "recording"
+          },
+          "source": {
+            "store": "Store",
+            "trackId": "one"
+          },
+          "sourceAudio": {
+            "codec": "flac",
+            "md5": "abc"
+          },
+          "duration": 1.5,
+          "loudness": {
+            "trackLUFS": -12.0,
+            "truePeakDbTP": -1.0
+          },
+          "audio": {
+            "path": "audio/01.bin",
+            "sha256": "7692c3ad3540bb803c020b3aee66cd8887123234ea0c6e7143c0add73ff431ed",
+            "codec": "test"
+          }
+        },
+        {
+          "track": 2,
+          "title": "Two",
+          "audio": {
+            "path": "audio/02.bin",
+            "sha256": "3fc4ccfe745870e2c0d99f71f30ff0656c8dedd41cc1d7d3d376b0dbe685e2f3"
+          }
+        }
+      ]
+    },
+    {
+      "disc": 2,
+      "format": "CD",
+      "tracks": [
+        {
+          "track": 1,
+          "title": "Three",
+          "audio": {
+            "path": "audio/03.bin",
+            "sha256": "8b5b9db0c13db24256c829aa364aa90c6d2eba318b9232a4ab9313b954d3555f"
+          }
+        }
+      ]
+    }
+  ],
+  "release": {
+    "releaseDate": "2020-01-02",
+    "edition": "Deluxe",
+    "country": "GB",
+    "label": "Label",
+    "catalogueNumber": "CAT-1",
+    "notes": "Notes"
+  },
+  "identifiers": {
+    "musicbrainzReleaseGroupId": "group",
+    "musicbrainzReleaseId": "release",
+    "barcode": "123"
+  },
+  "identity": {
+    "source": "local",
+    "confidence": "none"
+  },
+  "source": {
+    "type": "digital-download",
+    "store": "Store",
+    "sourceId": "album-id"
+  },
+  "artwork": [
+    {
+      "role": "front",
+      "path": "artwork/front.bin",
+      "sha256": "2d8d693177ac44895fc02c009ec3f6af32e51eb00783c17000d7051d1662b93a"
+    }
+  ],
+  "booklet": [
+    {
+      "path": "booklet/booklet.txt",
+      "sha256": "67530dc7ae96e0d6524e4e388ce3dfd78202fedf75b09d0f170c9065100f7acd"
+    }
+  ],
+  "lyrics": [
+    {
+      "path": "lyrics/01.txt",
+      "sha256": "9dc181083af047b305d6eac27e1d144c4367a46cec1a62ddf6de54d788061167"
+    }
+  ],
+  "extras": [
+    {
+      "path": "extras/notes.txt",
+      "sha256": "ab5aa97074c454a0632057e704220d9a6678fbf773a0a5806fc09b8173b07309"
+    }
+  ],
+  "analysis": [
+    {
+      "type": "future-analysis",
+      "path": "analysis/external.json",
+      "sha256": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+    }
+  ],
+  "loudness": {
+    "algorithm": "ITU-R BS.1770-5",
+    "albumLUFS": -12.0,
+    "albumTruePeakDbTP": -1.0
+  },
+  "provenance": {
+    "tool": "conformance",
+    "toolVersion": "1"
+  },
+  "xFutureField": {
+    "preserved": true
+  }
+}

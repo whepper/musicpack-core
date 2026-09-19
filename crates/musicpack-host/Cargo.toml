@@ -1,0 +1,13 @@
+[package]
+name = "musicpack-host"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Thinnest practical host adapter: drives musicpack-engine's DecoderEngine and Player over host-provided sources"
+license = "BSD-3-Clause"
+repository = "https://github.com/whepper/musicpack-core"
+publish = false
+
+[dependencies]
+musicpack-core = { path = "../.." }
+musicpack-engine = { path = "../musicpack-engine" }

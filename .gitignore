@@ -1,0 +1,8 @@
+# Rust build artifacts
+/target
+
+# Library crate: lockfile is not pinned (dependents generate their own)
+Cargo.lock
+
+# Editor/OS noise
+.DS_Store

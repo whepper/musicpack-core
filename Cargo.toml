@@ -1,0 +1,39 @@
+[package]
+name = "musicpack-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Canonical Rust implementation of the MusicPack domain and the .mpack v1 / MPAK v1 package formats"
+license = "BSD-3-Clause"
+repository = "https://github.com/whepper/musicpack-core"
+readme = "README.md"
+keywords = ["musicpack", "mpack", "mpak", "audio", "manifest"]
+categories = ["multimedia::audio", "parser-implementations"]
+
+# The repository is a workspace whose root is also the core package (chosen
+# over moving the core into `crates/` so the established layout, fixtures,
+# docs and tooling stay put — see docs/architecture.md, O8).  The CLI lives
+# under `crates/musicpack` and depends on the core; `fuzz/` is cargo-fuzz
+# infrastructure that must stay out of the normal build (nightly + libfuzzer).
+[workspace]
+members = ["crates/musicpack", "crates/musicpack-engine", "crates/musicpack-host", "crates/musicpack-wasm", "crates/musicpack-musepack-encoder", "crates/musicpack-mpc-tools"]
+exclude = ["fuzz"]
+
+[dependencies]
+# SHA-256 is required by the `.mpack` v1 integrity model (every referenced
+# asset declares one).  `sha2` (RustCrypto) is the maintained, pure-Rust
+# reference implementation: no unsafe in the hashing path, MIT OR
+# Apache-2.0, `no_std`-capable, compiles on wasm32-unknown-unknown, and its
+# MSRV (1.56) is far below this crate's 1.85.  See docs/architecture.md §6
+# and Open Question O10; the test-support SHA-256 in tests/support doubles
+# as an independent oracle for digest parity tests.
+sha2 = "0.10"
+
+# FLAC decoding for the authoring-side audio primitives (phase 8).  The
+# reference implementation vendors dr_flac (C); the Rust core uses `claxon`,
+# a pure-Rust FLAC decoder, behind its own `audio::flac::FlacDecoder`
+# adapter.  `claxon` has zero runtime dependencies, is Apache-2.0, compiles
+# on wasm32-unknown-unknown (std-only, no filesystem or threading), and does
+# not leak into the public API.  See docs/architecture.md §6/§8 (D11 and the
+# audio section) for the full rationale and the unsafe audit.
+claxon = "=0.4.3"

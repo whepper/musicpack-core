@@ -1,0 +1,28 @@
+waveform flac16-44k.flac points=20 sha256=18801926639b001eba4bb1c23d9293b4aab40589144c1ebb2b52b000a4754198 head=a699a699a699a699 tail=a699a699
+loudness flac16-44k.flac lufs=-21.753320402289098 tp=-21.065321903244602
+waveform flac24-48k.flac points=20 sha256=18801926639b001eba4bb1c23d9293b4aab40589144c1ebb2b52b000a4754198 head=a699a699a699a699 tail=a699a699
+loudness flac24-48k.flac lufs=-21.827475817591885 tp=-21.065397989421154
+waveform flac24-96k.flac points=20 sha256=18801926639b001eba4bb1c23d9293b4aab40589144c1ebb2b52b000a4754198 head=a699a699a699a699 tail=a699a699
+loudness flac24-96k.flac lufs=-21.998462162022633 tp=-21.072789572663353
+waveform flac-mono-44k.flac points=20 sha256=f2581ebe3fd51e3ac35352fe58a6ea24159ca1a17396131d2bc10ceb56c4d32f head=b3a6b3a6b3a6b3a6 tail=b3a6b3a6
+loudness flac-mono-44k.flac lufs=-21.68761500593126 tp=-18.056452309743726
+waveform synth:silence:44100:2:88200 points=20 sha256=2c34ce1df23b838c5abf2a7f6437cca3d3067ed509ff25f11df6b11b582b51eb head=0000000000000000 tail=00000000
+loudness synth:silence:44100:2:88200 lufs=-70 tp=-70
+waveform synth:dc:44100:2:88200 points=20 sha256=4c68ace3777cf7851f5b16382686aa8ff585d5b4fe8716d4b7b83b67306f6bbf head=e6e6e6e6e6e6e6e6 tail=e6e6e6e6
+loudness synth:dc:44100:2:88200 lufs=-29.283499285145204 tp=-4.9880902466873973
+waveform synth:impulse:44100:1:44100 points=10 sha256=5d9cad2cf5e173522b51eeeb465200f18082d88df7ddf0fd27fb078e5b1b5e45 head=ff65000000000000 tail=00000000
+loudness synth:impulse:44100:1:44100 lufs=-39.342307477625319 tp=0
+waveform synth:prng:44100:2:88200 points=20 sha256=c848de3db2e2aad1f8ed23a2b8256cd8b33e00702546ed62b2f0891c9dcf38b4 head=ffebffebffebffeb tail=ffebffeb
+loudness synth:prng:44100:2:88200 lufs=1.3790616322960982 tp=4.1635691944518189
+waveform synth:prng:44100:1:88200 points=20 sha256=9531eb585e4f61cbfe005cb55fed0da8d535a6e19a68542d3ca16eabaed3f68c head=ffebffebffebffeb tail=ffebffeb
+loudness synth:prng:44100:1:88200 lufs=-1.6300194110602779 tp=4.3096746931795717
+waveform synth:prng:32000:2:96000 points=30 sha256=a72e48bdb9bd6aa29abcd2a88533f915ce4261ae759760b6d433368851f87210 head=ffebffebffebffeb tail=ffebffeb
+loudness synth:prng:32000:2:96000 lufs=1.3080034882402936 tp=4.1635691944518189
+waveform synth:prng:48000:2:144000 points=30 sha256=ef911a8c8a7bbb0ee9f1c14295ac6eb400baba494e5368007d55cd7f78aa880d head=ffebffebffebffeb tail=ffebffeb
+loudness synth:prng:48000:2:144000 lufs=1.3905254429695955 tp=4.1635691944518189
+waveform synth:prng:96000:2:192000 points=20 sha256=c848de3db2e2aad1f8ed23a2b8256cd8b33e00702546ed62b2f0891c9dcf38b4 head=ffebffebffebffeb tail=ffebffeb
+loudness synth:prng:96000:2:192000 lufs=1.4698936410698373 tp=5.0618556793875271
+waveform synth:prng:96000:2:960000 points=100 sha256=d91bd02572cb8f9f620a565859babb42c8510863244c4ff19b047abaeb1e2053 head=ffebffebffebffeb tail=ffebffeb
+loudness synth:prng:96000:2:960000 lufs=1.4684589749524255 tp=5.4730754146532732
+waveform synth:prng:192000:2:960000 points=50 sha256=aeb542fd97e25f7aab5cd1f76c48a11b00368507973e5793ed3f08b595b799a3 head=ffebffebffebffeb tail=ffebffeb
+loudness synth:prng:192000:2:960000 lufs=1.5099543824855863 tp=-4.1417559189525413e-06
