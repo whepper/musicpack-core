@@ -1,0 +1,14 @@
+# Byte-stability for test fixtures and binary assets.
+#
+# Several suites byte-compare these files (canonical manifests, MPC streams,
+# oracle vectors, fuzz corpora, MPAK containers), so they must check out
+# identically on every platform regardless of `core.autocrlf`. Without this,
+# a Windows checkout silently appends CR bytes and byte-indexed tests
+# (e.g. the fuzz-lite truncation corpus) diverge from the reference.
+/fixtures/**            -text
+/tests/**/data/**       -text
+/crates/**/tests/data/** -text
+/fuzz/corpus/**         -text
+*.mpc                   -text
+*.mpak                  -text
+*.f32le                 -text
