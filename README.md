@@ -261,9 +261,10 @@ adapter depends on the core and the engine.
 legacy C Musepack encoder. It is **not** depended on by the core or by any
 other crate; it is licensed **LGPL-2.1-or-later** (a source-derived
 compatibility implementation of the legacy LGPL encoder, treated
-conservatively), and the legacy C encoder is retained only as a temporary
-compatibility oracle until the Rust encoder reaches parity. See its README for
-the licensing boundary, the frozen reference corpus and the removal strategy.
+conservatively). Parity is reached (Phase 15L): the legacy C repository is
+the immutable historical reference (never modified), and the frozen
+compatibility corpus in the encoder crate is the permanent compatibility
+boundary. See its README for the licensing boundary and the frozen corpus.
 
 ### CLI
 

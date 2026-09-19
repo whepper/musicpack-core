@@ -3,22 +3,26 @@
 The safe-Rust **Musepack SV8 encoder** that replaces the legacy C Musepack
 encoder, plus its compatibility oracle.
 
-> **Status: Phase 15G.1 — whole-stream parity complete (21/21).**
-> The crate now has a complete `PCM → SV8` encoder (`encoder::MusepackEncoder`)
-> that reproduces the reference `mpcenc` stream byte-for-byte for **all 21**
-> committed whole-encoder cases across q4–q7 and 44.1/48/37.8/32 kHz.
-> Phase 15G.1 resolved the two decoder-delay-frame divergences (byte-swapped
-> frozen CVD tables; see `tests/data/encoder/README.md`). The C encoder
-> remains the oracle; no production cutover, SIMD or optimisation.
+> **Status: Phase 15L — migration complete.**
+> The crate is the production `PCM → SV8` encoder
+> (`encoder::MusepackEncoder`): it reproduces the reference `mpcenc` stream
+> byte-for-byte for **all 21** committed whole-encoder cases across q4–q7
+> and 44.1/48/37.8/32 kHz (15G.1 resolved the two decoder-delay-frame
+> divergences — byte-swapped frozen CVD tables; see
+> `tests/data/encoder/README.md`). The legacy C repository is retained
+> as-is as the immutable historical reference; the frozen compatibility
+> corpus in this crate is the permanent compatibility boundary.
 
 ## Why this crate exists separately
 
 The legacy C encoder (`codec/libmpcenc`, `codec/libmpcpsy`, and the encoding
 logic in `codec/mpcenc/mpcenc.c` in the reference repository
 `github.com/whepper/musicpack`) is roughly two decades old, is not expected to
-evolve upstream, and is **not** the desired long-term implementation. It is
-retained temporarily as a compatibility reference and is intended to be
-deleted once the Rust encoder has demonstrated sufficient compatibility.
+evolve upstream, and is **not** the desired long-term implementation. The
+legacy repository is retained as-is as the immutable historical reference
+(it must not be modified); the frozen compatibility corpus in this crate is
+the permanent compatibility boundary, so the Rust encoder never depends on
+the C sources at runtime.
 
 ## Licensing treatment (engineering boundary, not legal advice)
 
@@ -116,7 +120,7 @@ Explicitly **not** implemented (do not "prepare" these by copying C):
         ┌─────────────────────┴─────────────────────┐
         ▼                                           ▼
   C reference encoder                       Rust encoder (this crate)
-  (temporary oracle)                        analysis → psy → coding → SV8
+  (immutable historical reference)          analysis → psy → coding → SV8
         │                                           │
         └──────────────► differential ◄─────────────┘
                      (see below)
@@ -316,10 +320,27 @@ Planned stages (revised from Phase 15A after the source investigation):
 * **15G** ✅ full-encoder integration; 21/21 whole-stream cases byte-identical
   (15G.1 fixed the two decoder-delay-frame divergences: byte-swapped frozen
   CVD tables).
-* **15H** native/WASM integration and performance (correctness first).
-* **15I** production cutover.
+* **15H** ✅ native/WASM integration and performance (correctness first;
+  15H.3 productionised the approved joint-4 `vectoring` ILP only —
+  `matrixing` untouched, scalar oracle retained in tests).
+* **15I–15K** ✅ retirement/consumer audit: `musicpack-core` has no production
+  C encoder dependency; `mpccut` gained its proven Rust replacement in
+  `musicpack-mpc-tools` (12/12 byte-identical); SV7 is explicitly
+  unsupported so `mpc2sv8` needs no replacement (SV7 decoding is decoder
+  scope, out of scope).
+* **15L** ✅ migration-scope audit and closure: nothing within Phases 15B–15K
+  was accidentally omitted. Intentionally out of scope and not ported:
+  `mpcgain`, `mpcchap`, the authoring-CLI draft/identify pipeline, the
+  server/sonic components, and file-level `mpcdec`/`mpcenc` CLIs. No
+  WAV→MPC file CLI is added unless a future product workflow requires one.
 
-Removal of the C encoder (only after 15G-level parity):
+Legacy-repository boundary (corrected scope): the earlier removal plan below
+is superseded. The legacy C repository is **not** modified or deleted — it
+remains the immutable historical reference, and the frozen manifest + corpus
+here are the permanent compatibility boundary. No production cutover touches
+the legacy repository.
+
+Superseded removal plan (kept for provenance; do not execute):
 
 1. the Rust encoder passes the frozen 282-vector differential and the decoded
    PCM round-trip through the Rust decoder;
