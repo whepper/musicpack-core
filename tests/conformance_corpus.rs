@@ -2,8 +2,10 @@
 //! parsing *and* verification.
 //!
 //! The corpus is the authoritative behavioural spec from the reference
-//! repository (72 cases: 6 valid / 57 invalid-manifest / 9 invalid-verify;
-//! `waveform-points-mismatch` + `symlink-escape` included). This test:
+//! repository (72 cases on unix: 6 valid / 57 invalid-manifest / 9
+//! invalid-verify; `waveform-points-mismatch` + `symlink-escape` included.
+//! Non-unix builds exclude the `symlink-escape` case, which needs the POSIX
+//! adapter, leaving 71). This test:
 //!
 //! 1. materialises the corpus via the Rust port in `tests/support` and
 //!    — when the reference checkout + Python are available — byte-compares
@@ -89,7 +91,16 @@ fn corpus_port_matches_the_authoritative_generator() {
 fn outcomes_match_the_authoritative_expectations() {
     let root = corpus_dir("outcomes");
     let cases = write_corpus(&root).expect("corpus builds");
+    // `symlink-escape` needs the POSIX adapter, so non-unix builds carry
+    // one case fewer; the count assertion pins both shapes.
+    #[cfg(unix)]
     assert_eq!(cases.len(), 72, "the corpus has 72 cases");
+    #[cfg(not(unix))]
+    assert_eq!(
+        cases.len(),
+        71,
+        "the corpus has 71 cases (no symlink-escape)"
+    );
 
     let mut failures = Vec::new();
 
@@ -185,7 +196,7 @@ fn outcomes_match_the_authoritative_expectations() {
     #[cfg(unix)]
     eprintln!("conformance: 72 cases — parse + full verification, zero gaps");
     #[cfg(not(unix))]
-    eprintln!("conformance: 72 cases — parse-level only (directory verification is unix-only)");
+    eprintln!("conformance: 71 cases — parse-level only (directory verification is unix-only)");
 
     let _ = std::fs::remove_dir_all(&root);
 }

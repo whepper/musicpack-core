@@ -17,9 +17,15 @@ fn check(actual: &[f32], expected: &[f32], label: &str, case: &str, frame: usize
         "{case} f{frame} {label} length"
     );
     for (i, (a, e)) in actual.iter().zip(expected).enumerate() {
-        assert_eq!(
-            a.to_bits(),
-            e.to_bits(),
+        // NaN payloads are architecture-defined: x86 invalid-operation
+        // results are the negative quiet NaN (0xffc00000) while ARM emits
+        // the positive default NaN (0x7fc00000), so the C reference itself
+        // disagrees across architectures here. The fixtures pin the arm64
+        // payload; the gate requires NaN-ness, not the payload bits.
+        // Production code and fixtures are untouched by this.
+        let same = a.to_bits() == e.to_bits() || (a.is_nan() && e.is_nan());
+        assert!(
+            same,
             "{case} f{frame} {label}[{i}]: got {a:?} ({:#010x}), want {e:?} ({:#010x})",
             a.to_bits(),
             e.to_bits()
