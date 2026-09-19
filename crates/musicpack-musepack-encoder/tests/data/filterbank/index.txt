@@ -1,0 +1,20 @@
+# musicpack filterbank oracle index v1
+# name kind frames calls max_band bytes sha256 init_l_bits init_r_bits input_xor
+#
+# Extracted from the reference C filterbank (scalar kernels) by
+# tools/extract_filterbank_oracle.c; see README.md. Frozen: do not regenerate
+# to accommodate a Rust result.
+#
+# `frames` is the number of Analyse_Filter calls (0 means "capture
+# Analyse_Init only"). input_xor is the XOR of every input-sample bit pattern
+# fed to the filterbank, so a generator mismatch is caught before the
+# coefficient comparison.
+init constant 0 1 31 9216 29920ff9b9f5b72d9a9b13c6d1d8c3bce581329231b1187267f9635eebde94b9 3e800000 bf000000 00000000
+silence silence 1 1 31 9216 2d07a41ae992770085117e9815300bfd0730745883e60b24aaad5e69dfc087ae 00000000 00000000 00000000
+impulse impulse 1 1 31 9216 4294ebee232d953acca355184144b517afea43adac7b5ccac6741804e3b810e3 3f800000 00000000 3f800000
+constant constant 1 1 31 9216 fe603deaeebf97f77b5c35cb3f3c60d6d951378e8482beb8319f1a59c981ba1c 3f000000 3f000000 00000000
+alternating alternating 1 1 31 9216 22dc529f744fee0717f81fe8f6d02623f8b9c7aa8ba112e3f5faabe9a0616f6f 3f000000 3f000000 00000000
+ramp ramp 1 1 31 9216 c3b537eefd96c567a17b024f3d5dd8b05a089562a7a0b64014c84036777bc282 bf000000 bf000000 00000000
+transient transient 1 1 31 9216 42d9c9ba118d43950735176d45c6c6c8687276fc8719a0c31d6d95539b3d0e06 00000000 00000000 00000000
+stereo stereo 1 1 31 9216 8b39d243fcf5835834b46aa60fa533f21c481c2bfab93dc4e8baa2a8bb2c0fc3 bdabcda0 bf436c38 86e3ac48
+state_carry state_carry 3 3 31 27648 1c478467c199dfe89ff33c1548861e684dc8f7364940b3c428e3f7caa2e698c0 3e197290 bc379f00 84ada67c

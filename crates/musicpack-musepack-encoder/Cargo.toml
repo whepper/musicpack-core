@@ -1,0 +1,22 @@
+[package]
+name = "musicpack-musepack-encoder"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Rust Musepack SV8 encoder replacing the legacy LGPL C encoder (Phase 15 foundation)"
+license = "LGPL-2.1-or-later"
+repository = "https://github.com/whepper/musicpack-core"
+readme = "README.md"
+publish = false
+
+[dependencies]
+# Intentionally empty. The encoder is std-only, safe Rust, WASM-compatible, and
+# has no runtime dependency on the legacy C encoder, no FFI and no bindgen.
+# `musicpack-core` must never depend on this crate (the dependency points the
+# other way only when a later phase needs it).
+
+[dev-dependencies]
+# Oracle/differential tests hash produced streams and verify the frozen
+# reference manifest. `sha2` is already used by `musicpack-core`; it is a
+# test-only dependency here.
+sha2 = "0.10"

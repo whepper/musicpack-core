@@ -1,0 +1,18 @@
+# musicpack-sv8-container-fixture v1
+# source: tests/fixtures/sine44-q5.wav
+# frozen artifact - do not regenerate to accommodate a Rust result
+seek_ref 0
+seek_ptr 37
+seek_table_offset 28076
+seek_pos 1
+seek_pwr 1
+seek_entries 45
+stream_info samples=44100 skip=0 sample_rate=44100 max_band=28 channels=2 ms=1 block_pwr=6
+encoder_info profile=10 pns=0 major=1 minor=32 build=0
+block SH offset=4 size=0e crc=735bdd4e payload_len=7 payload=0882d844001b1b
+block RG offset=18 size=0c crc=- payload_len=9 payload=010000000000000000
+block EI offset=30 size=07 crc=- payload_len=4 payload=a0012000
+block SO offset=37 size=08 crc=- payload_len=5 payload=81db070000
+block AP offset=45 size=81da7f crc=- payload_len=28026 payload=- payload_sha256=4d477889cce33db9023ea0f983a4f16169f031b159ac195306fc17a6c13a62a9
+block ST offset=28076 size=06 crc=- payload_len=3 payload=0112d0
+block SE offset=28082 size=03 crc=- payload_len=0 payload=

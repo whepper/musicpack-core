@@ -1,0 +1,46 @@
+# musicpack-sv8-container-fixture v1
+# source: tests/fixtures/sine44-q5-48s.wav (seek_distance 0)
+# frozen artifact - do not regenerate to accommodate a Rust result
+seek_ref 0
+seek_ptr 38
+seek_table_offset 490716
+seek_pos 29
+seek_pwr 0
+seek_entries 46 18971 35929 52941 69894 86860 103818 120846 137811 154728 171751 188790 205774 222775 239816 256763 273774 290790 307712 324690 341694 358630 375644 392611 409571 426572 443576 460491 477530
+stream_info samples=2116800 skip=0 sample_rate=44100 max_band=28 channels=2 ms=1 block_pwr=6
+encoder_info profile=10 pns=0 major=1 minor=32 build=0
+block SH offset=4 size=0f crc=291bfdcd payload_len=8 payload=0881819940001b1b
+block RG offset=19 size=0c crc=- payload_len=9 payload=010000000000000000
+block EI offset=31 size=07 crc=- payload_len=4 payload=a0012000
+block SO offset=38 size=08 crc=- payload_len=5 payload=9df9360000
+block AP offset=46 size=81936d crc=- payload_len=18920 payload=- payload_sha256=ccfde58c1bcb69c636d063372e23d229914f9efece2bae74449eb316f0b56364
+block AP offset=18971 size=81843e crc=- payload_len=16953 payload=- payload_sha256=2353a51ddde31a3b71d5ee33938cd200eccfd2402884ab957509757a520aa316
+block AP offset=35929 size=818474 crc=- payload_len=17007 payload=- payload_sha256=279adb5648b1384257c2af28688956c9c9e34e73b6513eb68c2241ff5ba87ee2
+block AP offset=52941 size=818439 crc=- payload_len=16948 payload=- payload_sha256=a6bd7c6890b9efb92d65f7fc273d57b22464bc8c51ae185906d56f7bbf1357d2
+block AP offset=69894 size=818446 crc=- payload_len=16961 payload=- payload_sha256=12e31b75953c6e772451bf54620eaa3da0edd76ae409acc5398af09a00cc6cc7
+block AP offset=86860 size=81843e crc=- payload_len=16953 payload=- payload_sha256=6966aa330b20f46b994629e10e4a45f65e0408469f40952f8118eadb0b5d4fe1
+block AP offset=103818 size=818504 crc=- payload_len=17023 payload=- payload_sha256=3fd791fd0d79f1d94ca5c609cb76ac8d118a82f769b8ae6ca294d60360beedcd
+block AP offset=120846 size=818445 crc=- payload_len=16960 payload=- payload_sha256=b77fc928ccbb5c536e0a81346f22dd1e4ee9541aa97d3335a7a562dad5a598b5
+block AP offset=137811 size=818415 crc=- payload_len=16912 payload=- payload_sha256=03c5b5edb4a4d5ba3e404a9559fd5b6b11d0a1dac1a3f7b28e0392bc3356b4b6
+block AP offset=154728 size=81847f crc=- payload_len=17018 payload=- payload_sha256=e80b82c5be41206903ae2a575d7644506e41d4fae137ced1919b5bc99246e415
+block AP offset=171751 size=81850f crc=- payload_len=17034 payload=- payload_sha256=0ed16a37fac739e2446c5069822c79793c3b1cd84c08df03878a4bf8bcc92f9e
+block AP offset=188790 size=818458 crc=- payload_len=16979 payload=- payload_sha256=8ee064337f74f1113db48b949e7c7cbe75a3f48ef587995c08a92df6a3620f13
+block AP offset=205774 size=818469 crc=- payload_len=16996 payload=- payload_sha256=6b4659c2f9e387b621919bc79ab1b0d5e2a742bb00cc901127753c37859780ec
+block AP offset=222775 size=818511 crc=- payload_len=17036 payload=- payload_sha256=e6283512912ff18919fdd8084e8510c35d7200b1afac9a28a4a6b18ef34409d8
+block AP offset=239816 size=818433 crc=- payload_len=16942 payload=- payload_sha256=658606304923e95049e890a1563249c4a9b743e90fabfe9413fcaa7d202cf523
+block AP offset=256763 size=818473 crc=- payload_len=17006 payload=- payload_sha256=43ccdd8f1cffadaea6dfffbcf7bf4608542774733a550000aef81cad8133c2ea
+block AP offset=273774 size=818478 crc=- payload_len=17011 payload=- payload_sha256=43fac6cfe8aad0b637c54500f05cb5d89b4208ae4e6695fb31295b2853c0da79
+block AP offset=290790 size=81841a crc=- payload_len=16917 payload=- payload_sha256=e115147fe71c902e52505ab76b52163c18814773de7f59029e5569c8dcaff7fc
+block AP offset=307712 size=818452 crc=- payload_len=16973 payload=- payload_sha256=8e8780dca19e9f655cda0532bbd457ec2dbe302fd34d7f0db728636ffea783a7
+block AP offset=324690 size=81846c crc=- payload_len=16999 payload=- payload_sha256=b828b49c9bed4fa4a7c4a7c8d628822e26fbbcd43f07dfd6d34f75ecd30328eb
+block AP offset=341694 size=818428 crc=- payload_len=16931 payload=- payload_sha256=f1102980cd7f4a8593d4db56370de98425bb00337441bfa9539a7988849776f8
+block AP offset=358630 size=818476 crc=- payload_len=17009 payload=- payload_sha256=79ae4916fb2457957ba2a3200290a4d3c50cb76ff0ff1142aadeda285b691b2f
+block AP offset=375644 size=818447 crc=- payload_len=16962 payload=- payload_sha256=51d140dfe3c2b06a4ae7793782558c03cf9f3eea6002c5678aefb547a9168e29
+block AP offset=392611 size=818440 crc=- payload_len=16955 payload=- payload_sha256=458b8647e56f0b0aee039a55304ce660b29757cf5982b0d463887f4f1f6d78ec
+block AP offset=409571 size=818469 crc=- payload_len=16996 payload=- payload_sha256=2b8f7eaa4e5f99d6a1eed3fd9c9c718d68cbf7e6f9bc56db72eeda0299d84fa6
+block AP offset=426572 size=81846c crc=- payload_len=16999 payload=- payload_sha256=a00f6f21cd04c98077a9cbc2b8ef30b295b0fdb9134533422bfc59106979c8c2
+block AP offset=443576 size=818413 crc=- payload_len=16910 payload=- payload_sha256=2a0d1e6c2a5edc4be0518800ae7cce3666941dab01d39ad51652752aac977f53
+block AP offset=460491 size=81850f crc=- payload_len=17034 payload=- payload_sha256=9ffeec03de3722b5808941e812cd9d8928f0c803ccc1aca27f9ecc78cd7621d7
+block AP offset=477530 size=e702 crc=- payload_len=13182 payload=- payload_sha256=40da1d2b44c6b31a99b15f2b8372e35e4d0ef741fada28b4813ac2b8b21514e1
+block ST offset=490716 size=35 crc=- payload_len=50 payload=1d02e81941bfafc1b20ef01a808c2320ff06186a40820df02282842f610100a85ec1c206908984e417e01f05280342ce1f00
+block SE offset=490769 size=03 crc=- payload_len=0 payload=

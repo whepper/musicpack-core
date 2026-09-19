@@ -1,0 +1,27 @@
+# musicpack-sv8-container-fixture v1
+# source: tests/fixtures/sine44-q5.wav (num_frames 1)
+# frozen artifact - do not regenerate to accommodate a Rust result
+seek_ref 0
+seek_ptr 37
+seek_table_offset 28328
+seek_pos 5
+seek_pwr 1
+seek_entries 45 7441 12843 18271 23623
+stream_info samples=44100 skip=0 sample_rate=44100 max_band=28 channels=2 ms=1 block_pwr=2
+encoder_info profile=10 pns=0 major=1 minor=32 build=0
+block SH offset=4 size=0e crc=9d55bc62 payload_len=7 payload=0882d844001b19
+block RG offset=18 size=0c crc=- payload_len=9 payload=010000000000000000
+block EI offset=30 size=07 crc=- payload_len=4 payload=a0012000
+block SO offset=37 size=08 crc=- payload_len=5 payload=81dd030000
+block AP offset=45 size=a40d crc=- payload_len=4617 payload=- payload_sha256=a944142fd850c39ad74b3d3d47150362c61b2b7f2eae5d9af8e1822cb82dbb2e
+block AP offset=4666 size=9557 crc=- payload_len=2771 payload=- payload_sha256=26d0e3c44c7ac753ab48eb5735b4067f7aff80f046978f73090a49e93d3ec94e
+block AP offset=7441 size=9512 crc=- payload_len=2702 payload=- payload_sha256=d79b84961ee6ce8b839c6ea186aafc15776c3f76fd83827f829a736c5ef610f0
+block AP offset=10147 size=9508 crc=- payload_len=2692 payload=- payload_sha256=77fc32ddaa1697f18901b8d63f1fe93a41cc98844b785492dafcb7c8950741f1
+block AP offset=12843 size=951f crc=- payload_len=2715 payload=- payload_sha256=f3b34416b0936ddf8aebdd5d8b101ef07e6452b83171b6ef09c478142801daf4
+block AP offset=15562 size=9515 crc=- payload_len=2705 payload=- payload_sha256=cb210c31050fee30ab6556f01ae9fe72a964f0464e5f20be556b928182ff52ac
+block AP offset=18271 size=9509 crc=- payload_len=2693 payload=- payload_sha256=979c116af48f795f38474b426b96dbd630546c01a2df547031d856df61b549f3
+block AP offset=20968 size=945f crc=- payload_len=2651 payload=- payload_sha256=5392a9c4e4690f145b1c84b69790afdb765762aa69755929bede0f8ce39d4701
+block AP offset=23623 size=9512 crc=- payload_len=2702 payload=- payload_sha256=ceb709799976f22f4fb121bfe266e9a47b049e2f0ddd378006297b22b1e4d8d4
+block AP offset=26329 size=8f4f crc=- payload_len=1995 payload=- payload_sha256=5e2cbba5423fdad27ad26d4ddce95e3439bde22c2f5ce25ed1a91c24dbc492fb
+block ST offset=28328 size=0d crc=- payload_len=10 payload=0512dba11fcac0d21320
+block SE offset=28341 size=03 crc=- payload_len=0 payload=
