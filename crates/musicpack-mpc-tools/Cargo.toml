@@ -1,0 +1,16 @@
+[package]
+name = "musicpack-mpc-tools"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Rust SV8 container tools (mpccut-equivalent stream surgery) sharing the Musepack SV8 primitives"
+license = "LGPL-2.1-or-later"
+repository = "https://github.com/whepper/musicpack-core"
+readme = "README.md"
+publish = false
+
+[dependencies]
+musicpack-core = { path = "../.." }
+musicpack-musepack-encoder = { path = "../musicpack-musepack-encoder" }
+
+[dev-dependencies]
