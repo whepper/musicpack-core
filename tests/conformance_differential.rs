@@ -42,6 +42,7 @@
 
 mod support;
 
+#[cfg(unix)]
 use std::process::Command;
 
 use support::write_corpus;

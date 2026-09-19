@@ -12,6 +12,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+#[cfg(unix)]
 use musicpack_core::format::checksum;
 
 // ---------------------------------------------------------------------
@@ -52,6 +53,7 @@ fn cleanup(dir: &Path) {
 }
 
 /// Writes a minimal, fully valid one-track package into `root`.
+#[cfg(unix)]
 fn write_min_package(root: &Path) {
     write_package_with(
         root,
@@ -61,6 +63,7 @@ fn write_min_package(root: &Path) {
 }
 
 /// Writes a valid package with the given primary audio and extras.
+#[cfg(unix)]
 fn write_package_with(root: &Path, audio: &[(&str, &[u8])], extras: &[(&str, &[u8])]) {
     fs::create_dir_all(root).unwrap();
     let mut tracks = Vec::new();

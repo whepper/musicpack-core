@@ -499,18 +499,17 @@ impl MpcDecoder {
                 return Ok(false);
             }
 
-            let is_key;
-            if self.block_frames_left == 0 {
+            let is_key = if self.block_frames_left == 0 {
                 if !self.reader.next_ap_block()? {
                     self.eof = true;
                     return Ok(false);
                 }
                 self.block_frames_left = 1u32 << self.block_pwr;
                 self.bit_pos = 0;
-                is_key = true;
+                true
             } else {
-                is_key = false;
-            }
+                false
+            };
             self.block_frames_left -= 1;
             self.read_bitstream_sv8(is_key)?;
             let block_bits = self.reader.block_buf.len() as u64 * 8;

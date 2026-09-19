@@ -13,6 +13,8 @@
 //! committed-fixture byte-identity test in `tests/mpak_compat.rs` always
 //! runs). Unix-only: the directory source is the POSIX adapter.
 
+#![cfg(unix)]
+
 mod support;
 
 use std::fs;

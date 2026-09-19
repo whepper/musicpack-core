@@ -159,6 +159,7 @@ pub fn pack(dir: &str, out: &str) -> Result<ExitCode, CliError> {
     }
 }
 
+#[cfg(unix)]
 fn staging_path(out: &std::path::Path) -> std::path::PathBuf {
     let mut staging = out.as_os_str().to_os_string();
     staging.push(format!(".staging-{}", std::process::id()));

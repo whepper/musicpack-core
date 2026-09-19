@@ -10,6 +10,10 @@
 //! Discovery mirrors the core harness: `$MUSICPACK_REF_CLI`, else the
 //! sibling reference checkout's build output. The reference repository is
 //! never modified.
+//!
+//! Unix-only: every case exercises the directory-bundle adapter.
+
+#![cfg(unix)]
 
 use std::fs;
 use std::path::{Path, PathBuf};

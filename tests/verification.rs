@@ -23,11 +23,15 @@
 
 mod support;
 
+#[cfg(unix)]
 use std::fs;
+#[cfg(unix)]
 use std::path::{Path, PathBuf};
 
 use musicpack_core::format::checksum;
+#[cfg(unix)]
 use musicpack_core::storage::directory::{DirectoryBackend, verify_directory};
+#[cfg(unix)]
 use musicpack_core::validation::Severity;
 
 // ---------------------------------------------------------------------
@@ -35,6 +39,7 @@ use musicpack_core::validation::Severity;
 // ---------------------------------------------------------------------
 
 /// A fresh package directory under the process temp dir.
+#[cfg(unix)]
 fn package_dir(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "musicpack-core-verify-{}-{name}",
@@ -45,11 +50,13 @@ fn package_dir(name: &str) -> PathBuf {
     dir
 }
 
+#[cfg(unix)]
 fn cleanup(dir: &Path) {
     let _ = fs::remove_dir_all(dir);
 }
 
 /// Writes a minimal one-track manifest referencing `rel`.
+#[cfg(unix)]
 fn write_manifest(dir: &Path, rel: &str, digest: &str) {
     let json = format!(
         r#"{{"format":"musicpack","version":1,"album":{{"title":"T","artists":[{{"name":"A"}}]}},"media":[{{"disc":1,"tracks":[{{"track":1,"title":"One","audio":{{"path":"{rel}","sha256":"{digest}"}}}}]}}]}}"#
@@ -59,6 +66,7 @@ fn write_manifest(dir: &Path, rel: &str, digest: &str) {
 
 /// Creates a package whose single asset is `rel` with `bytes`, declaring
 /// the correct digest. Returns (dir, digest).
+#[cfg(unix)]
 fn package_with_asset(name: &str, rel: &str, bytes: &[u8]) -> (PathBuf, String) {
     let dir = package_dir(name);
     let digest = checksum::sha256_hex(bytes);
@@ -69,6 +77,7 @@ fn package_with_asset(name: &str, rel: &str, bytes: &[u8]) -> (PathBuf, String) 
     (dir, digest)
 }
 
+#[cfg(unix)]
 fn findings_of(report: &musicpack_core::validation::Report) -> Vec<String> {
     report
         .findings()

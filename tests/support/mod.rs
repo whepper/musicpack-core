@@ -1810,7 +1810,10 @@ fn mutation_cases() -> Vec<(&'static str, Py)> {
 pub fn write_corpus(root: &Path) -> std::io::Result<Vec<Case>> {
     let _ = std::fs::remove_dir_all(root);
     std::fs::create_dir_all(root)?;
+    #[cfg(unix)]
     let mut cases = corpus();
+    #[cfg(not(unix))]
+    let cases = corpus();
     for case in &cases {
         let dir = root.join(format!("{}.mpack", case.name));
         std::fs::create_dir_all(&dir)?;
