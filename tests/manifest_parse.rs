@@ -362,3 +362,175 @@ fn strtod_style_numbers_in_known_fields() {
     let out = parsed.write_canonical().expect("writes");
     assert!(out.contains("\"duration\": 1.5"), "{out}");
 }
+
+// ---------------------------------------------------------------------
+// Per-track lyrics references (docs/musicpack-lyrics-v1.md §6)
+// ---------------------------------------------------------------------
+
+const SHA: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn with_track_lyrics(track_field: &str) -> String {
+    minimal().replace(
+        "\"title\": \"One\",",
+        &format!("\"title\": \"One\", {track_field},"),
+    )
+}
+
+#[test]
+fn track_lyrics_parse_with_optional_lang() {
+    let json = with_track_lyrics(&format!(
+        "\"lyrics\": [{{\"path\": \"lyrics/01.lrc\", \"sha256\": \"{SHA}\", \"lang\": \"en\"}}]"
+    ));
+    let parsed = parse(&json).expect("parses");
+    let lyrics = &parsed.manifest().media[0].tracks[0].lyrics;
+    assert_eq!(lyrics.len(), 1);
+    assert_eq!(lyrics[0].path, "lyrics/01.lrc");
+    assert_eq!(lyrics[0].sha256, SHA);
+    assert_eq!(lyrics[0].lang.as_deref(), Some("en"));
+}
+
+#[test]
+fn track_lyrics_without_lang_and_absent_field() {
+    let json = with_track_lyrics(&format!(
+        "\"lyrics\": [{{\"path\": \"lyrics/01.lrc\", \"sha256\": \"{SHA}\"}}]"
+    ));
+    let parsed = parse(&json).expect("parses");
+    let lyrics = &parsed.manifest().media[0].tracks[0].lyrics;
+    assert_eq!(lyrics[0].lang, None);
+    // Absent field → empty, existing manifests stay valid.
+    assert!(
+        parse(&minimal()).expect("parses").manifest().media[0].tracks[0]
+            .lyrics
+            .is_empty()
+    );
+    // Empty array is equivalent to absent.
+    let json = with_track_lyrics("\"lyrics\": []");
+    assert!(
+        parse(&json).expect("parses").manifest().media[0].tracks[0]
+            .lyrics
+            .is_empty()
+    );
+}
+
+#[test]
+fn track_lyrics_multiple_entries_and_tracks() {
+    let json = r#"{
+  "format": "musicpack",
+  "version": 1,
+  "album": {"title": "T", "artists": [{"name": "A"}]},
+  "media": [{
+    "disc": 1,
+    "tracks": [
+      {"track": 1, "title": "One", "audio": {"path": "audio/01.bin", "sha256": "SHA0"},
+       "lyrics": [
+         {"path": "lyrics/01.en.lrc", "sha256": "SHA1", "lang": "en"},
+         {"path": "lyrics/01.de.lrc", "sha256": "SHA2", "lang": "de"}
+       ]},
+      {"track": 2, "title": "Two", "audio": {"path": "audio/02.bin", "sha256": "SHA3"},
+       "lyrics": [{"path": "lyrics/02.lrc", "sha256": "SHA4"}]}
+    ]
+  }]
+}"#
+    .replace("SHA0", SHA)
+    .replace("SHA1", SHA)
+    .replace("SHA2", SHA)
+    .replace("SHA3", SHA)
+    .replace("SHA4", SHA);
+    let parsed = parse(&json).expect("parses");
+    let tracks = &parsed.manifest().media[0].tracks;
+    assert_eq!(tracks[0].lyrics.len(), 2);
+    assert_eq!(tracks[0].lyrics[1].lang.as_deref(), Some("de"));
+    assert_eq!(tracks[1].lyrics.len(), 1);
+}
+
+#[test]
+fn track_lyrics_malformed_entries_are_rejected() {
+    // Not an array.
+    let json = with_track_lyrics("\"lyrics\": {\"path\": \"lyrics/01.lrc\"}");
+    assert!(matches!(parse(&json), Err(Error::Invalid { .. })));
+    // Missing sha256.
+    let json = with_track_lyrics("\"lyrics\": [{\"path\": \"lyrics/01.lrc\"}]");
+    assert!(matches!(parse(&json), Err(Error::Invalid { .. })));
+    // Bad hash.
+    let json = with_track_lyrics("\"lyrics\": [{\"path\": \"lyrics/01.lrc\", \"sha256\": \"zz\"}]");
+    assert!(matches!(parse(&json), Err(Error::Invalid { .. })));
+    // Unsafe path → Path error (existing manifest convention).
+    let json = with_track_lyrics(&format!(
+        "\"lyrics\": [{{\"path\": \"../escape.lrc\", \"sha256\": \"{SHA}\"}}]"
+    ));
+    assert!(matches!(parse(&json), Err(Error::Path(_))));
+    // lang: empty, control character (via escape; note `\u0000` cannot
+    // reach this check — the JSON layer truncates at NUL, its documented
+    // D5 quirk), non-string.
+    for lang in ["\"\"", "\"a\\u0001b\"", "7"] {
+        let json = with_track_lyrics(&format!(
+            "\"lyrics\": [{{\"path\": \"lyrics/01.lrc\", \"sha256\": \"{SHA}\", \"lang\": {lang}}}]"
+        ));
+        assert!(
+            matches!(parse(&json), Err(Error::Invalid { .. })),
+            "lang: {lang}"
+        );
+    }
+}
+
+#[test]
+fn track_lyrics_join_the_path_uniqueness_set() {
+    // Same file referenced per-track and in the root lyrics[] → parse
+    // error (every referenced asset is referenced exactly once, spec
+    // §6.3).
+    let json = minimal()
+        .replace(
+            "\"title\": \"One\",",
+            &format!(
+                "\"title\": \"One\", \"lyrics\": [{{\"path\": \"lyrics/1.lrc\", \"sha256\": \"{SHA}\"}}],"
+            ),
+        )
+        .replace(
+            "\"media\":",
+            &format!("\"lyrics\": [{{\"path\": \"lyrics/1.lrc\", \"sha256\": \"{SHA}\"}}], \"media\":"),
+        );
+    assert!(matches!(parse(&json), Err(Error::Invalid { .. })));
+
+    // Two tracks sharing one lyrics file: also a uniqueness error (the
+    // rule is format-wide; sharing means duplicating the file).
+    let json = r#"{
+  "format": "musicpack",
+  "version": 1,
+  "album": {"title": "T", "artists": [{"name": "A"}]},
+  "media": [{
+    "disc": 1,
+    "tracks": [
+      {"track": 1, "title": "One", "audio": {"path": "audio/01.bin", "sha256": "SHA"},
+       "lyrics": [{"path": "lyrics/shared.lrc", "sha256": "SHA"}]},
+      {"track": 2, "title": "Two", "audio": {"path": "audio/02.bin", "sha256": "SHA"},
+       "lyrics": [{"path": "lyrics/shared.lrc", "sha256": "SHA"}]}
+    ]
+  }]
+}"#
+    .replace("SHA", SHA);
+    assert!(matches!(parse(&json), Err(Error::Invalid { .. })));
+}
+
+#[test]
+fn track_lyrics_count_the_referenced_asset_budget() {
+    // The existing 512-entry cap applies per array (reuse of MAX_LYRICS).
+    let entry = format!("{{\"path\": \"lyrics/x.lrc\", \"sha256\": \"{SHA}\"}},");
+    let many = format!("\"lyrics\": [{}]", entry.repeat(513).trim_end_matches(','));
+    let json = with_track_lyrics(&many);
+    assert!(matches!(parse(&json), Err(Error::Invalid { .. })));
+}
+
+#[test]
+fn track_lyrics_are_referenced_paths_and_never_unreferenced_warnings() {
+    use musicpack_core::format::manifest::Manifest;
+    let json = with_track_lyrics(&format!(
+        "\"lyrics\": [{{\"path\": \"lyrics/01.lrc\", \"sha256\": \"{SHA}\"}}]"
+    ));
+    let parsed = parse(&json).expect("parses");
+    let manifest: &Manifest = parsed.manifest();
+    let paths = manifest.referenced_paths();
+    assert!(
+        paths.contains(&"lyrics/01.lrc"),
+        "per-track lyrics join referenced_paths()"
+    );
+}

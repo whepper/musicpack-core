@@ -11,4 +11,5 @@
 /fuzz/corpus/**         -text
 *.mpc                   -text
 *.mpak                  -text
+*.db                    -text
 *.f32le                 -text

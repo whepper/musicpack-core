@@ -1,0 +1,432 @@
+{
+  "format": "musicpack",
+  "version": 1,
+  "album": {
+    "title": "THRASHER",
+    "artists": [
+      {
+        "name": "Brandon Flowers",
+        "role": "main"
+      }
+    ],
+    "releaseType": "album",
+    "originalReleaseDate": "2026-08-21",
+    "genres": [
+      "Alternative"
+    ]
+  },
+  "release": {
+    "releaseDate": "2026-08-21",
+    "country": "XW",
+    "label": "Island"
+  },
+  "identifiers": {
+    "musicbrainzReleaseGroupId": "1fcd72ed-6716-40ff-a704-53504337b67c",
+    "musicbrainzReleaseId": "fbdeb438-9d56-4245-a23a-2ef2607a0bf6",
+    "barcode": "600574188861"
+  },
+  "identity": {
+    "source": "musicbrainz",
+    "confidence": "exact"
+  },
+  "source": {
+    "type": "digital-download"
+  },
+  "media": [
+    {
+      "disc": 1,
+      "tracks": [
+        {
+          "track": 1,
+          "title": "Does It Ever Cross Your Mind?",
+          "artists": [
+            {
+              "name": "Brandon Flowers",
+              "role": "main"
+            },
+            {
+              "name": "Brandon Flowers",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "USUG12604359",
+            "musicbrainzTrackId": "c8460425-1248-480c-90b6-3a51e5b86aed",
+            "musicbrainzRecordingId": "7f74ea08-0032-4f49-a250-f8ec16b3ce80"
+          },
+          "duration": 191.12959,
+          "loudness": {
+            "trackLUFS": -5.4198791,
+            "truePeakDbTP": 1.4597734
+          },
+          "audio": {
+            "path": "audio/01 - Does It Ever Cross Your Mind?.mpc",
+            "sha256": "ef0267e98071419f64b32f1ad3e709f527db71ed4f06017712f505aaeecb1cc4"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-01.wfm",
+            "sha256": "0ec1bba8cc3f83eeeafc11eed0922edd713285acf50074324ea302f3f65c97c1",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 1912
+          }
+        },
+        {
+          "track": 2,
+          "title": "One Of Us",
+          "artists": [
+            {
+              "name": "Brandon Flowers",
+              "role": "main"
+            },
+            {
+              "name": "Brandon Flowers",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "USUG12604360",
+            "musicbrainzTrackId": "684ac178-fc95-495f-b4c5-e6627e8e1b37",
+            "musicbrainzRecordingId": "f8640fe3-0434-4db6-84bd-bc9c0995a8b5"
+          },
+          "duration": 198.01533,
+          "loudness": {
+            "trackLUFS": -7.0615354,
+            "truePeakDbTP": 1.1595829
+          },
+          "audio": {
+            "path": "audio/02 - One Of Us.mpc",
+            "sha256": "5c6eee9ac4f202bef009a4432f708a191f5dbc2a54b0199644f3d1bd7844e85f"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-02.wfm",
+            "sha256": "e50f5d254293f2bb3795c2187b76fca47cefc3d99dde622180bcf764fd6f7141",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 1981
+          }
+        },
+        {
+          "track": 3,
+          "title": "Tiger's Blood",
+          "artists": [
+            {
+              "name": "Brandon Flowers",
+              "role": "main"
+            },
+            {
+              "name": "Brandon Flowers",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "USUG12604361",
+            "musicbrainzTrackId": "592eb08a-6cdd-442f-95d1-9ad3fab53372",
+            "musicbrainzRecordingId": "a9f827ac-8fe9-485e-9f97-ef9ba1021dd3"
+          },
+          "duration": 250.92846,
+          "loudness": {
+            "trackLUFS": -5.0722199,
+            "truePeakDbTP": 1.6792453
+          },
+          "audio": {
+            "path": "audio/03 - Tiger's Blood.mpc",
+            "sha256": "bc4753e07de0fa81f95cbbf613fa91f8c707adb5ccf0ba61c85d9e96be463de5"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-03.wfm",
+            "sha256": "4d25cfff6b7b544231efd982e6ad3197080130af0642b9f185157c70425697c2",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 2510
+          }
+        },
+        {
+          "track": 4,
+          "title": "Plans",
+          "artists": [
+            {
+              "name": "Brandon Flowers",
+              "role": "main"
+            },
+            {
+              "name": "Brandon Flowers",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "USUG12604362",
+            "musicbrainzTrackId": "b3f37c09-9090-4900-9838-694745fd5d85",
+            "musicbrainzRecordingId": "058ea294-ea2e-4bcc-923d-723f2a52562b"
+          },
+          "duration": 231.35172,
+          "loudness": {
+            "trackLUFS": -6.0776598,
+            "truePeakDbTP": 1.2694809
+          },
+          "audio": {
+            "path": "audio/04 - Plans.mpc",
+            "sha256": "6e0e4809235c105dbe49d33e3d117bb71f8bd501347ea6ef3a7bfb83e72d0ae2"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-04.wfm",
+            "sha256": "33a36b160bb58c6879ca3ad0444e6cf6180158cab52894d2c0ebf7c9518c6543",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 2314
+          }
+        },
+        {
+          "track": 5,
+          "title": "Paradise",
+          "artists": [
+            {
+              "name": "Brandon Flowers",
+              "role": "main"
+            },
+            {
+              "name": "Brandon Flowers",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "USUG12604363",
+            "musicbrainzTrackId": "f664bcc5-92df-4f8b-9d89-779783ce3ea6",
+            "musicbrainzRecordingId": "91218876-befc-4e77-9db3-605da9d11c67"
+          },
+          "duration": 226.43998,
+          "loudness": {
+            "trackLUFS": -6.1773307,
+            "truePeakDbTP": 1.7973902
+          },
+          "audio": {
+            "path": "audio/05 - Paradise.mpc",
+            "sha256": "4a2df7b4126650bceccdb712f2b1d473668c2d1eb25ca5300cf8a66ebfeef6cf"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-05.wfm",
+            "sha256": "c00bba1a9f2c3f27f4f1e93f899b1148bd6a1d680b79adfcf86d988ce939b11b",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 2265
+          }
+        },
+        {
+          "track": 6,
+          "title": "Miss America",
+          "artists": [
+            {
+              "name": "Brandon Flowers",
+              "role": "main"
+            },
+            {
+              "name": "Brandon Flowers",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "USUG12604364",
+            "musicbrainzTrackId": "44d1ef83-b7e6-416e-b550-27d1b05edc41",
+            "musicbrainzRecordingId": "51093d56-a5c4-44af-909d-e45392751e28"
+          },
+          "duration": 295.01143,
+          "loudness": {
+            "trackLUFS": -9.2081005,
+            "truePeakDbTP": 1.0232446
+          },
+          "audio": {
+            "path": "audio/06 - Miss America.mpc",
+            "sha256": "5682cde131c3812d8cc160702b98542f98398c26a866b7e3ca0c1bf4e4537ca3"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-06.wfm",
+            "sha256": "404c53de04648e6a1cf12eaec105df7de245d963a053710f73d338aec4bbe5fa",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 2951
+          }
+        },
+        {
+          "track": 7,
+          "title": "Angel",
+          "artists": [
+            {
+              "name": "Brandon Flowers",
+              "role": "main"
+            },
+            {
+              "name": "Brandon Flowers",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "USUG12604365",
+            "musicbrainzTrackId": "d8c68a30-09c3-40c3-a68c-b81be7a9c2e7",
+            "musicbrainzRecordingId": "ab5d1207-7b0e-44cc-a3bb-550bc616f195"
+          },
+          "duration": 302.7234,
+          "loudness": {
+            "trackLUFS": -5.6084768,
+            "truePeakDbTP": 2.3823123
+          },
+          "audio": {
+            "path": "audio/07 - Angel.mpc",
+            "sha256": "4e55f57351b4f0cde970a011d1897285f3b7b08a74a9fc40bc9a0d7675ca620a"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-07.wfm",
+            "sha256": "cd326c99700a0065ea9563d68b71734101c313346c437113bd82ad1699c4c883",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 3028
+          }
+        },
+        {
+          "track": 8,
+          "title": "The Red Ground",
+          "artists": [
+            {
+              "name": "Brandon Flowers",
+              "role": "main"
+            },
+            {
+              "name": "Brandon Flowers",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "USUG12604366",
+            "musicbrainzTrackId": "c9dad608-e252-429b-88e0-9bdbf9d5a96b",
+            "musicbrainzRecordingId": "b51420b5-ced7-4161-a19b-bf88a0054aff"
+          },
+          "duration": 246.57102,
+          "loudness": {
+            "trackLUFS": -6.1213898,
+            "truePeakDbTP": 2.0035608
+          },
+          "audio": {
+            "path": "audio/08 - The Red Ground.mpc",
+            "sha256": "97309d793aaabb4ab6c959d25a5823dac33fc54cc18b102a66f4e8d0e0ad9b3a"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-08.wfm",
+            "sha256": "927145684fe03161e415c2bfe74cab5dca653ebef518a58fc4ccf07b584c63ba",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 2466
+          }
+        },
+        {
+          "track": 9,
+          "title": "In A Heartbeat",
+          "artists": [
+            {
+              "name": "Brandon Flowers",
+              "role": "main"
+            },
+            {
+              "name": "Brandon Flowers",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "USUG12604368",
+            "musicbrainzTrackId": "0a1147f5-a884-4da0-8cca-69362cfbe5b8",
+            "musicbrainzRecordingId": "4a121129-bb6e-42a1-bbe6-f313a88d04b4"
+          },
+          "duration": 280.96651,
+          "loudness": {
+            "trackLUFS": -6.4415123,
+            "truePeakDbTP": 1.6790473
+          },
+          "audio": {
+            "path": "audio/09 - In A Heartbeat.mpc",
+            "sha256": "20efbf1eb2f028304aaa882692ba6cfad8f680ed751d8471b49e4d8983c8cc15"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-09.wfm",
+            "sha256": "639e261fde77bafe730bdd4a0963d444bf798aa2d9feee609ebd8d91b90ab289",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 2810
+          }
+        },
+        {
+          "track": 10,
+          "title": "An American Dream",
+          "artists": [
+            {
+              "name": "Brandon Flowers",
+              "role": "main"
+            },
+            {
+              "name": "Brandon Flowers",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "USUG12604369",
+            "musicbrainzTrackId": "d54c987a-9568-4418-a24e-c8fbf363c904",
+            "musicbrainzRecordingId": "f996b307-b3c8-41dc-a536-771b23f4d190"
+          },
+          "duration": 343.60916,
+          "loudness": {
+            "trackLUFS": -7.9588801,
+            "truePeakDbTP": 1.0552155
+          },
+          "audio": {
+            "path": "audio/10 - An American Dream.mpc",
+            "sha256": "66c16c34ecc9288dc7fe1fe7f21e2ead912fc83ea7ec3954983f537ca5adfff9"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-10.wfm",
+            "sha256": "4db2ddb62aa4c300d5c5a9dcff521a29642d65f38289b5b8ab5c7e307b89d397",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 3437
+          }
+        }
+      ]
+    }
+  ],
+  "artwork": [
+    {
+      "role": "front",
+      "path": "artwork/front.jpg",
+      "sha256": "5163fc08a21bf3ce2eaaba2a0528b1956dbddc6b91ecd5ca67a89ae734bfe22f"
+    }
+  ],
+  "analysis": [
+    {
+      "type": "sonic",
+      "profile": "musicpack-sonic-openl3-v1",
+      "path": "analysis/sonic.json",
+      "sha256": "253740610179b992cc4f68696f427fe2a3fc1cfd038449d6edaf8371a0b6b196"
+    }
+  ],
+  "loudness": {
+    "algorithm": "ITU-R BS.1770-5",
+    "albumLUFS": -6.3850172,
+    "albumTruePeakDbTP": 2.3823123
+  }
+}

@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300" viewBox="0 0 300 300">
+  <!-- Matches Artwork.svelte's v2 placeholder language: deep muted cover
+       tone (#3d3630) with the warm-cream record mark. -->
+  <rect width="300" height="300" fill="#3d3630"/>
+  <circle cx="150" cy="150" r="96" fill="none" stroke="#f1eee7" stroke-width="2"/>
+  <circle cx="150" cy="150" r="8" fill="#f1eee7"/>
+  <rect x="112" y="146" width="76" height="8" rx="4" fill="#f1eee7"/>
+</svg>

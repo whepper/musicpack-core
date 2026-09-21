@@ -16,8 +16,8 @@ categories = ["multimedia::audio", "parser-implementations"]
 # under `crates/musicpack` and depends on the core; `fuzz/` is cargo-fuzz
 # infrastructure that must stay out of the normal build (nightly + libfuzzer).
 [workspace]
-members = ["crates/musicpack", "crates/musicpack-engine", "crates/musicpack-host", "crates/musicpack-wasm", "crates/musicpack-musepack-encoder", "crates/musicpack-mpc-tools"]
-exclude = ["fuzz"]
+members = ["crates/musicpack", "crates/musicpack-engine", "crates/musicpack-host", "crates/musicpack-wasm", "crates/musicpack-musepack-encoder", "crates/musicpack-mpc-tools", "crates/musicpack-server", "crates/musicpack-author"]
+exclude = ["fuzz", "author/src-tauri"]
 
 [dependencies]
 # SHA-256 is required by the `.mpack` v1 integrity model (every referenced

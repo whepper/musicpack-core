@@ -1,0 +1,2383 @@
+/* Copyright (c) 2026, The MusicPack Development Team
+   SPDX-License-Identifier: BSD-3-Clause */
+
+/*
+ * MusicPack design language v2 — a premium dark record collection.
+ *
+ * Deep neutral canvas that lets album artwork carry the UI, warm cream
+ * typography with a serif display voice, a single gold accent for
+ * selection/emphasis, and green reserved for verified/valid states.
+ * Hairline rules and layered surface tones provide structure and depth;
+ * no gradients, no glassmorphism, no dashboard chrome. The system serif
+ * stack avoids webfont downloads. Normative reference: docs/ui-v2-design.md.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #0f1013;            /* page canvas */
+  --bg-rail: #0a0b0d;       /* sidebar / deeper chrome */
+  --surface: #16171b;       /* raised: cards, panels, player, drawer */
+  --surface-2: #1e2025;     /* highest elevation: hover/active, tiles */
+
+  --text: #f1eee7;          /* warm cream */
+  --text-soft: #b0aca3;     /* secondary */
+  --text-faint: #8a8781;    /* micro-copy only */
+
+  --accent: #d9a856;        /* gold — selection, active states, emphasis */
+  --accent-strong: #e6c37a; /* gold hover / focus */
+  --accent-ink: #1a150b;    /* text/icons placed on gold */
+  --ok: #63b97c;            /* verified / valid / installed only */
+  --danger: #e07a6a;
+  --focus: #e6c37a;
+
+  --hairline: rgba(241, 238, 231, 0.10);
+  --hairline-strong: rgba(241, 238, 231, 0.22);
+
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fs-xxs: 0.72rem;
+  --fs-xs: 0.78rem;
+  --fs-sm: 0.875rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.25rem;
+  --fs-xl: 1.75rem;
+  --fs-2xl: 2.6rem;
+  --fs-display: clamp(2.2rem, 4.5vw, 3.4rem);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --radius: 4px;
+  --radius-card: 10px;
+  --sidebar-w: 236px;
+
+  /* The one allowed shadow: beneath artwork, never under UI chrome. */
+  --shadow-artwork: 0 16px 40px rgba(0, 0, 0, 0.55);
+
+  --player-height: 84px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent-strong);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.skip-link {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  background: var(--text);
+  color: var(--bg);
+  padding: 8px 16px;
+  z-index: 1000;
+}
+
+.skip-link:focus {
+  left: 8px;
+  top: 8px;
+}
+
+/* ---- layout ------------------------------------------------------------- */
+
+.shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+}
+
+.shell-column {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-5) calc(var(--player-height) + 56px);
+}
+
+/* ---- type --------------------------------------------------------------- */
+
+h1,
+h2,
+h3 {
+  font-family: var(--serif);
+  font-weight: 600;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.eyebrow {
+  font-family: var(--sans);
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.smallcaps {
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+/* ---- app shell: sidebar + top bar --------------------------------------- */
+
+.sidebar {
+  background: var(--bg-rail);
+  border-right: 1px solid var(--hairline);
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-5) var(--space-3) calc(var(--player-height) + var(--space-4));
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+}
+
+.side-brand {
+  font-family: var(--serif);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  padding: 0 var(--space-2) var(--space-4);
+  display: block;
+}
+
+.side-brand em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+.side-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.side-group {
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: var(--space-4) var(--space-2) var(--space-1);
+}
+
+.side-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 7px var(--space-2);
+  border-radius: 6px;
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
+.side-link svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.side-link:hover {
+  color: var(--text);
+  background: var(--surface);
+}
+
+.side-link[aria-current="page"] {
+  color: var(--accent);
+  background: var(--surface-2);
+}
+
+.side-foot {
+  margin-top: auto;
+  padding: var(--space-3) var(--space-2) 0;
+  border-top: 1px solid var(--hairline);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.side-state {
+  color: var(--text-faint);
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(5, 6, 8, 0.6);
+  z-index: 48;
+  border: 0;
+  cursor: default;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-rail);
+  position: sticky;
+  top: 0;
+  z-index: 25;
+}
+
+.topbar-menu-btn {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  color: var(--text-soft);
+  border: 1px solid var(--hairline-strong);
+  flex: none;
+}
+
+.topbar-menu-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.topbar-menu-btn:hover {
+  color: var(--text);
+}
+
+.breadcrumb ol {
+  display: flex;
+  flex-wrap: wrap;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  gap: var(--space-2);
+  align-items: baseline;
+  font-size: var(--fs-sm);
+  min-width: 0;
+}
+
+.breadcrumb li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  white-space: nowrap;
+}
+
+.breadcrumb li:not(:last-child)::after {
+  content: "›";
+  color: var(--text-faint);
+}
+
+.breadcrumb a {
+  color: var(--text-soft);
+}
+
+.breadcrumb a:hover {
+  color: var(--accent-strong);
+}
+
+.breadcrumb [aria-current="page"] {
+  color: var(--text);
+}
+
+.topbar-search {
+  margin-left: auto;
+  width: min(280px, 42vw);
+}
+
+/* Compound selector: must outrank the shared .search-field rules (defined
+   later in this sheet) to keep the top-bar pill compact. */
+.topbar-search.search-field {
+  padding: 7px 16px;
+}
+
+.topbar-search.search-field input {
+  font-size: var(--fs-sm);
+}
+
+/* Icon-only rail on intermediate widths. */
+@media (max-width: 1024px) and (min-width: 681px) {
+  .shell {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+  .sidebar {
+    padding-inline: var(--space-2);
+  }
+  .side-label,
+  .side-group {
+    display: none;
+  }
+  .side-link {
+    justify-content: center;
+    padding: 9px 0;
+  }
+  .side-brand {
+    font-size: 0;
+    text-align: center;
+  }
+  .side-brand::before {
+    content: "M";
+    font-size: var(--fs-xl);
+  }
+  .side-foot {
+    flex-direction: column;
+  }
+}
+
+/* Off-canvas drawer on phones; `visibility` keeps the closed drawer out
+   of the tab order and the accessibility tree. */
+@media (max-width: 680px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(300px, 84vw);
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform 0.22s ease, visibility 0s 0.22s;
+    z-index: 50;
+  }
+  .sidebar.open {
+    transform: translateX(0);
+    visibility: visible;
+    transition: transform 0.22s ease;
+  }
+  .topbar {
+    padding: var(--space-3) var(--space-4);
+  }
+  .topbar-menu-btn {
+    display: inline-flex;
+  }
+  .breadcrumb {
+    display: none;
+  }
+  /* The pill owns the leftover width so the menu button, search and the
+     offline chip never push the bar past the viewport. */
+  .topbar-search {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 0;
+  }
+}
+
+.offline-chip {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-radius: 999px;
+  padding: 3px 12px;
+}
+
+.offline-badge {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 1;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-radius: 999px;
+  font-size: var(--fs-xs);
+  line-height: 1;
+  padding: 4px 8px;
+}
+
+/* ---- settings ----------------------------------------------------------- */
+
+.settings-page {
+  max-width: 720px;
+}
+/* Match the fs-2xl page-title scale used by shelf / artists / search. */
+.settings-page h1 {
+  font-size: var(--fs-2xl);
+}
+.settings-page section {
+  margin-top: var(--space-6);
+}
+.pref-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+.pref-option {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  cursor: pointer;
+}
+.pkg-list {
+  list-style: none;
+  padding: 0;
+  margin: var(--space-4) 0 0;
+  display: flex;
+  flex-direction: column;
+}
+.pkg-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.pkg-title {
+  flex: 1;
+  min-width: 0;
+}
+.pkg-flag {
+  color: var(--accent);
+}
+
+/* ---- shelf -------------------------------------------------------------- */
+
+.shelf-header {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.shelf-title-wrap {
+  min-width: 0;
+}
+
+.shelf-title-wrap .eyebrow {
+  margin-bottom: var(--space-1);
+}
+
+/* Quiet collection statistic: small caps only — real data (browse total),
+   no boxed-chip decoration. */
+.shelf-count {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.shelf-header h1 {
+  font-size: var(--fs-2xl);
+}
+
+.shelf-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  gap: var(--space-5) var(--space-4);
+}
+
+@media (max-width: 520px) {
+  .shelf-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4);
+  }
+}
+
+.album-card {
+  display: block;
+  min-width: 0;
+}
+
+.album-card .cover {
+  aspect-ratio: 1;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+  /* Same artwork grammar as the album hero: hairline + quiet depth, a
+     small lift on hover/focus (interactive state, collapsed under
+     prefers-reduced-motion by the global rule). */
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.album-card:hover .cover,
+.album-card:focus-visible .cover {
+  transform: translateY(-2px);
+  border-color: var(--hairline-strong);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.45);
+}
+
+.album-card:hover .title,
+.album-card:focus-visible .title {
+  color: var(--accent-strong);
+}
+
+.album-card .cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.album-card .title {
+  font-family: var(--serif);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  margin-top: var(--space-2);
+  line-height: 1.25;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.album-card .artist {
+  font-size: var(--fs-sm);
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.album-card .collector {
+  font-size: var(--fs-xxs);
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+}
+
+.genre-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  margin-top: var(--space-1);
+}
+
+.genre-pill {
+  font-size: var(--fs-xxs);
+  color: var(--text-faint);
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  padding: 1px 6px;
+  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+
+/* ---- artwork placeholder ------------------------------------------------ */
+
+.artwork-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--serif);
+  color: var(--text);
+  user-select: none;
+}
+
+/* ---- album page --------------------------------------------------------- */
+
+/* Hero action row: wraps instead of overflowing on narrow viewports. */
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.album-hero {
+  display: grid;
+  grid-template-columns: minmax(220px, 320px) 1fr;
+  gap: var(--space-7);
+  margin-bottom: var(--space-7);
+  align-items: start;
+}
+
+@media (max-width: 680px) {
+  .album-hero {
+    grid-template-columns: 1fr;
+    gap: var(--space-5);
+  }
+  .album-hero .cover {
+    max-width: 220px;
+  }
+}
+
+.album-hero .cover {
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-artwork);
+}
+
+.album-hero .cover img {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+}
+
+.album-heading h1 {
+  font-size: var(--fs-display);
+  margin: var(--space-2) 0;
+  letter-spacing: -0.015em;
+}
+
+.album-heading .artist {
+  font-family: var(--serif);
+  font-size: var(--fs-lg);
+  color: var(--text-soft);
+}
+
+/* The artist link is the hero's one interactive element and carries the
+   accent — every other hero element stays neutral. */
+.album-heading .artist a {
+  color: var(--accent);
+}
+
+.album-heading .artist a:hover {
+  color: var(--accent-strong);
+}
+
+.edition-line {
+  margin: var(--space-2) 0 0;
+  font-size: var(--fs-sm);
+  color: var(--text-soft);
+}
+
+.edition-line.dates {
+  margin-top: var(--space-3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---- album layout: main column + contextual rail ------------------------ */
+
+.album-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-7);
+  align-items: start;
+}
+
+.album-main {
+  min-width: 0;
+}
+
+/* Editorial rail: a quiet margin column separated by one hairline —
+   typography and rules instead of boxed cards. */
+.album-rail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  position: sticky;
+  top: 64px;
+  border-left: 1px solid var(--hairline);
+  padding-left: var(--space-6);
+}
+
+@media (max-width: 1024px) {
+  .album-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .album-rail {
+    position: static;
+    border-left: 0;
+    padding-left: 0;
+    border-top: 1px solid var(--hairline);
+    padding-top: var(--space-5);
+  }
+}
+
+.rail-panel {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  border-top: 1px solid var(--hairline);
+  padding: var(--space-4) 0 var(--space-5);
+}
+
+.rail-panel:first-child {
+  border-top: 0;
+  padding-top: var(--space-2);
+}
+
+.rail-panel > header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.rail-panel h3 {
+  color: var(--text-faint);
+  letter-spacing: 0.14em;
+  margin-right: auto;
+}
+
+.rail-count {
+  color: var(--text-faint);
+}
+
+.rail-link {
+  color: var(--text-faint);
+  font-size: var(--fs-lg);
+  line-height: 1;
+  padding: 0 var(--space-1);
+}
+
+.rail-link:hover {
+  color: var(--accent-strong);
+}
+
+.rail-kv {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rail-kv > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: 4px 0;
+  font-size: var(--fs-sm);
+}
+
+.rail-kv dt {
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  flex: none;
+}
+
+.rail-kv dd {
+  margin: 0;
+  text-align: right;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-soft);
+}
+
+.rail-ext {
+  color: var(--text-soft);
+}
+
+.rail-ext:hover {
+  color: var(--accent-strong);
+}
+
+.rail-verify {
+  margin-top: var(--space-3);
+}
+
+.rail-label {
+  color: var(--text-faint);
+  margin-bottom: var(--space-1);
+}
+
+.analysis-mini {
+  margin-bottom: var(--space-3);
+}
+
+.edition-thumbs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+
+.edition-thumb {
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  opacity: 0.7;
+  background: var(--surface);
+}
+
+.edition-thumb.selected {
+  border-color: var(--accent);
+  opacity: 1;
+}
+
+/* ---- chips & tiles ------------------------------------------------------ */
+
+.status-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+}
+
+/* Hero badges: neutral hairline pills for identity/provenance facts —
+   deliberately uncolored so gold and green stay precious. */
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 4px 12px;
+  white-space: nowrap;
+}
+
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.status-chip.ok {
+  color: var(--ok);
+  border-color: rgba(99, 185, 124, 0.45);
+}
+
+.status-chip.warn {
+  color: var(--accent-strong);
+  border-color: rgba(217, 168, 86, 0.45);
+}
+
+.status-chip.bad {
+  color: var(--danger);
+  border-color: rgba(224, 122, 106, 0.45);
+}
+
+.info-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 240px));
+  gap: var(--space-3);
+  margin: 0 0 var(--space-6);
+}
+
+.info-tile {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  padding: var(--space-3) var(--space-4);
+}
+
+a.info-tile:hover {
+  background: var(--surface-2);
+  border-color: var(--hairline-strong);
+}
+
+.tile-title {
+  display: block;
+  font-weight: 600;
+  font-size: var(--fs-sm);
+}
+
+.tile-sub {
+  display: block;
+  color: var(--text-soft);
+  font-size: var(--fs-xs);
+  margin-top: 2px;
+}
+
+/* ---- album sections ----------------------------------------------------- */
+
+.section-tabs {
+  display: flex;
+  gap: var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+  margin: var(--space-5) 0 var(--space-4);
+  overflow-x: auto;
+}
+
+.section-tab {
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  padding: 10px 14px;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+
+.section-tab:hover {
+  color: var(--text);
+}
+
+.section-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.album-section {
+  min-height: 180px;
+}
+
+.section-heading {
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+.section-note {
+  margin-top: var(--space-3);
+  font-size: var(--fs-sm);
+}
+
+.section-block {
+  margin-bottom: var(--space-4);
+}
+
+/* ---- technical track table ---------------------------------------------- */
+
+/* Wide technical table on narrow viewports: scroll the grid itself instead
+   of letting it push the page horizontally. contain:paint is load-bearing:
+   without it Blink's viewport scrollable overflow still absorbs the
+   table's full 532px box and the whole page scrolls sideways. */
+.table-scroll {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  contain: paint;
+}
+
+/* On phones the decorative sparkline column costs a third of the table
+   width; the same waveform is offered in the Analysis section and on the
+   track page. Cell padding tightens in the same pass so the title column
+   keeps a readable width. */
+@media (max-width: 680px) {
+  .track-table .h-wave,
+  .track-table .cell-waveform {
+    display: none;
+  }
+  /* Single-disc albums repeat a constant "1" in every row; on phones the
+     column trades away for a readable title (the hero still states the
+     disc structure). Multi-disc tables keep it — it's real information. */
+  .track-table.single-disc .h-disc {
+    display: none;
+  }
+  /* When multi-disc keeps its column, integrated LUFS yields the rest of
+     the width (true-peak stays as the clipping guard; both numbers are on
+     the track page and in the Analysis section regardless). */
+  .track-table:not(.single-disc) .h-lufs {
+    display: none;
+  }
+  /* Keep true peak on one line like the LUFS column: the unit belongs to
+     the desktop scale, phones get the number (headers state the column). */
+  .track-table .peak-unit {
+    display: none;
+  }
+  .track-table .lbl-full {
+    display: none;
+  }
+  .track-table .lbl-short {
+    display: inline;
+  }
+  .track-table th,
+  .track-table td {
+    padding-inline: var(--space-1);
+  }
+  /* The small-caps headers drive the column minima at these widths. */
+  .track-table th {
+    letter-spacing: 0.06em;
+    white-space: normal;
+  }
+}
+
+/* Compact header alias for width-constrained tables. */
+.lbl-short {
+  display: none;
+}
+
+.track-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-sm);
+}
+
+.track-table th {
+  text-align: left;
+  font-weight: 400;
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+.track-table td {
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text-soft);
+}
+
+.track-table th.r,
+.track-table td.r {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.track-table .h-num {
+  width: 2.4em;
+}
+
+.track-table .h-disc {
+  width: 3.2em;
+}
+
+.track-table td.num {
+  color: var(--text-faint);
+}
+
+.track-table td.cell-title {
+  color: var(--text);
+}
+
+.row-play {
+  text-align: left;
+  color: inherit;
+}
+
+.row-play:hover {
+  color: var(--accent-strong);
+}
+
+.trow[aria-current="true"] .row-play {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.row-detail {
+  color: var(--text-faint);
+  text-decoration: none;
+  font-size: var(--fs-lg);
+  line-height: 1;
+  padding: var(--space-1);
+  border-radius: var(--radius);
+}
+.row-detail:hover,
+.row-detail:focus-visible {
+  color: var(--accent-strong);
+}
+
+.trow.now-playing {
+  background: var(--surface);
+}
+
+.waveform-spark {
+  position: relative;
+  min-width: 110px;
+  max-width: 150px;
+}
+
+.waveform-spark canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.spark-empty {
+  color: var(--text-faint);
+}
+
+.disc-toggles {
+  display: flex;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-3) 0;
+}
+
+.disc-toggle {
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  padding: 7px 18px;
+}
+
+.disc-toggle:hover {
+  color: var(--text);
+  border-color: var(--accent);
+}
+
+/* ---- identifiers, assets, representations ------------------------------- */
+
+.hash-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.hash {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+  color: var(--text-soft);
+  background: var(--bg);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 2px 8px;
+}
+
+.hash:hover {
+  color: var(--text);
+  border-color: var(--hairline-strong);
+}
+
+.hash-copied {
+  color: var(--ok);
+  font-size: var(--fs-xxs);
+}
+
+.id-list {
+  list-style: none;
+  margin: 0 0 var(--space-4);
+  padding: 0;
+}
+
+.id-list li {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--fs-sm);
+}
+
+.id-key {
+  flex: none;
+  width: 10em;
+  color: var(--text-faint);
+}
+
+.id-what {
+  color: var(--text);
+}
+
+.mono {
+  font-family: var(--mono);
+  font-size: var(--fs-xs);
+}
+
+.asset-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.asset-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--fs-sm);
+}
+
+.rep-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.rep-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
+  font-size: var(--fs-sm);
+}
+
+.rep-track {
+  color: var(--text);
+}
+
+.rep-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  color: var(--text-soft);
+}
+
+.rep-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+
+.rep-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.rep-title {
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+}
+
+.rep-size {
+  color: var(--text-faint);
+  font-weight: 400;
+}
+
+.rep-sub {
+  margin: 0;
+  font-size: var(--fs-xs);
+  color: var(--text-soft);
+}
+
+.btn-small {
+  font-size: var(--fs-xs);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  padding: 4px 14px;
+  color: var(--text);
+  flex: none;
+}
+
+.btn-small:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ---- edition chips ------------------------------------------------------ */
+
+.editions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-4) 0 var(--space-5);
+}
+
+.edition-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 5px 14px;
+  font-size: var(--fs-xs);
+  color: var(--text-soft);
+  background: transparent;
+}
+
+.edition-chip-art {
+  width: 22px;
+  height: 22px;
+  border-radius: 3px;
+  object-fit: cover;
+  display: block;
+}
+
+.edition-chip[aria-pressed="true"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-color: var(--accent);
+}
+
+/* ---- buttons ------------------------------------------------------------ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px 22px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.btn.ghost {
+  background: transparent;
+  color: var(--text);
+  border-color: var(--hairline);
+}
+
+.btn.ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: transparent;
+}
+
+/* ---- track list --------------------------------------------------------- */
+
+.tracklist {
+  border-top: 1px solid var(--hairline);
+}
+
+.tracklist .disc-title {
+  margin: var(--space-4) 0 var(--space-2);
+  font-family: var(--serif);
+  font-size: var(--fs-lg);
+}
+
+.track {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+/* Semantic list container for a disc's tracks (native list semantics). */
+.disc-tracks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.track:hover {
+  background: var(--surface);
+}
+
+.track-play {
+  display: grid;
+  grid-template-columns: 2.4em 1fr auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.track .num {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+}
+
+.track .tt {
+  font-size: var(--fs-sm);
+}
+
+.track .dur {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+}
+
+.track .meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  font-size: var(--fs-sm);
+}
+
+.track .codec {
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.track .queue-add {
+  min-width: 2em;
+  padding: 2px 6px;
+  border: 0;
+  background: transparent;
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+
+.track .track-detail {
+  color: var(--text-faint);
+  text-decoration: none;
+  font-size: var(--fs-lg);
+  line-height: 1;
+  padding: var(--space-1);
+  border-radius: var(--radius);
+}
+.track .track-detail:hover,
+.track .track-detail:focus-visible {
+  color: var(--accent-strong);
+}
+
+.track .queue-add:hover,
+.track .queue-add:focus-visible {
+  color: var(--accent-strong);
+}
+
+.track.now-playing {
+  border-left: 2px solid var(--accent);
+  padding-left: calc(var(--space-2) - 2px);
+}
+
+.track[aria-current="true"] .tt {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+/* ---- player bar --------------------------------------------------------- */
+
+.playerbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: var(--player-height);
+  background: var(--surface);
+  border-top: 1px solid var(--hairline);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-4);
+  padding: 0 var(--space-5);
+  z-index: 20;
+}
+
+.playerbar .now {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.playerbar .now .thumb {
+  width: 52px;
+  height: 52px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  flex: none;
+  border: 1px solid var(--hairline);
+}
+
+.now-meta {
+  min-width: 0;
+}
+
+.playerbar .now .tt {
+  font-family: var(--serif);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playerbar .now .art {
+  font-size: var(--fs-xs);
+  color: var(--text-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* What is actually sounding + offline state — quiet small caps. */
+.pb-format {
+  display: flex;
+  gap: var(--space-2);
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.pb-offline {
+  color: var(--ok);
+}
+
+/* The one filled control in the app: the gold play/pause circle. */
+.play-toggle {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.play-toggle:hover {
+  background: var(--accent-strong);
+}
+
+.play-toggle:active {
+  transform: scale(0.96);
+}
+
+.play-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
+.transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.transport button svg {
+  width: 22px;
+  height: 22px;
+}
+
+.transport .progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 320px;
+  /* Definite height: .waveform sizes itself with height:100%, which cannot
+     resolve against an auto-height parent — the canvas then falls back to
+     its 300x150 intrinsic size, blowing up the grid row and pushing the
+     right-zone controls past the viewport bottom (seek/queue unclickable). */
+  height: 36px;
+}
+
+.transport input[type="range"] {
+  flex: 1;
+}
+
+.progress .time {
+  font-size: var(--fs-xs);
+  color: var(--text-soft);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.right-zone {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-3);
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 2px;
+  /* Shared gold progress treatment: components set --range-fill (e.g.
+     style="--range-fill:42%"). Unset falls back to the plain track. */
+  background: linear-gradient(
+    to right,
+    var(--accent) var(--range-fill, 0%),
+    var(--hairline-strong) var(--range-fill, 0%)
+  );
+  cursor: pointer;
+}
+
+input[type="radio"],
+input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+}
+
+/* ---- mobile player ------------------------------------------------------ */
+
+.mobile-player {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  background: var(--surface);
+  border-top: 1px solid var(--hairline);
+}
+
+.mobile-player .row {
+  display: grid;
+  /* Five tracks: thumb, title, previous, play/pause, next. A missing track
+     wraps the last control onto an implicit second row. */
+  grid-template-columns: 44px minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.mobile-player .thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius);
+  object-fit: cover;
+}
+
+.mobile-player .tt {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mobile-player .art {
+  font-size: var(--fs-xs);
+  color: var(--text-soft);
+}
+
+.mobile-player input[type="range"] {
+  display: block;
+  width: 100%;
+  height: 6px;
+  border: none;
+  border-radius: 0;
+}
+
+/* ---- queue -------------------------------------------------------------- */
+
+.queue-panel {
+  position: fixed;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: min(380px, 92vw);
+  background: var(--surface);
+  border-left: 1px solid var(--hairline);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  /* Fully remove the closed drawer from hit-testing, tab order and the
+     accessibility tree; delayed so the slide-out stays visible. */
+  visibility: hidden;
+  transition: transform 0.22s ease, visibility 0s 0.22s;
+}
+
+.queue-panel.open {
+  transform: translateX(0);
+  visibility: visible;
+  transition: transform 0.22s ease;
+}
+
+.queue-panel header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.queue-panel header h2 {
+  margin: 0;
+}
+
+/* Drawer sub-header: count + Clear. Stays pinned while the list scrolls. */
+.queue-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) var(--space-4) var(--space-2);
+}
+
+.queue-clear {
+  color: var(--danger);
+}
+
+/* The scrollable body. In the drawer (a fixed-height flex column) min-height:0
+   is what lets it actually scroll instead of growing past the viewport on
+   short screens; on the Now Playing page the parent isn't a flex column so the
+   flex/overflow properties are inert and the list flows with the page. */
+.queue-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.queue-item-body {
+  min-width: 0;
+}
+
+.queue-open {
+  display: block;
+  width: 100%;
+  text-align: left;
+}
+
+.queue-item .num {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+}
+
+.queue-item .queue-elapsed {
+  color: var(--text-soft);
+  font-size: var(--fs-xs);
+}
+
+.queue-ops {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.queue-move {
+  color: var(--text-faint);
+  font-size: var(--fs-xs);
+  padding: 2px 4px;
+}
+
+.queue-remove {
+  color: var(--text-faint);
+  font-size: var(--fs-md);
+  padding: 2px 4px;
+}
+
+.queue-empty {
+  font-family: var(--sans);
+  font-size: var(--fs-md);
+  padding: var(--space-6) var(--space-4);
+}
+
+.queue-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--hairline);
+  align-items: center;
+}
+
+.queue-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  border: 1px solid var(--hairline);
+  flex: none;
+}
+
+.queue-item[aria-current="true"] .queue-tt {
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.queue-tt {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+}
+
+.queue-art {
+  font-size: var(--fs-xs);
+  color: var(--text-soft);
+}
+
+/* ---- forms / auth ------------------------------------------------------- */
+
+.signin {
+  max-width: 400px;
+  margin: var(--space-7) auto;
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+}
+
+.signin h1 {
+  font-size: var(--fs-xl);
+  margin-bottom: var(--space-2);
+}
+
+.field {
+  margin: var(--space-4) 0;
+}
+
+.field label {
+  display: block;
+  font-size: var(--fs-sm);
+  margin-bottom: var(--space-1);
+}
+
+.field input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  font: inherit;
+  background: var(--bg);
+  color: var(--text);
+}
+
+/* ---- search ------------------------------------------------------------- */
+
+.search-page {
+  max-width: 1100px;
+}
+
+/* Shared search-field pill: top bar, shelf/artist search and the search
+   page all use this grammar (surface pill, faint magnifier, gold focus). */
+.search-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  padding: 10px 20px;
+  background: var(--surface);
+}
+
+.search-field:focus-within {
+  border-color: var(--accent);
+}
+
+.search-field .search-glyph {
+  color: var(--text-faint);
+  font-size: var(--fs-lg);
+  line-height: 1;
+}
+
+.search-field input {
+  border: none;
+  background: transparent;
+  font: inherit;
+  font-size: var(--fs-md);
+  color: var(--text);
+  outline: none;
+  width: 100%;
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.search-field input::placeholder {
+  color: var(--text-faint);
+}
+
+/* Search-page variant: full-width field with breathing room below. */
+.search-page-field {
+  margin-bottom: var(--space-5);
+}
+
+/* Shelf/artist row: the pill takes the available width beside sort chips. */
+.search-row {
+  display: flex;
+  gap: var(--space-4);
+  align-items: center;
+  margin-bottom: var(--space-5);
+  flex-wrap: wrap;
+}
+
+.search-row .search-field {
+  flex: 1;
+  min-width: 220px;
+}
+
+/* Chip group beside the search field (offline filter + sort). */
+.sort {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+/* Kill the UA's inner magnifier/cancel decorations on iOS so the pill
+   above is the only chrome. */
+input[type="search"]::-webkit-search-decoration,
+input[type="search"]::-webkit-search-cancel-button {
+  -webkit-appearance: none;
+}
+
+.artist-rows {
+  list-style: none;
+  margin: 0 0 var(--space-6);
+  padding: 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.artist-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.artist-row .artist-name {
+  font-family: var(--serif);
+  font-size: var(--fs-lg);
+}
+
+.artist-row:hover .artist-name,
+.artist-row:focus-visible .artist-name {
+  color: var(--accent-strong);
+}
+
+/* ---- misc --------------------------------------------------------------- */
+
+.muted {
+  color: var(--text-soft);
+}
+
+.spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--hairline);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  margin: var(--space-6) auto;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.empty-state {
+  text-align: center;
+  color: var(--text-faint);
+  padding: var(--space-7) 0;
+  font-family: var(--serif);
+  font-size: var(--fs-lg);
+}
+
+/* Error surface: the empty-state frame in the reading voice (sans, body
+   size) so failures feel like chrome, not editorial copy. */
+.error-state {
+  font-family: var(--sans);
+  font-size: var(--fs-md);
+}
+
+.error-state p {
+  margin: 0 0 var(--space-2);
+}
+
+.error-state .error-detail {
+  margin: 0;
+  font-size: var(--fs-sm);
+}
+
+/* ---- release info panel ------------------------------------------------- */
+
+.info-panel {
+  margin-top: var(--space-6);
+  border-top: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline);
+}
+
+.info-panel summary {
+  cursor: pointer;
+  padding: var(--space-3) 0;
+  font-family: var(--serif);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  list-style: none;
+}
+
+.info-panel summary::-webkit-details-marker {
+  display: none;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-4);
+  padding-bottom: var(--space-5);
+}
+
+.info-grid dt {
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.info-grid dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-sm);
+}
+
+/* ---- track detail ------------------------------------------------------ */
+
+.track-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--space-7);
+  align-items: start;
+}
+
+.track-main {
+  min-width: 0;
+}
+
+.track-seek {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin: var(--space-3) 0 var(--space-5);
+}
+
+.track-seek .time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Definite height: the WaveformSeek canvas sizes itself with height:100%
+   and cannot resolve against an auto-height parent. */
+.track-seek-control {
+  flex: 1;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.track-seek-control input[type="range"] {
+  width: 100%;
+}
+
+.track-waveform {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.inline-link {
+  background: none;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-decoration: none;
+}
+
+.inline-link:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.rail-link-row {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  margin-top: var(--space-3);
+  color: var(--text-faint);
+  font-size: var(--fs-xxs);
+}
+
+@media (max-width: 1024px) {
+  .track-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* ---- now playing (expanded player) -------------------------------------- */
+
+.now-playing {
+  max-width: 1100px;
+}
+
+.np-hero {
+  display: grid;
+  grid-template-columns: minmax(260px, 400px) 1fr;
+  gap: var(--space-7);
+  align-items: center;
+  margin-bottom: var(--space-7);
+}
+
+.np-art {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-artwork);
+}
+
+.np-title {
+  font-size: var(--fs-display);
+  letter-spacing: -0.015em;
+  margin: var(--space-2) 0;
+}
+
+.np-context {
+  font-family: var(--serif);
+  font-size: var(--fs-lg);
+  color: var(--text-soft);
+  margin: 0 0 var(--space-2);
+}
+
+.np-context a {
+  color: var(--text-soft);
+}
+
+.np-context a:hover {
+  color: var(--accent-strong);
+}
+
+.np-format {
+  color: var(--text-faint);
+  margin: 0 0 var(--space-5);
+}
+
+.np-offline {
+  color: var(--ok);
+}
+
+.np-seek {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+.np-seek .time {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Definite height: the waveform canvas sizes itself with height:100% and
+   cannot resolve against an auto-height parent (same as the bar). */
+.np-seek-control {
+  flex: 1;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.np-seek-control input[type="range"] {
+  width: 100%;
+}
+
+.np-transport {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.np-play {
+  width: 52px;
+  height: 52px;
+}
+
+.np-queue {
+  margin-top: var(--space-6);
+}
+
+.np-queue-heading {
+  margin-bottom: var(--space-3);
+}
+
+@media (max-width: 680px) {
+  .np-hero {
+    grid-template-columns: 1fr;
+    gap: var(--space-5);
+  }
+  .np-art {
+    max-width: 260px;
+  }
+}
+
+/* ---- responsive player ------------------------------------------------ */
+
+@media (max-width: 680px) {
+  .playerbar {
+    display: none;
+  }
+  .main {
+    padding-bottom: calc(118px + 40px);
+  }
+}
+
+@media (min-width: 681px) {
+  .mobile-player {
+    display: none;
+  }
+}
+
+/* ---- reduced motion ----------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001s !important;
+    transition-duration: 0.001s !important;
+  }
+}
+
+/* ---- lyrics (R3.4, docs/musicpack-lyrics-v1.md §12) --------------------- */
+
+.lyrics-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* Reserve space while loading so the section never jumps (§12). */
+.lyrics-loading {
+  min-height: 9rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.lyrics-scroll {
+  max-height: 22rem;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+/* Keyboard operability follows the R2 baseline: a visible focus ring on
+ * the scroll region, no keyboard trap (tab moves past the panel). */
+.lyrics-scroll:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.lyric-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font-family: var(--serif);
+  font-size: var(--fs-md);
+  line-height: 1.6;
+}
+
+.lyric-line {
+  padding: var(--space-1) 0;
+  color: var(--text-soft);
+  overflow-wrap: anywhere; /* long lines wrap, never clip mid-glyph (§12) */
+  white-space: pre-wrap;
+  transition: color 160ms ease;
+}
+
+.lyric-line.past {
+  color: var(--text-faint);
+}
+
+.lyric-line.active {
+  color: var(--accent);
+  font-size: var(--fs-lg);
+}
+
+.lyrics-note {
+  color: var(--text-soft);
+  font-size: var(--fs-sm);
+  margin: 0;
+}
+
+.lyrics-retry {
+  margin-left: var(--space-2);
+}
+
+/* Floating resume-follow affordance (§12): appears only while the user
+ * has suspended following. */
+.lyrics-resume {
+  align-self: center;
+  min-height: 44px; /* §12 touch target */
+}
+
+.lyrics-lang {
+  color: var(--text-faint);
+  margin: 0;
+}

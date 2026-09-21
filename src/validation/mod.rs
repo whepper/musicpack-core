@@ -8,8 +8,14 @@
 //! # What verify checks
 //!
 //! For every referenced asset, in the reference's traversal order (each
-//! disc's tracks: primary audio, waveform, representations; then artwork,
-//! booklet, lyrics, extras, analysis):
+//! disc's tracks: primary audio, waveform, representations, per-track
+//! lyrics; then artwork, booklet, lyrics, extras, analysis):
+//!
+//! > Per-track lyric references are the one Rust-defined group
+//! > (`docs/musicpack-lyrics-v1.md` §6.3, an additive field the
+//! > reference has no group for); they slot after the track's
+//! > representations so per-track assets stay grouped. Every other
+//! > group keeps the reference's exact order.
 //!
 //! 1. containment/type via the storage backend — an escaped path is
 //!    `unsafe path`, anything else unopenable is `missing file`;
@@ -194,6 +200,22 @@ pub fn verify(manifest: &Manifest, backend: &dyn PackageBackend) -> Report {
                     &representation.path,
                     &representation.sha256,
                     "representation",
+                    &mut report,
+                    Some(&mut budget),
+                );
+            }
+            // Per-track lyrics references (docs/musicpack-lyrics-v1.md
+            // §6.3): verified like any budgeted asset. Traversal order is
+            // Rust-defined (the reference has no such group); per-track
+            // assets stay grouped. Only manifests carrying the additive
+            // field have entries here, so reference-authored reports are
+            // byte-identical to before.
+            for lyrics in &track.lyrics {
+                verify_one(
+                    backend,
+                    &lyrics.path,
+                    &lyrics.sha256,
+                    "lyrics",
                     &mut report,
                     Some(&mut budget),
                 );

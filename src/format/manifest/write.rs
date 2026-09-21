@@ -237,6 +237,26 @@ pub(crate) fn build_tree(m: &Manifest) -> Value {
                         put(&mut wo, "points", n(wf.points as f64));
                         put(&mut to, "waveform", Value::Object(wo));
                     }
+                    // Per-track lyrics references (docs/musicpack-lyrics-v1.md
+                    // §6.1): canonical position between waveform and
+                    // representations; omitted entirely when empty. The
+                    // reference writer never emits this field (it is unknown
+                    // to the C), so no cross-writer byte expectation exists
+                    // for manifests that carry it.
+                    if !t.lyrics.is_empty() {
+                        let lyrics: Vec<Value> = t
+                            .lyrics
+                            .iter()
+                            .map(|l| {
+                                let mut lo: Obj = Vec::new();
+                                put(&mut lo, "path", s(&l.path));
+                                put(&mut lo, "sha256", s(&l.sha256));
+                                put_opt(&mut lo, "lang", &l.lang);
+                                Value::Object(lo)
+                            })
+                            .collect();
+                        put(&mut to, "lyrics", Value::Array(lyrics));
+                    }
                     if !t.representations.is_empty() {
                         let reps: Vec<Value> = t
                             .representations

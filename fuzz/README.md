@@ -19,6 +19,7 @@ runtime, which must not enter the production dependency graph.
 | `engine_adapter` | Phase 11 PCM adapter (ring, streaming resampler, equal-power mixer) | no panic on arbitrary chunk sizes / rates / channel counts, termination, bounded fixed-capacity rings, no frame-arithmetic overflow into indexing |
 | `policy` | Phase 12 representation-selection policy | no panic on arbitrary byte-derived candidates/preferences, termination, the selected index is always in range, inputs are never mutated |
 | `musepack` | Phase 13B/14C Musepack SV8 decoder (streaming demux, bitstream, requantisation, synthesis) | no panic/hang on arbitrary bytes (block keys, variable-length sizes, CRC, Huffman/bitstream, truncation, short reads), termination, bounded resource use (≤ one `MAX_BLOCK_BYTES` input block), bounded decode loop |
+| `server_identity` | Phase 16 server collector identity (group/release keys over byte-derived fields) | no panic on arbitrary strings, determinism (recompute equality), key-shape discipline (`h:` + 64 lowercase hex or verbatim `mb:` anchor), total MBID validator |
 
 ## Running
 
@@ -33,6 +34,7 @@ cargo +nightly fuzz run player_state
 cargo +nightly fuzz run engine_adapter
 cargo +nightly fuzz run policy
 cargo +nightly fuzz run musepack
+cargo +nightly fuzz run server_identity
 ```
 
 Useful options: `-max_total_time=60`, `-runs=N`, `-seed=<n>`,

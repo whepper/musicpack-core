@@ -9,8 +9,42 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # Path router: keep expensive Rust jobs off frontend-only changes and
+  # vice versa. Fallback intent: when in doubt, the job runs.
+  changes:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+    outputs:
+      rust: ${{ steps.filter.outputs.rust }}
+      web: ${{ steps.filter.outputs.web }}
+      author: ${{ steps.filter.outputs.author }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            rust:
+              - 'crates/**'
+              - 'src/**'
+              - 'tests/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'fuzz/**'
+              - '.github/workflows/ci.yml'
+              - '.github/workflows/rust.yml'
+            web:
+              - 'web/**'
+              - '.github/workflows/web.yml'
+            author:
+              - 'author/**'
+              - '.github/workflows/author.yml'
+
   test:
     name: build & test (${{ matrix.os }})
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -34,6 +68,8 @@ jobs:
 
   wasm:
     name: wasm32 core check
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -49,6 +85,8 @@ jobs:
 
   fuzz-targets:
     name: fuzz targets compile
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,3 +95,15 @@ jobs:
       # keeps them from rotting without making fuzzing part of CI.
       - name: Check fuzz targets
         run: cargo check --manifest-path fuzz/Cargo.toml
+
+  web:
+    name: web player
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    uses: ./.github/workflows/web.yml
+
+  author:
+    name: author
+    needs: changes
+    if: needs.changes.outputs.author == 'true'
+    uses: ./.github/workflows/author.yml

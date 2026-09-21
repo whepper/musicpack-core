@@ -150,3 +150,124 @@ fn loudness_precision_survives_a_round_trip() {
         .lufs;
     assert_eq!(lufs, lufs2);
 }
+
+// ---------------------------------------------------------------------
+// Per-track lyrics references (docs/musicpack-lyrics-v1.md §6)
+// ---------------------------------------------------------------------
+
+use musicpack_core::format::manifest::LyricsRef;
+
+const LYR_SHA: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+fn sha_of(bytes: &[u8]) -> String {
+    use musicpack_core::format::checksum::sha256_hex;
+    sha256_hex(bytes)
+}
+
+#[test]
+fn track_lyrics_canonical_position_and_round_trip() {
+    // A manifest with waveform + lyrics + representations on one track:
+    // lyrics serialize between waveform and representations (spec §6.1),
+    // and parse → write → re-parse preserves them exactly.
+    let bytes = fixture("test-musicpack-album.mpack-manifest.json");
+    let mut parsed = ParsedManifest::parse(&bytes).expect("parses");
+    let track = &mut parsed.manifest_mut().media[0].tracks[0];
+    track.lyrics = vec![
+        LyricsRef {
+            path: "lyrics/01.en.lrc".into(),
+            sha256: LYR_SHA.into(),
+            lang: Some("en".into()),
+        },
+        LyricsRef {
+            path: "lyrics/01.de.lrc".into(),
+            sha256: LYR_SHA.into(),
+            lang: None,
+        },
+    ];
+    // Give the track a representation too so the three-way canonical
+    // order (waveform < lyrics < representations) is pinned in one
+    // document.
+    track.representations = vec![musicpack_core::format::manifest::Representation {
+        path: "audio/01.flac".into(),
+        sha256: LYR_SHA.into(),
+        label: None,
+        codec: Some("flac".into()),
+    }];
+    let out = parsed.write_canonical().expect("writes");
+    let wave_pos = out.find("\"waveform\"").expect("waveform emitted");
+    let lyr_pos = out.find("\"lyrics\": [").expect("track lyrics emitted");
+    let rep_pos = out
+        .find("\"representations\"")
+        .expect("representations emitted");
+    assert!(
+        wave_pos < lyr_pos && lyr_pos < rep_pos,
+        "canonical track order: waveform < lyrics < representations"
+    );
+    // lang omitted (never null) when absent; present verbatim otherwise.
+    assert!(out.contains("\"lang\": \"en\""), "{out}");
+    assert!(!out.contains("\"lang\": null"), "{out}");
+    let reparsed = ParsedManifest::parse(out.as_bytes()).expect("re-parses");
+    assert_eq!(reparsed.manifest().media[0].tracks[0].lyrics.len(), 2);
+    assert_eq!(
+        reparsed.manifest().media[0].tracks[0].lyrics[0]
+            .lang
+            .as_deref(),
+        Some("en")
+    );
+}
+
+#[test]
+fn track_lyrics_omitted_entirely_when_empty() {
+    // Absent and empty are equivalent on write; committed reference
+    // fixtures carry no track lyrics, so their canonical bytes have no
+    // track-level "lyrics" key at all.
+    let bytes = fixture("canonical-test-musicpack-album.json");
+    let parsed = ParsedManifest::parse(&bytes).expect("parses");
+    let rewritten = parsed.write_canonical().expect("writes");
+    assert_eq!(rewritten.as_bytes(), bytes.as_slice());
+}
+
+#[test]
+fn track_lyrics_participate_in_canonical_identity() {
+    // The canonical bytes (and therefore the package fingerprint, which
+    // is their SHA-256) change exactly when the lyrics references
+    // change — and are byte-identical otherwise.
+    let bytes = fixture("test-flac-album.mpack-manifest.json");
+    let base = ParsedManifest::parse(&bytes).expect("parses");
+    let base_out = base.write_canonical().expect("writes");
+    let mut edited = ParsedManifest::parse(&bytes).expect("parses");
+    edited.manifest_mut().media[0].tracks[0].lyrics = vec![LyricsRef {
+        path: "lyrics/01.lrc".into(),
+        sha256: LYR_SHA.into(),
+        lang: Some("en".into()),
+    }];
+    let edited_out = edited.write_canonical().expect("writes");
+    assert_ne!(
+        base_out, edited_out,
+        "adding lyrics changes the canonical bytes"
+    );
+    assert_ne!(
+        sha_of(base_out.as_bytes()),
+        sha_of(edited_out.as_bytes()),
+        "adding lyrics changes the manifest hash"
+    );
+    // A lang-only change changes identity too (the field is canonical).
+    let mut relanged = ParsedManifest::parse(edited_out.as_bytes()).expect("parses");
+    relanged.manifest_mut().media[0].tracks[0].lyrics[0].lang = Some("de".into());
+    let relanged_out = relanged.write_canonical().expect("writes");
+    assert_ne!(edited_out, relanged_out, "lang participates in identity");
+    // Entry order is manifest order (deterministic): swapping entries
+    // changes the bytes.
+    let mut swapped = ParsedManifest::parse(edited_out.as_bytes()).expect("parses");
+    swapped.manifest_mut().media[0].tracks[0]
+        .lyrics
+        .push(LyricsRef {
+            path: "lyrics/01b.lrc".into(),
+            sha256: LYR_SHA.into(),
+            lang: None,
+        });
+    let two = swapped.write_canonical().expect("writes");
+    swapped.manifest_mut().media[0].tracks[0].lyrics.swap(0, 1);
+    let swapped_out = swapped.write_canonical().expect("writes");
+    assert_ne!(two, swapped_out, "entry order is significant");
+}

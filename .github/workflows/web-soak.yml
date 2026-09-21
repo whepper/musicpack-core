@@ -1,0 +1,19 @@
+name: Web soak
+
+# Long audio stress suites (underrun recovery, soak). Too slow for every
+# push (~8 min of deliberate starvation/long-playback measurement); they
+# run nightly and on demand.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    uses: ./.github/workflows/web.yml
+    with:
+      soak: true

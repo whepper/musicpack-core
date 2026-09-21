@@ -1,0 +1,40 @@
+[package]
+name = "musicpack-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Self-hosted MusicPack library server (stage 1: CLI skeleton + byte-compatible SQLite index)"
+license = "BSD-3-Clause"
+repository = "https://github.com/whepper/musicpack-core"
+readme = "README.md"
+keywords = ["musicpack", "server", "library", "sqlite"]
+categories = ["multimedia::audio", "database"]
+
+[[bin]]
+name = "musicpack-server"
+path = "src/main.rs"
+
+[lib]
+name = "musicpack_server"
+path = "src/lib.rs"
+
+# The server is the one deliberately native-only crate in the workspace (it
+# can never be a wasm target).  `rusqlite` with the `bundled` feature
+# compiles the C SQLite amalgamation and contains internal `unsafe` — this
+# dependency is isolated here exactly as recorded in docs/server-migration.md
+# (D-S2/O-S1) and the AGENTS.md boundary note; the crate itself keeps
+# `#![forbid(unsafe_code)]` and no other MusicPack crate may depend on it.
+[dependencies]
+musicpack-core = { path = "../.." }
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+getrandom = "0.4.3"
+
+[dev-dependencies]
+# Same version as the production dependency so the trees unify; used only to
+# craft malformed/"future" database fixtures in the compatibility tests.
+rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"] }
+# R4.2 vertical: build a package with the Rust authoring pipeline and ingest
+# it through the real server path. Test-only; the server's production
+# artifact and its dependency direction (nothing depends on the server) are
+# unchanged.
+musicpack-author = { path = "../musicpack-author" }

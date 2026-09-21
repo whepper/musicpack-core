@@ -61,14 +61,20 @@ pub trait PackSource {
 
 /// The manifest's canonical traversal order for `DATA` blocks, matching the
 /// reference writer exactly: all primary audio (media/track array order),
-/// then all representations, then all waveforms, then artwork, booklet,
-/// lyrics, extras, analysis (each in array order).
+/// then all representations, then all waveforms, then per-track lyrics,
+/// then artwork, booklet, lyrics, extras, analysis (each in array order).
 ///
 /// Note: `specs/mpak-v1.md` §7 lists audio → representations → artwork… but
 /// omits waveforms; the reference interleaves all waveforms between
 /// representations and artwork. The implementation is the behavioural
 /// authority (documented in `docs/architecture.md`); this order is what
 /// makes reference byte-identity possible.
+///
+/// Per-track lyrics are the one Rust-defined group
+/// (`docs/musicpack-lyrics-v1.md` §6.5): they slot after waveforms so all
+/// per-track asset groups stay together ahead of the package-level
+/// groups. Manifests without the additive field produce byte-identical
+/// orders to before.
 pub fn canonical_pack_order(manifest: &Manifest) -> Vec<(&str, &str)> {
     let mut order: Vec<(&str, &str)> = Vec::new();
     for disc in &manifest.media {
@@ -87,6 +93,13 @@ pub fn canonical_pack_order(manifest: &Manifest) -> Vec<(&str, &str)> {
         for track in &disc.tracks {
             if let Some(waveform) = &track.waveform {
                 order.push((waveform.path.as_str(), waveform.sha256.as_str()));
+            }
+        }
+    }
+    for disc in &manifest.media {
+        for track in &disc.tracks {
+            for lyrics in &track.lyrics {
+                order.push((lyrics.path.as_str(), lyrics.sha256.as_str()));
             }
         }
     }

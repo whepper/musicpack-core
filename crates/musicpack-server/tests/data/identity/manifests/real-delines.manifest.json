@@ -1,0 +1,482 @@
+{
+  "format": "musicpack",
+  "version": 1,
+  "album": {
+    "title": "The Set Up",
+    "artists": [
+      {
+        "name": "The Delines",
+        "role": "main"
+      }
+    ],
+    "genres": [
+      "Rock"
+    ]
+  },
+  "release": {
+    "releaseDate": "2026-03-06"
+  },
+  "identifiers": {
+    "barcode": "199806537527"
+  },
+  "source": {
+    "type": "digital-download",
+    "store": "Deezer"
+  },
+  "media": [
+    {
+      "disc": 1,
+      "format": "Digital",
+      "tracks": [
+        {
+          "track": 1,
+          "title": "The Set Up, Pt. 1",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Willy Vlautin",
+              "role": "composer"
+            },
+            {
+              "name": "Cory Gray",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500101"
+          },
+          "duration": 113.08,
+          "loudness": {
+            "trackLUFS": -14.781364,
+            "truePeakDbTP": -0.59752895
+          },
+          "audio": {
+            "path": "audio/01 - The Set Up, Pt. 1.mpc",
+            "sha256": "edb0fb852c8c0d8eef17d75cf13c1dd6460c32fb200dae144ea2180bc51fc39c"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-01.wfm",
+            "sha256": "d4c26a24ad58b86fd3bdbb693b938a1d29cdda2b8a008a8fb868574d4af79c26",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 1131
+          }
+        },
+        {
+          "track": 2,
+          "title": "Can You Get Me Out Of Phoenix",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Willy Vlautin",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500102"
+          },
+          "duration": 293.85333,
+          "loudness": {
+            "trackLUFS": -11.611086,
+            "truePeakDbTP": -0.087498931
+          },
+          "audio": {
+            "path": "audio/02 - Can You Get Me Out Of Phoenix.mpc",
+            "sha256": "8bbb3aafd7e1e77408d4334177b26c2c19b09801bec7b21046c75b77887cf45f"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-02.wfm",
+            "sha256": "10725859b4575b5c0e5cf59726532bbfc7f2a1d56eb0cf9be718464bc8dcba61",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 2939
+          }
+        },
+        {
+          "track": 3,
+          "title": "Jumping Off In Madras",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Willy Vlautin",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500103"
+          },
+          "duration": 136.58667,
+          "loudness": {
+            "trackLUFS": -12.756562,
+            "truePeakDbTP": -0.40216923
+          },
+          "audio": {
+            "path": "audio/03 - Jumping Off In Madras.mpc",
+            "sha256": "c09c17c0d6e7af9fdfa34727fe9a018e9cb5d20ed1a84ec01f39c7545b011638"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-03.wfm",
+            "sha256": "f01dd522f18d8c2cc6705cf2a80ab4eb148fd200688ec7133bb8a0a0a831b898",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 1366
+          }
+        },
+        {
+          "track": 4,
+          "title": "Dilaudid Diane",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Willy Vlautin",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500104"
+          },
+          "duration": 168.24,
+          "loudness": {
+            "trackLUFS": -13.698207,
+            "truePeakDbTP": -0.43145417
+          },
+          "audio": {
+            "path": "audio/04 - Dilaudid Diane.mpc",
+            "sha256": "931148c5c61376ebe0051bdd5f63c86dd00f3bd14ed1dca4fb6f18095584a21d"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-04.wfm",
+            "sha256": "0dd7f6cff78d117ef1a2c59deb468ef6f5ef24d936409cdfe6482795ee658571",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 1683
+          }
+        },
+        {
+          "track": 5,
+          "title": "Keep The Shades Down",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Willy Vlautin",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500105"
+          },
+          "duration": 194.62667,
+          "loudness": {
+            "trackLUFS": -11.78557,
+            "truePeakDbTP": -0.23888841
+          },
+          "audio": {
+            "path": "audio/05 - Keep The Shades Down.mpc",
+            "sha256": "300543653c409c0ba6a7cf85a22b28217442701dd2a64ab338ab58a8e0bc4060"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-05.wfm",
+            "sha256": "59c586624cd55ace207d7462b6a53f20d5429718af6e594110898f3a2ef5beb1",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 1947
+          }
+        },
+        {
+          "track": 6,
+          "title": "Getting Out Of The Ward",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Cory Gray",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500106"
+          },
+          "duration": 142.22667,
+          "loudness": {
+            "trackLUFS": -12.283702,
+            "truePeakDbTP": -0.34778043
+          },
+          "audio": {
+            "path": "audio/06 - Getting Out Of The Ward.mpc",
+            "sha256": "42be89a318dee475d3b5d67303d10aa7ee5d592dd92ac71c76ae6593c420ef48"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-06.wfm",
+            "sha256": "da65a8007f3912a000539bf99a2b54c828e1f530908a1e589e6aa740d9572359",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 1423
+          }
+        },
+        {
+          "track": 7,
+          "title": "The Set Up, Pt. 2",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Willy Vlautin",
+              "role": "composer"
+            },
+            {
+              "name": "Cory Gray",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500107"
+          },
+          "duration": 97.133333,
+          "loudness": {
+            "trackLUFS": -14.991136,
+            "truePeakDbTP": -0.23747618
+          },
+          "audio": {
+            "path": "audio/07 - The Set Up, Pt. 2.mpc",
+            "sha256": "efe797af407997e16bc8b7b1272cf821ce6f69e044abc718d11f652be49ba959"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-07.wfm",
+            "sha256": "3eedee2f707b2a58a67d7ef65d412760487cf83b2b79c622e2e3742416e9ae6b",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 972
+          }
+        },
+        {
+          "track": 8,
+          "title": "The Reckless Life",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Willy Vlautin",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500108"
+          },
+          "duration": 340.46667,
+          "loudness": {
+            "trackLUFS": -9.6837814,
+            "truePeakDbTP": -0.027725623
+          },
+          "audio": {
+            "path": "audio/08 - The Reckless Life.mpc",
+            "sha256": "0e06f4cf910ab398b817359fe9e5f87c20633e391fb869d4feca6516cdb65d70"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-08.wfm",
+            "sha256": "c53c77614ea83430966706e3ffaebef781888dc9499e313809a695cd781340be",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 3405
+          }
+        },
+        {
+          "track": 9,
+          "title": "Walking With His Sleeves Down",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Willy Vlautin",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500109"
+          },
+          "duration": 231.6,
+          "loudness": {
+            "trackLUFS": -15.376131,
+            "truePeakDbTP": -0.36904489
+          },
+          "audio": {
+            "path": "audio/09 - Walking With His Sleeves Down.mpc",
+            "sha256": "2f7cff5b9c366209c077ee4d665dd18c130b14aadfd518cfb99e1fe40545ada3"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-09.wfm",
+            "sha256": "4ceb28e28bb7e52f11b87dc852333c6addb0f7a6e7c87a964729574ecf130ef3",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 2316
+          }
+        },
+        {
+          "track": 10,
+          "title": "The Meter Keeps Ticking",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Willy Vlautin",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500110"
+          },
+          "duration": 224.36,
+          "loudness": {
+            "trackLUFS": -11.877986,
+            "truePeakDbTP": 0.13815673
+          },
+          "audio": {
+            "path": "audio/10 - The Meter Keeps Ticking.mpc",
+            "sha256": "d7695059700b0ed32d73b26e05b6a967f6157e6ae51c62bdee2293b6742cafcb"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-10.wfm",
+            "sha256": "e6ec3832606e2e2cc79d4c6bbd78c91638fea24952fe91a0353b2f8535616172",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 2244
+          }
+        },
+        {
+          "track": 11,
+          "title": "The Set Up, Pt. 3",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Willy Vlautin",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500111"
+          },
+          "duration": 190.68,
+          "loudness": {
+            "trackLUFS": -14.722228,
+            "truePeakDbTP": -0.53684649
+          },
+          "audio": {
+            "path": "audio/11 - The Set Up, Pt. 3.mpc",
+            "sha256": "81f9f8ae72c25e8aefe4a6de3cb4effee6819c8321f0ba9f613dad3fffbf189f"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-11.wfm",
+            "sha256": "230b5360ca51b01ac1fcab9f85ad231572967716ba1cc3bf4030b175ec4875d1",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 1907
+          }
+        },
+        {
+          "track": 12,
+          "title": "The Last Time I Saw Her",
+          "artists": [
+            {
+              "name": "The Delines",
+              "role": "main"
+            },
+            {
+              "name": "Cory Gray",
+              "role": "composer"
+            }
+          ],
+          "identifiers": {
+            "isrc": "QM4EA2500112"
+          },
+          "duration": 150.62667,
+          "loudness": {
+            "trackLUFS": -10.084265,
+            "truePeakDbTP": -0.40181243
+          },
+          "audio": {
+            "path": "audio/12 - The Last Time I Saw Her.mpc",
+            "sha256": "0c2cc1eb9c70854f61173ca7fe63b39e6c9317ac5cf93d40ffdd36c52643662e"
+          },
+          "waveform": {
+            "version": 1,
+            "path": "analysis/waveform/01-12.wfm",
+            "sha256": "9e1013bc5a6967cc0d412c875bc26008148c155a7cb111d6f50aae1eb90ebbbb",
+            "intervalMs": 100,
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "points": 1507
+          }
+        }
+      ]
+    }
+  ],
+  "artwork": [
+    {
+      "role": "front",
+      "path": "artwork/front.jpg",
+      "sha256": "75f6a34e313855ef3a1e40b036484b1058a70722562d6d3829cce7474bcfa4e4"
+    }
+  ],
+  "analysis": [
+    {
+      "type": "sonic",
+      "profile": "musicpack-sonic-openl3-v1",
+      "path": "analysis/sonic.json",
+      "sha256": "f17c726fc822f0ccdf97db8b2938aa6fe250a3309e0077f45da89bfd85f87ed2"
+    }
+  ],
+  "loudness": {
+    "algorithm": "ITU-R BS.1770-5",
+    "albumLUFS": -11.974944,
+    "albumTruePeakDbTP": 0.13815673
+  }
+}

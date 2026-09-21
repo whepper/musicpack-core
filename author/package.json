@@ -1,0 +1,41 @@
+{
+  "name": "musicpack-author",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MusicPack Author — the desktop GUI for authoring .mpack releases",
+  "license": "BSD-3-Clause",
+  "scripts": {
+    "dev": "vite",
+    "build:web": "vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "tauri": "bash scripts/with-cargo.sh tauri",
+    "test:unit": "vitest run ../tests/unit",
+    "test:component": "vitest run ../tests/component",
+    "test": "npm run test:unit && npm run test:component"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.5.0",
+    "@tauri-apps/plugin-dialog": "^2.2.0",
+    "@tauri-apps/plugin-opener": "^2.2.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.1",
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tauri-apps/cli": "^2.11.4",
+    "@tsconfig/svelte": "^5.0.4",
+    "@types/node": "^26.2.0",
+    "jsdom": "^26.0.0",
+    "svelte": "^5.20.0",
+    "svelte-check": "^4.1.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "fsevents@2.3.2": true,
+    "fsevents@2.3.3": true
+  }
+}

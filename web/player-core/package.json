@@ -1,0 +1,8 @@
+{
+  "name": "@musicpack/player-core",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Platform-independent MusicPack player domain core (types, gain policy, session snapshot codec). Zero dependencies; see web/player-core/README.md.",
+  "license": "BSD-3-Clause"
+}

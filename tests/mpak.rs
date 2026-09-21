@@ -335,14 +335,18 @@ fn writer_is_deterministic() {
 
 #[test]
 fn writer_orders_data_by_canonical_pack_order() {
-    // Two tracks (with a representation and a waveform) plus package
-    // assets: DATA order must be all audio, all representations, all
-    // waveforms, then artwork/extras — the reference writer's grouping.
+    // Two tracks (with a representation, a waveform and per-track
+    // lyrics) plus package assets: DATA order must be all audio, all
+    // representations, all waveforms, per-track lyrics, then
+    // artwork/extras — the reference writer's grouping plus the
+    // Rust-defined track-lyrics group (docs/musicpack-lyrics-v1.md
+    // §6.5).
     let contents: Vec<(&str, Vec<u8>)> = vec![
         ("audio/01.bin", b"a1".to_vec()),
         ("audio/02.bin", b"a2".to_vec()),
         ("rep/01.flac", b"r1".to_vec()),
         ("wf/01.wfm", b"w1".to_vec()),
+        ("lyr/01.lrc", b"l1".to_vec()),
         ("art/f.jpg", b"f1".to_vec()),
         ("ex/n.txt", b"n1".to_vec()),
     ];
@@ -351,6 +355,7 @@ fn writer_orders_data_by_canonical_pack_order() {
         r#"{{"format":"musicpack","version":1,"album":{{"title":"T","artists":[{{"name":"A"}}]}},"media":[{{"disc":1,"tracks":[
           {{"track":1,"title":"a","audio":{{"path":"audio/01.bin","sha256":"{a1}"}},
            "representations":[{{"path":"rep/01.flac","sha256":"{r1}"}}],
+           "lyrics":[{{"path":"lyr/01.lrc","sha256":"{l1}","lang":"en"}}],
            "waveform":{{"version":1,"path":"wf/01.wfm","sha256":"{w1}","intervalMs":100,"encoding":"peak-rms-u8","floorDb":-60,"points":0}}}},
           {{"track":2,"title":"b","audio":{{"path":"audio/02.bin","sha256":"{a2}"}}}}
         ]}}],"artwork":[{{"role":"front","path":"art/f.jpg","sha256":"{f1}"}}],"extras":[{{"path":"ex/n.txt","sha256":"{n1}"}}]}}"#,
@@ -358,6 +363,7 @@ fn writer_orders_data_by_canonical_pack_order() {
         a2 = hex("audio/02.bin"),
         r1 = hex("rep/01.flac"),
         w1 = hex("wf/01.wfm"),
+        l1 = hex("lyr/01.lrc"),
         f1 = hex("art/f.jpg"),
         n1 = hex("ex/n.txt"),
     );
@@ -367,8 +373,9 @@ fn writer_orders_data_by_canonical_pack_order() {
         ("audio/02.bin", contents[1].1.clone()),
         ("rep/01.flac", contents[2].1.clone()),
         ("wf/01.wfm", contents[3].1.clone()),
-        ("art/f.jpg", contents[4].1.clone()),
-        ("ex/n.txt", contents[5].1.clone()),
+        ("lyr/01.lrc", contents[4].1.clone()),
+        ("art/f.jpg", contents[5].1.clone()),
+        ("ex/n.txt", contents[6].1.clone()),
     ];
     let source = TestSource::new(manifest, members.clone()).with_contents(members);
     let mut bytes = Vec::new();
@@ -385,6 +392,7 @@ fn writer_orders_data_by_canonical_pack_order() {
             "audio/02.bin",
             "rep/01.flac",
             "wf/01.wfm",
+            "lyr/01.lrc",
             "art/f.jpg",
             "ex/n.txt"
         ]

@@ -21,9 +21,9 @@ use crate::error::Error;
 use crate::format::checksum::is_valid_sha256_hex;
 use crate::format::manifest::{
     Album, AlbumLoudness, Analysis, Artwork, Asset, Disc, FORMAT_ID, Identifiers, Identity,
-    IdentityConfidence, IdentitySource, Loudness, Manifest, MediumFormat, Provenance, Release,
-    ReleaseType, Representation, SCHEMA_VERSION, Source, SourceAudio, Track, TrackIdentifiers,
-    TrackSource, WaveformRef,
+    IdentityConfidence, IdentitySource, Loudness, LyricsRef, Manifest, MediumFormat, Provenance,
+    Release, ReleaseType, Representation, SCHEMA_VERSION, Source, SourceAudio, Track,
+    TrackIdentifiers, TrackSource, WaveformRef,
 };
 use crate::format::path;
 use crate::format::waveform::{
@@ -789,6 +789,46 @@ fn parse_track(item: &Value) -> Result<Track, Error> {
         }
     };
 
+    // Per-track lyrics references (docs/musicpack-lyrics-v1.md §6.1).
+    // Additive field: the reference implementation ignores unknown fields
+    // nested in known objects, so C-authored manifests are unaffected.
+    let lyrics = match o.get("lyrics") {
+        None => Vec::new(),
+        Some(v) => {
+            let arr = require_array(Some(v), "lyrics")?;
+            if arr.len() > limits::MAX_LYRICS {
+                return Err(invalid(&format!(
+                    "\"lyrics\" has {} entries; exceeds the limit of {}",
+                    arr.len(),
+                    limits::MAX_LYRICS
+                )));
+            }
+            let mut out = Vec::with_capacity(arr.len());
+            for item in arr {
+                let lo = require_object(Some(item), "lyrics entry")?;
+                let asset = parse_asset(lo)?;
+                let lang = match lo.get("lang") {
+                    None => None,
+                    Some(Value::String(s)) => {
+                        if s.is_empty() || s.chars().any(char::is_control) {
+                            return Err(invalid(
+                                "lyrics \"lang\" must be a non-empty string without control characters",
+                            ));
+                        }
+                        Some(s.clone())
+                    }
+                    Some(_) => return Err(invalid("lyrics \"lang\" must be a string")),
+                };
+                out.push(LyricsRef {
+                    path: asset.path,
+                    sha256: asset.sha256,
+                    lang,
+                });
+            }
+            out
+        }
+    };
+
     Ok(Track {
         number,
         title,
@@ -801,6 +841,7 @@ fn parse_track(item: &Value) -> Result<Track, Error> {
         audio,
         audio_codec,
         waveform,
+        lyrics,
         representations,
     })
 }
@@ -825,6 +866,9 @@ fn check_dup_paths(m: &Manifest) -> Result<(), Error> {
             paths.push(&track.audio.path);
             if let Some(w) = &track.waveform {
                 paths.push(&w.path);
+            }
+            for l in &track.lyrics {
+                paths.push(&l.path);
             }
             for r in &track.representations {
                 paths.push(&r.path);

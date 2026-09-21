@@ -1,0 +1,26 @@
+[package]
+name = "musicpack-author"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Rust authoring pipeline: draft JSON -> encode -> waveform -> .mpack -> .mpak (R4.2)"
+license = "BSD-3-Clause"
+repository = "https://github.com/whepper/musicpack-core"
+readme = "README.md"
+publish = false
+
+# Licensing note: this crate is original orchestration (no source-derived
+# encoder logic). It depends on the isolated LGPL-2.1-or-later
+# `musicpack-musepack-encoder` crate; the encoder's own terms apply to that
+# component and its isolation is preserved (docs/adr/0011-authoring-pipeline.md).
+[dependencies]
+musicpack-core = { path = "../.." }
+musicpack-musepack-encoder = { path = "../musicpack-musepack-encoder" }
+
+[[bin]]
+name = "musicpack-author"
+path = "src/main.rs"
+
+[lib]
+name = "musicpack_author"
+path = "src/lib.rs"

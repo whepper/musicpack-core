@@ -1,0 +1,40 @@
+{
+  "name": "musicpack-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "MusicPack Phase 6 web client — the digital record shelf",
+  "license": "BSD-3-Clause",
+  "scripts": {
+    "wasm": "node scripts/build-wasm.mjs",
+    "wasm:force": "node scripts/build-wasm.mjs --force",
+    "dev": "npm run wasm && vite",
+    "build": "npm run wasm && vite build",
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "test:unit": "npm run wasm && vitest run",
+    "test:node": "node tests/node/run.mjs",
+    "test:e2e": "npm run wasm && playwright test",
+    "test:e2e:ui": "npm run wasm && playwright test --project=ui --workers=2",
+    "test:e2e:visual": "npm run wasm && playwright test --project=visual",
+    "test:e2e:playback": "npm run wasm && playwright test --project=playback",
+    "test:e2e:soak": "npm run wasm && playwright test --project=soak",
+    "test": "npm run test:unit && npm run test:node"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.50.1",
+    "@sveltejs/vite-plugin-svelte": "^5.0.3",
+    "@tsconfig/svelte": "^5.0.4",
+    "@types/node": "^26.2.0",
+    "svelte": "^5.20.0",
+    "svelte-check": "^4.1.4",
+    "typescript": "^5.7.3",
+    "vite": "^6.1.0",
+    "vitest": "^3.0.5"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "fsevents@2.3.2": true,
+    "fsevents@2.3.3": true
+  }
+}

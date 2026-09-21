@@ -436,3 +436,108 @@ fn open_failures_are_errors() {
     assert!(DirectoryBackend::open(&file).is_err());
     cleanup(&dir);
 }
+
+// ---------------------------------------------------------------------
+// Per-track lyrics verification (docs/musicpack-lyrics-v1.md §6.3)
+// ---------------------------------------------------------------------
+
+/// Writes a one-track manifest whose track carries `lyrics_json` as its
+/// `lyrics` array (caller-supplied, already serialized).
+#[cfg(unix)]
+fn write_lyrics_manifest(dir: &Path, audio_digest: &str, lyrics_json: &str) {
+    let json = format!(
+        r#"{{"format":"musicpack","version":1,"album":{{"title":"T","artists":[{{"name":"A"}}]}},"media":[{{"disc":1,"tracks":[{{"track":1,"title":"One","audio":{{"path":"audio/01.bin","sha256":"{audio_digest}"}},"lyrics":{lyrics_json}}}]}}]}}"#
+    );
+    fs::write(dir.join("manifest.json"), json).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn track_lyrics_verify_like_any_budgeted_asset() {
+    // Correct bytes → clean report, no unreferenced-file warning (the
+    // per-track path joins referenced_paths()).
+    let dir = package_dir("lyrics-ok");
+    let audio = b"audio-bytes";
+    let lyric = b"[00:01.00]la\n";
+    let audio_digest = checksum::sha256_hex(audio);
+    let lyric_digest = checksum::sha256_hex(lyric);
+    let lyrics_json = format!(r#"[{{"path":"lyrics/01.lrc","sha256":"{lyric_digest}"}}]"#);
+    write_lyrics_manifest(&dir, &audio_digest, &lyrics_json);
+    fs::create_dir_all(dir.join("audio")).unwrap();
+    fs::create_dir_all(dir.join("lyrics")).unwrap();
+    fs::write(dir.join("audio/01.bin"), audio).unwrap();
+    fs::write(dir.join("lyrics/01.lrc"), lyric).unwrap();
+    let report = verify_directory(&dir).expect("opens");
+    assert!(report.is_ok(), "{:?}", findings_of(&report));
+    assert_eq!(report.errors(), 0);
+    assert_eq!(report.warnings(), 0);
+    cleanup(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn track_lyrics_missing_and_mismatch_are_kind_lyrics_errors() {
+    // Missing file.
+    let dir = package_dir("lyrics-missing");
+    let audio = b"audio-bytes";
+    let audio_digest = checksum::sha256_hex(audio);
+    let lyrics_json = format!(
+        r#"[{{"path":"lyrics/01.lrc","sha256":"{}"}}]"#,
+        checksum::sha256_hex(b"[00:01.00]la\n")
+    );
+    write_lyrics_manifest(&dir, &audio_digest, &lyrics_json);
+    fs::create_dir_all(dir.join("audio")).unwrap();
+    fs::write(dir.join("audio/01.bin"), audio).unwrap();
+    let report = verify_directory(&dir).expect("opens");
+    assert_eq!(report.errors(), 1);
+    assert_eq!(
+        report.findings()[0].message,
+        "lyrics: missing file 'lyrics/01.lrc'"
+    );
+    cleanup(&dir);
+
+    // Checksum mismatch.
+    let dir = package_dir("lyrics-mismatch");
+    write_lyrics_manifest(&dir, &audio_digest, &lyrics_json);
+    fs::create_dir_all(dir.join("audio")).unwrap();
+    fs::create_dir_all(dir.join("lyrics")).unwrap();
+    fs::write(dir.join("audio/01.bin"), audio).unwrap();
+    fs::write(dir.join("lyrics/01.lrc"), b"[00:01.00]different\n").unwrap();
+    let report = verify_directory(&dir).expect("opens");
+    assert_eq!(report.errors(), 1);
+    assert_eq!(
+        report.findings()[0].message,
+        "lyrics: checksum mismatch 'lyrics/01.lrc'"
+    );
+    cleanup(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn track_lyrics_traversal_follows_the_track_representations() {
+    // Two failures (track 1 audio + track 1 lyrics): report order is
+    // deterministic — audio first, then the per-track lyrics group.
+    let dir = package_dir("lyrics-order");
+    let audio_digest = checksum::sha256_hex(b"audio-bytes");
+    let lyrics_json = format!(
+        r#"[{{"path":"lyrics/01.lrc","sha256":"{}"}}]"#,
+        checksum::sha256_hex(b"[00:01.00]la\n")
+    );
+    write_lyrics_manifest(&dir, &audio_digest, &lyrics_json);
+    // Neither file exists: two missing-file errors in traversal order.
+    let report = verify_directory(&dir).expect("opens");
+    assert_eq!(report.errors(), 2);
+    let messages: Vec<_> = report
+        .findings()
+        .iter()
+        .map(|f| f.message.as_str())
+        .collect();
+    assert_eq!(
+        messages,
+        vec![
+            "track: missing file 'audio/01.bin'",
+            "lyrics: missing file 'lyrics/01.lrc'",
+        ]
+    );
+    cleanup(&dir);
+}

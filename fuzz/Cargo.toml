@@ -16,6 +16,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 musicpack-core = { path = ".." }
 musicpack-engine = { path = "../crates/musicpack-engine" }
+musicpack-server = { path = "../crates/musicpack-server" }
 
 [[bin]]
 name = "json_manifest"
@@ -69,6 +70,20 @@ bench = false
 [[bin]]
 name = "musepack"
 path = "fuzz_targets/musepack.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "server_identity"
+path = "fuzz_targets/server_identity.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lyrics_parse"
+path = "fuzz_targets/lyrics_parse.rs"
 test = false
 doc = false
 bench = false

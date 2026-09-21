@@ -249,6 +249,11 @@ crates/musicpack-engine/  # deterministic platform-neutral PCM engine adapter
 crates/musicpack-host/    # thinnest host adapter (pull loop + source selection)
 crates/musicpack-wasm/    # thin wasm-bindgen binding foundation
 crates/musicpack-musepack-encoder/  # Rust Musepack SV8 encoder (LGPL-2.1-or-later; see its README)
+crates/musicpack-server/  # self-hosted library server (native-only; see docs/server-production.md)
+crates/musicpack-mpc-tools/ # mpc-tools compatibility layer (LGPL-2.1-or-later)
+crates/musicpack-author/ # Rust authoring pipeline (draft -> .mpack/.mpak; see docs/author-pipeline.md)
+web/                  # the web player (Svelte 5 + Vite + Playwright; see web/README.md)
+author/               # the Tauri 2 authoring app (Rust pipeline default; see docs/author-runtime.md)
 fuzz/                 # cargo-fuzz targets (excluded from the workspace; nightly)
 ```
 
@@ -312,6 +317,33 @@ Conventions: `#![forbid(unsafe_code)]`, documented public API
 (`#![warn(missing_docs)]`), rustfmt defaults, clippy deny-by-default in
 CI (Linux/macOS/Windows plus a wasm32 check job). Integration tests live
 in `tests/`, the compatibility corpus plan in `fixtures/README.md`.
+
+### Frontend applications (`web/`, `author/`)
+
+The web player and the Author app are npm packages inside this repository
+(see `web/README.md` / `author/README.md` for architecture and the
+`docs/r2-migration-map.md` for the migration record):
+
+```sh
+cd web
+npm install
+npm run dev        # cargo → wasm-bindgen → vite dev server (proxies /api to :8080)
+npm run build      # cargo → wasm-bindgen → vite build (served by musicpack-server --static-dir)
+npm test           # vitest unit suite
+npm run test:e2e   # Playwright against the Rust server + built client
+npm run check      # svelte-check
+
+cd ../author
+npm install
+npm test           # vitest unit + component suites
+npm run check      # svelte-check
+npm run build:web  # the Tauri frontend bundle
+npm run tauri      # native dev shell (requires the gitignored sidecar binaries)
+```
+
+CI (`.github/workflows/`) routes `crates/**` to the Rust jobs, `web/**`
+to type-check + unit + build + Playwright, and `author/**` to
+type-check + tests + web build plus a `cargo check` of the Tauri host.
 
 For the differential harness against the reference CLI, build the
 reference once and point the tests at it (optional — the corpus gate

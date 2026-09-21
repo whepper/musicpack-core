@@ -49,6 +49,10 @@ use std::f64::consts::PI;
 use super::sanitize_sample;
 use crate::{Error, Result};
 
+/// The BS.1770 revision string the reference writes into an album
+/// `loudness.algorithm` field (`MUSICPACK_LOUDNESS_STANDARD`).
+pub const STANDARD: &str = "ITU-R BS.1770-5";
+
 /// Below this magnitude a sinc/interpolation coefficient is treated as zero
 /// (ebur128 `ALMOST_ZERO`).
 const ALMOST_ZERO: f64 = 0.000_001;

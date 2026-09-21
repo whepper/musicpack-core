@@ -1,0 +1,761 @@
+/* Copyright (c) 2026, The MusicPack Development Team
+   SPDX-License-Identifier: BSD-3-Clause */
+
+/*
+ * MusicPack design language v2 — Author variant.
+ *
+ * The same premium dark system as the consumer client (see
+ * web/app/src/lib/ui/theme.css): deep neutral canvas, warm cream serif
+ * display type, a single gold accent for selection/emphasis, and green
+ * reserved for genuine valid/verified states. Author is a tool surface —
+ * package information, workflow stages and validation states are first-class
+ * here — but every token, control, chip and hairline follows the shared
+ * grammar so the two apps read as one product in different modes.
+ * The system serif stack avoids webfont downloads. Normative reference:
+ * docs/ui-v2-design.md.
+ */
+
+:root {
+  color-scheme: dark;
+
+  --bg: #0f1013;            /* page canvas */
+  --bg-rail: #0a0b0d;       /* sidebar / deeper chrome */
+  --surface: #16171b;       /* raised: cards, panels, status bar */
+  --surface-2: #1e2025;     /* highest elevation: hover/active, tiles */
+
+  --text: #f1eee7;          /* warm cream */
+  --text-soft: #b0aca3;     /* secondary */
+  --text-faint: #8a8781;    /* micro-copy only */
+
+  --accent: #d9a856;        /* gold — selection, active states, emphasis */
+  --accent-strong: #e6c37a; /* gold hover / focus */
+  --accent-ink: #1a150b;    /* text/icons placed on gold */
+  --ok: #63b97c;            /* verified / valid / installed only */
+  --danger: #e07a6a;
+  --focus: #e6c37a;
+
+  --hairline: rgba(241, 238, 231, 0.10);
+  --hairline-strong: rgba(241, 238, 231, 0.22);
+
+  --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+
+  --fs-xxs: 0.72rem;
+  --fs-xs: 0.78rem;
+  --fs-sm: 0.875rem;
+  --fs-md: 1rem;
+  --fs-lg: 1.25rem;
+  --fs-xl: 1.75rem;
+  --fs-2xl: 2.6rem;
+  --fs-display: clamp(2.2rem, 4.5vw, 3.4rem);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --radius: 4px;
+  --radius-card: 10px;
+
+  /* The one allowed shadow: beneath artwork, never under UI chrome. */
+  --shadow-artwork: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--fs-md);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+a {
+  color: var(--text);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--accent-strong);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* ---- layout ------------------------------------------------------------- */
+
+.main {
+  flex: 1;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-5) 150px;
+  /* keep the authored content clear of the fixed footer */
+}
+
+/* ---- type --------------------------------------------------------------- */
+
+h1,
+h2,
+h3 {
+  font-family: var(--serif);
+  font-weight: 600;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.eyebrow {
+  font-family: var(--sans);
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+.smallcaps {
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+
+/* ---- nav ---------------------------------------------------------------- */
+
+.topnav {
+  display: flex;
+  align-items: center;
+  gap: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--hairline);
+  background: var(--bg-rail);
+}
+
+.brand {
+  font-family: var(--serif);
+  font-size: var(--fs-lg);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.brand em {
+  font-style: normal;
+  color: var(--accent);
+}
+
+/* ---- buttons ------------------------------------------------------------ */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 10px 22px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: var(--fs-sm);
+  border: 1px solid var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.btn:hover {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.btn.ghost {
+  background: transparent;
+  border-color: var(--hairline-strong);
+  color: var(--text);
+}
+
+.btn.ghost:hover {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+  background: transparent;
+}
+
+/* ---- track list --------------------------------------------------------- */
+
+.tracklist {
+  border-top: 1px solid var(--hairline);
+}
+
+.tracklist .disc-title {
+  margin: var(--space-4) 0 var(--space-2);
+  font-family: var(--serif);
+  font-size: var(--fs-lg);
+}
+
+.track {
+  display: grid;
+  grid-template-columns: 2.4em 1fr auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--hairline);
+  width: 100%;
+  text-align: left;
+}
+
+.track:hover {
+  background: var(--surface);
+}
+
+.track .num {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+}
+
+.track .tt {
+  font-size: var(--fs-sm);
+}
+
+.track .dur {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-sm);
+}
+
+.track .filename {
+  color: var(--text-faint);
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.03em;
+  font-family: var(--mono);
+}
+
+.track .codec-tag {
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* ---- forms -------------------------------------------------------------- */
+
+/* Dark-theme form controls: every input, select and textarea takes the
+   shared surface/border/radius grammar. (v1 leaned on UA defaults, which
+   are light widgets; color-scheme: dark only fixes the popups.) */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select,
+textarea {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  font: inherit;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-faint);
+}
+
+input:hover,
+select:hover,
+textarea:hover {
+  border-color: var(--hairline-strong);
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--accent);
+}
+
+progress {
+  accent-color: var(--accent);
+}
+
+.field {
+  margin: var(--space-4) 0;
+}
+
+.field label {
+  display: block;
+  font-size: var(--fs-sm);
+  margin-bottom: var(--space-1);
+}
+
+.field input,
+.field select {
+  width: 100%;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-4);
+}
+
+/* ---- misc --------------------------------------------------------------- */
+
+.muted {
+  color: var(--text-soft);
+}
+
+.spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid var(--hairline);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.9s linear infinite;
+  margin: var(--space-6) auto;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.empty-state {
+  text-align: center;
+  color: var(--text-faint);
+  padding: var(--space-7) 0;
+  font-family: var(--serif);
+  font-size: var(--fs-lg);
+}
+
+/* ---- MusicPack Author: header ------------------------------------------ */
+
+.author-header {
+  display: grid;
+  grid-template-columns: minmax(88px, 112px) 1fr auto;
+  gap: var(--space-4);
+  align-items: start;
+  margin-bottom: var(--space-4);
+}
+
+.author-header .cover {
+  border-radius: var(--radius);
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  box-shadow: var(--shadow-artwork);
+  background: var(--surface);
+}
+
+.author-header .cover img,
+.author-header .cover .cover-empty {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  display: block;
+}
+
+.author-header .cover .cover-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+  font-family: var(--serif);
+  font-size: var(--fs-xxs);
+  text-align: center;
+  padding: var(--space-1);
+}
+
+.author-header h1 {
+  font-size: var(--fs-lg);
+  margin: 0 0 var(--space-1);
+}
+
+.author-header .artist {
+  font-family: var(--serif);
+  font-size: var(--fs-md);
+  color: var(--text-soft);
+}
+
+.author-header .edition {
+  margin-top: var(--space-1);
+  font-size: var(--fs-xs);
+  color: var(--text-soft);
+}
+
+.author-header .meta-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.author-header .source-root {
+  font-size: var(--fs-xxs);
+  color: var(--text-faint);
+  letter-spacing: 0.04em;
+  word-break: break-all;
+  font-family: var(--mono);
+}
+
+.header-actions {
+  padding-top: var(--space-1);
+}
+
+.header-actions .btn.ghost {
+  font-size: var(--fs-xs);
+  padding: 5px 12px;
+}
+
+@media (max-width: 680px) {
+  .author-header {
+    grid-template-columns: 72px 1fr;
+  }
+  .header-actions {
+    grid-column: 2;
+  }
+}
+
+/* ---- workflow stages ----------------------------------------------------- */
+
+.stage-panel[hidden] {
+  display: none;
+}
+
+.stage-panel > .section {
+  margin: var(--space-2) 0 0;
+  border-top: none;
+  padding-top: 0;
+}
+
+.stage-panel h2:focus {
+  outline: none;
+}
+
+/* ---- identity confidence badge (status-chip tones) ---------------------- */
+
+.conf {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+  border-radius: 999px;
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border: 1px solid var(--hairline-strong);
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+/* Green is reserved for identities the app genuinely asserts (exact /
+   confirmed matches); probable and unidentified stay on the neutral base,
+   matching the consumer identityChip's muted tone. */
+.conf.exact {
+  color: var(--ok);
+  border-color: rgba(99, 185, 124, 0.45);
+}
+
+.conf.confirmed {
+  color: var(--ok);
+  border-color: rgba(99, 185, 124, 0.45);
+}
+
+/* ---- authoring sections -------------------------------------------------- */
+
+.section {
+  margin: var(--space-6) 0;
+  border-top: 1px solid var(--hairline);
+  padding-top: var(--space-4);
+}
+
+.section > h2 {
+  font-size: var(--fs-lg);
+  margin-bottom: var(--space-3);
+}
+
+/* ---- validation panel ---------------------------------------------------- */
+
+.validation {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-5);
+}
+
+.validation h3 {
+  font-size: var(--fs-md);
+}
+
+.validation ul {
+  list-style: none;
+  margin: var(--space-2) 0 0;
+  padding: 0;
+}
+
+.validation li {
+  font-size: var(--fs-sm);
+  padding: var(--space-1) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.validation .err {
+  color: var(--danger);
+}
+
+.validation .warn {
+  color: var(--accent-strong);
+}
+
+/* ---- status bar (footer) ------------------------------------------------- */
+
+.statusbar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  background: var(--surface);
+  border-top: 1px solid var(--hairline);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-5);
+}
+
+.statusbar .chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  /* Basis above a typical chip-row content width so that when the window
+     is narrower than chips+actions, the actions wrap to their own row
+     instead of squeezing the chips into an overflowing column. */
+  flex: 1 1 240px;
+  min-width: 0;
+}
+
+/* Chip grammar shared with the consumer StatusChip: small-caps outline
+   pill, colour carried by text + border, no fills. Green is reserved for
+   states the package genuinely satisfies (ok/✓); gold marks actionable
+   attention (warn); idle stays faint. */
+.chip {
+  font-size: var(--fs-xxs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline-strong);
+  color: var(--text-soft);
+  white-space: nowrap;
+}
+
+.chip.ok {
+  color: var(--ok);
+  border-color: rgba(99, 185, 124, 0.45);
+}
+
+.chip.warn {
+  color: var(--accent-strong);
+  border-color: rgba(217, 168, 86, 0.45);
+}
+
+.chip.idle {
+  color: var(--text-soft);
+}
+
+.statusbar .actions {
+  display: flex;
+  gap: var(--space-3);
+  /* on narrow windows the chips wrap and the actions take the second
+     row, staying anchored to the right edge */
+  margin-left: auto;
+}
+
+/* ---- artwork manager ----------------------------------------------------- */
+
+.artwork-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.artwork-row .thumb {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius);
+  object-fit: cover;
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-xxs);
+  color: var(--text-faint);
+  overflow: hidden;
+  text-align: center;
+}
+
+.artwork-row .thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.artwork-row .role {
+  font-family: var(--serif);
+  font-weight: 600;
+  font-size: var(--fs-sm);
+}
+
+.artwork-row .meta {
+  font-size: var(--fs-xs);
+  color: var(--text-soft);
+  flex: 1;
+}
+
+/* ---- MusicBrainz candidates ---------------------------------------------- */
+
+.candidate {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  padding: var(--space-3) var(--space-4);
+  margin: var(--space-2) 0;
+  background: var(--surface);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.candidate .ct {
+  flex: 1;
+}
+
+.candidate .ct .t {
+  font-family: var(--serif);
+  font-weight: 600;
+}
+
+.candidate .ct .m {
+  font-size: var(--fs-xs);
+  color: var(--text-soft);
+}
+
+/* ---- track list editing -------------------------------------------------- */
+
+.track.editing {
+  grid-template-columns: 2.4em 1.2fr 1fr auto;
+  gap: var(--space-2);
+}
+
+.track.editing input {
+  width: 100%;
+  padding: 6px 8px;
+  font-size: var(--fs-sm);
+}
+
+/* ---- result view --------------------------------------------------------- */
+
+.result-panel {
+  max-width: 560px;
+  margin: var(--space-7) auto;
+  padding: var(--space-6);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-card);
+  text-align: center;
+}
+
+.result-panel .path {
+  font-size: var(--fs-sm);
+  color: var(--text-soft);
+  word-break: break-all;
+  margin: var(--space-4) 0;
+  font-family: var(--mono);
+}
+
+.result-panel.ok {
+  border-color: rgba(99, 185, 124, 0.45);
+}
+
+.result-panel.fail {
+  border-color: rgba(224, 122, 106, 0.45);
+}
+
+/* ---- welcome ------------------------------------------------------------- */
+
+.welcome {
+  max-width: 620px;
+  margin: var(--space-7) auto;
+  text-align: center;
+}
+
+.welcome h1 {
+  font-size: var(--fs-2xl);
+  margin-bottom: var(--space-2);
+}
+
+.welcome .drop {
+  margin-top: var(--space-5);
+  padding: var(--space-7);
+  border: 2px dashed var(--hairline-strong);
+  border-radius: var(--radius-card);
+  color: var(--text-faint);
+}
+
+.welcome .drop:hover {
+  border-color: rgba(217, 168, 86, 0.45);
+}
+
+.welcome .drop.over {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.error-banner {
+  max-width: 620px;
+  margin: var(--space-5) auto;
+  padding: var(--space-4);
+  border: 1px solid rgba(224, 122, 106, 0.45);
+  background: rgba(224, 122, 106, 0.08);
+  color: var(--danger);
+  border-radius: var(--radius-card);
+  font-size: var(--fs-sm);
+}
+
+/* ---- reduced motion ------------------------------------------------------ */
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001s !important;
+    transition-duration: 0.001s !important;
+  }
+}

@@ -1,0 +1,1 @@
+{"album":{"artists":[{"name":"A=B|C#D:E"}],"title":"X=Y\nZ|W#V:U"},"format":"musicpack","media":[{"disc":1,"tracks":[{"audio":{"path":"audio/01.mpc","sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},"title":"T","track":1}]}],"version":1}

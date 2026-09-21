@@ -5,7 +5,9 @@
 //! `musicpack_audio_*` seam (`core/libmusicpack/include/musicpack/audio.h`,
 //! `src/audio.c`), not a general media framework. The parts implemented in
 //! phase 8 are the PCM contract, the metadata model, the decoder trait, a
-//! native RIFF/WAVE reader, and a FLAC decoder adapter.
+//! native RIFF/WAVE reader, and a FLAC decoder adapter; the native Musepack
+//! SV8 decoder (container, bitstream, requantisation, synthesis) joined in
+//! phase 13B and is PCM byte-identical to the vendored `libmpcdec`.
 //!
 //! # PCM contract
 //!
@@ -42,9 +44,10 @@
 //!
 //! # Decoder seam
 //!
-//! [`open`] sniffs the magic bytes (`RIFF` → WAVE, `fLaC` → FLAC; the
-//! reference selects by file extension, which is application policy and
-//! stays out of the core) and returns a boxed [`AudioDecoder`]. The decoder
+//! [`open`] sniffs the magic bytes (`RIFF` → WAVE, `fLaC` → FLAC, `MPCK` →
+//! Musepack SV8; the reference selects by file extension, which is
+//! application policy and stays out of the core) and returns a boxed
+//! [`AudioDecoder`]. The decoder
 //! owns a `Box<dyn std::io::Read>` — exactly the shape
 //! [`crate::storage::OpenedAsset::reader`] already yields for MPAK members —
 //! so no new byte-stream trait is introduced and
@@ -156,8 +159,9 @@ pub enum Codec {
     Flac,
     /// Musepack SV8 (`bits_per_sample == 0`, codec-native float).
     ///
-    /// The container/metadata layer is implemented in [`musepack`]; audio
-    /// synthesis is the deferred next step (see the module docs).
+    /// Container/metadata and audio synthesis both live in [`musepack`]
+    /// (ported from the project's vendored `libmpcdec`; decoded PCM is
+    /// byte-identical to the reference).
     Musepack,
 }
 
@@ -216,9 +220,9 @@ pub trait AudioDecoder {
 /// the reference CLI's application policy and is deliberately not part of the
 /// core.
 ///
-/// Musepack currently exposes container metadata only: [`musepack`]'s decoder
-/// returns [`Error::Unsupported`] from the PCM read methods until the
-/// synthesis path lands.
+/// Musepack decodes through the same contract: [`read_f32`](AudioDecoder::read_f32)
+/// produces PCM and `read_s32` returns [`Error::Unsupported`] because
+/// Musepack is codec-native float (there is no integer representation).
 pub fn open(mut source: Box<dyn Read>) -> Result<Box<dyn AudioDecoder>> {
     let mut magic = [0u8; 4];
     if read_full(&mut *source, &mut magic)? != 4 {

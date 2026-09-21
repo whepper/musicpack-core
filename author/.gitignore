@@ -1,0 +1,8 @@
+# MusicPack Author build/toolchain artifacts (generated).
+node_modules/
+app/dist/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/
+test-results/
+playwright-report/

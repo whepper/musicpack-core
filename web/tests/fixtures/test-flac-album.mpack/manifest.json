@@ -1,0 +1,86 @@
+{
+  "format": "musicpack",
+  "version": 1,
+  "album": {
+    "title": "Synthetic Classical Compilation",
+    "artists": [
+      {
+        "name": "Synthetic Chamber Orchestra"
+      }
+    ],
+    "releaseType": "album",
+    "originalReleaseDate": "1998-03-10"
+  },
+  "release": {
+    "releaseDate": "1998-03-10",
+    "edition": "1998 European CD",
+    "country": "Europe",
+    "label": "Example Classics",
+    "catalogueNumber": "ECL 2002"
+  },
+  "media": [
+    {
+      "disc": 1,
+      "format": "CD",
+      "tracks": [
+        {
+          "track": 1,
+          "title": "Classical Piece No 1",
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.3038271,
+            "truePeakDbTP": -4.2735623
+          },
+          "audio": {
+            "path": "audio/01 - Classical Piece No 1.flac",
+            "sha256": "842a4fcf28fe9c87ebbccafc1912dfd330bf09b69cdb44917284f41292b926e8"
+          }
+        },
+        {
+          "track": 2,
+          "title": "Classical Piece No 2",
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.2922433,
+            "truePeakDbTP": -4.277832
+          },
+          "audio": {
+            "path": "audio/02 - Classical Piece No 2.flac",
+            "sha256": "8437078664f0fd1728139c171e64e356697e7da1a21cd63c872ac2e4550fc13c"
+          }
+        },
+        {
+          "track": 3,
+          "title": "Classical Piece No 3",
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.4721383,
+            "truePeakDbTP": -4.2993708
+          },
+          "audio": {
+            "path": "audio/03 - Classical Piece No 3.flac",
+            "sha256": "40ee39449c42950b618df195784535ff39955eeb481790eabf04397fc5f79346"
+          }
+        }
+      ]
+    }
+  ],
+  "artwork": [
+    {
+      "role": "front",
+      "path": "artwork/front.jpg",
+      "sha256": "7e33a27a0d6795c9444f6df4da8552cbb31e13e6e8c81a0f927e760eb1d355f9"
+    }
+  ],
+  "lyrics": [
+    {
+      "path": "lyrics/01 - Piece One.lrc",
+      "sha256": "b0e5df7191fdc7a97976db3d98f43c50b664e27d7271c7af264c1d8160fa1ba9"
+    }
+  ],
+  "loudness": {
+    "algorithm": "ITU-R BS.1770-5",
+    "albumLUFS": -7.3518504,
+    "albumTruePeakDbTP": -4.2735623
+  }
+}

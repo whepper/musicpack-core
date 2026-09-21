@@ -1,0 +1,46 @@
+{
+ "id": "11111111-2222-3333-4444-555555555555",
+ "title": "Synthetic Test Album",
+ "date": "2016-09-23",
+ "country": "XE",
+ "barcode": "198704979941",
+ "release-group": {
+  "id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+  "primary-type": "Compilation",
+  "first-release-date": "1984-06-01"
+ },
+ "artist-credit": [
+  {
+   "name": "Alphaville",
+   "joinphrase": ""
+  }
+ ],
+ "media": [
+  {
+   "format": "Digital",
+   "position": 1,
+   "track-count": 1,
+   "tracks": [
+    {
+     "id": "23232323-4545-6767-8989-abababababab",
+     "number": "3",
+     "title": "Big in Japan",
+     "recording": {
+      "id": "12121212-3434-5656-7878-909090909090",
+      "isrcs": [
+       "GBK3W2503556"
+      ]
+     }
+    }
+   ]
+  }
+ ],
+ "label-info": [
+  {
+   "label": {
+    "name": "Example Records"
+   },
+   "catalog-number": "ERCD 001"
+  }
+ ]
+}

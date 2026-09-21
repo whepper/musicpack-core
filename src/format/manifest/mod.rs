@@ -345,8 +345,8 @@ impl Manifest {
     }
 
     /// Every referenced asset path, in the reference's grouping order:
-    /// per-track audio, waveform and representations; then artwork,
-    /// booklet, lyrics, extras and analysis.
+    /// per-track audio, waveform, representations and lyrics; then
+    /// artwork, booklet, lyrics, extras and analysis.
     ///
     /// Used for the unreferenced-file check and by future package
     /// consumers; paths are package-unique (enforced at parse time).
@@ -360,6 +360,9 @@ impl Manifest {
                 }
                 for representation in &track.representations {
                     paths.push(representation.path.as_str());
+                }
+                for lyrics in &track.lyrics {
+                    paths.push(lyrics.path.as_str());
                 }
             }
         }
@@ -616,6 +619,23 @@ pub struct Representation {
     pub codec: Option<String>,
 }
 
+/// A lyrics document reference (`track.lyrics[]`,
+/// `docs/musicpack-lyrics-v1.md` §6.1).
+///
+/// The referenced bytes are opaque to the package layer (path + hash
+/// only); their content profile is the lyrics specification's concern
+/// and is parsed by [`crate::lyrics`] at the consumer.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LyricsRef {
+    /// Canonical package-relative path (unique across the package).
+    pub path: String,
+    /// 64 lowercase hex characters.
+    pub sha256: String,
+    /// Optional language tag; BCP-47 recommended, free-form, non-empty,
+    /// no control characters (spec §5).
+    pub lang: Option<String>,
+}
+
 /// A referenced analysis document (`analysis[]`).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Analysis {
@@ -669,6 +689,9 @@ pub struct Track {
     pub audio_codec: Option<String>,
     /// Optional waveform envelope reference.
     pub waveform: Option<WaveformRef>,
+    /// Optional lyrics document references (additive per
+    /// `docs/musicpack-lyrics-v1.md` §6; empty = absent).
+    pub lyrics: Vec<LyricsRef>,
     /// Optional alternate representations (empty = absent).
     pub representations: Vec<Representation>,
 }

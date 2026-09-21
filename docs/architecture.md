@@ -5,6 +5,11 @@ the design decisions and their rationale, the compatibility constraints
 discovered in the existing MusicPack implementation, and the open
 questions that must be resolved rather than guessed.
 
+> Project-level architectural decisions (transport, playback boundary,
+> frontend, native clients, compatibility classes) live in
+> `docs/architecture-review.md` and `docs/adr/`; this document remains the
+> map of the Rust workspace itself.
+
 ## 1. What exists today (discovered in the reference repository)
 
 The existing MusicPack application repository is a C/CMake codebase with a
@@ -137,6 +142,7 @@ fuzz/                     cargo-fuzz targets (excluded from the workspace; night
 | `format::manifest` | The typed model, strict parser and canonical writer, including unknown-root-field preservation | complete; byte-identity proven against reference-CLI output |
 | `format::mpak` | Complete MPAK v1 container: framing/CRC constants, scan-oriented reader, deterministic writer | reader + writer proven byte-identical to the reference CLI packs |
 | `format::waveform` | Quantization kernel is a pure function with exact spec cases; payload limits feed verification | `quantize_amplitude` + limits ported; accumulator later in `audio` |
+| `lyrics` | Lyrics domain (`docs/musicpack-lyrics-v1.md`): strict LRC profile parser, plain/synced model, pure active-line timing; per-track `lyrics[]` manifest references (`path`, `sha256`, optional `lang`) | complete (R3.2); canonical position between `waveform` and `representations`; root `lyrics[]` unchanged; pack order gains a per-track group after waveforms |
 | `storage` | Platform-independent seam: the verifier asks a backend for objects; no filesystem API in the domain core | `PackageBackend`, `VerificationSink`, directory adapter (unix), MPAK adapter (portable), in-memory/file byte sources |
 | `validation` | Verify semantics: report model, traversal order, budgets, checksums, containment classification, waveform payload checks, unreferenced warnings, backend container findings | complete (port of `musicpack_package_verify`) |
 | `audio` | PCM contract + decode seam + native WAV reader + FLAC (`claxon`) adapter (phase 8); streaming waveform accumulator + BS.1770-5 loudness/true-peak meter (phase 9); native Musepack SV8 decoder (phase 13B: container, bitstream, requantisation, synthesis; PCM byte-identical to libmpcdec) | `AudioInfo`/`Codec`, `AudioDecoder`, `open`, `wav`, `flac`, `musepack::{sv8, decoder}`, `waveform_acc::WaveformAccumulator`, `loudness::{LoudnessMeter, Loudness, gain_db}` |
@@ -146,11 +152,12 @@ fuzz/                     cargo-fuzz targets (excluded from the workspace; night
 | `crates/musicpack-engine` | The deterministic bridge from `player::Engine` to decoded PCM: bounded ring, streaming linear resampler, equal-power crossfade mixer + swap accounting, source/decoder factories, per-track decode sessions, host-driven `consume()` | port of the reference TypeScript `audio-worklet.ts` / `ring-buffer.ts` / `streaming-resampler.ts`; `std`-only, `#![forbid(unsafe_code)]`, no I/O, no threads, no async; depends on the core only |
 | `crates/musicpack-host` | The thinnest practical host adapter: `Player` + `DecoderEngine` + a `SourceBackend`, a `render(frames)` pull loop (device/worklet callback), and `select_source` mapping the policy decision to a URL | host concerns only; owns the shared engine handle (`Rc<RefCell<…>>`); depends on the core + engine; no device API of its own |
 | `crates/musicpack-wasm` | Thin `wasm-bindgen` binding over the core and the adapter: byte-backed decode handles, a player handle, and the representation resolver | not the browser app / Web Audio / HTTP / persistence / UI; `wasm-bindgen` + `js-sys` only |
+| `crates/musicpack-server` | Self-hosted library server (stages 1–6: CLI/config skeleton, byte-compatible SQLite layer for migrations 1–10 plus the Rust-defined additive v11 (`assets.track_id`/`lang`, R3.3), `token create‖list‖revoke`, collector identity, bounded discovery, ingestion state machine with C-oracle parity, read-only JSON API with C-oracle parity, secure byte/media serving with C-oracle parity, static hosting + SPA fallback and library jobs with C-oracle parity; deployment/cutover later) — native-only, `#![forbid(unsafe_code)]`, the one crate whose `rusqlite`-bundled SQLite stays inside the dependency (see §6/D-S2). **Track-linked lyrics** (`docs/musicpack-lyrics-v1.md` §7) are persisted as ordinary `lyrics` assets with a nullable `track_id`; lyric bytes are served through the existing asset endpoint, while lyric parsing and timing remain exclusively in `musicpack-core` |
 
 Deliberately **not** built yet: a native device backend and the production
 browser/AudioWorklet cutover (the host seam is proven in
-`crates/musicpack-host`, but no device or browser is wired up); any Musepack
-decoder (the factory insertion point exists, O5).
+`crates/musicpack-host`, but no device or browser is wired up). The Musepack
+SV8 decoder is built (§4, phase 13B; O5 records the FLAC/Musepack history).
 
 ## 4. Compatibility constraints (binding)
 
@@ -274,8 +281,8 @@ module:
 - **`s32` left-alignment.** u8 `(sample − 128) << 24`, i16 `<< 16`, i24
   sign-extend then `<< 8`, i32 verbatim; FLAC `sample << (32 − bits)`.
 - **Decoder seam.** `audio::open(Box<dyn std::io::Read>)` sniffs the magic
-  bytes (`RIFF` → WAVE, `fLaC` → FLAC) and returns a boxed
-  [`AudioDecoder`]. The decoder owns its reader — exactly the shape
+  bytes (`RIFF` → WAVE, `fLaC` → FLAC, `MPCK` → Musepack SV8) and returns a
+  boxed [`AudioDecoder`]. The decoder owns its reader — exactly the shape
   [`crate::storage::OpenedAsset::reader`] already yields for MPAK members —
   so no new byte-stream trait is introduced and [`crate::format::mpak::ByteSource`]
   remains the random-access container seam. Extension-based dispatch is the
@@ -584,6 +591,7 @@ compatibility constraints; nothing else is needed yet.
 | `sha2` 0.10 (RustCrypto) | 5 | SHA-256 is format-mandated; `sha2` is the maintained pure-Rust reference implementation, `no_std`-capable, compiles on wasm32-unknown-unknown, MIT OR Apache-2.0, MSRV 1.56 ≪ this crate's 1.85. Digest output is pinned by FIPS vectors and cross-checked against the independent test-support SHA-256 | none significant for this use |
 | `claxon` 0.4.3 | 8 | FLAC is an authoring input. The reference itself vendors a third-party decoder rather than writing one (`dr_flac`), and `claxon` is the Rust-native equivalent: **Apache-2.0**, **zero runtime dependencies** (`cargo tree` shows no transitive deps), std-only and wasm32-unknown-unknown-clean, with a streaming `Read` API. Pinned exactly (`=0.4.3`) and hidden behind `audio::flac::FlacDecoder`, so it never appears in the public API | dormant since 2020 (the FLAC format is frozen and the surface is small); contains **five internal `unsafe` blocks** (audited: two `get_unchecked` hot-loop indexing operations and three `Vec::set_len` after a `read_into`), all inside the dependency — the core's `#![forbid(unsafe_code)]` is unaffected and no unsafe enters `musicpack-core`; its metadata parsing is stricter than `dr_flac` (see §8 limitations) |
 | `wasm-bindgen` + `js-sys` | 11 | the WASM binding *mechanism* itself; only `crates/musicpack-wasm` depends on them, never the core or the engine adapter (both stay dependency-free and wasm32-clean) | binding-only: no async runtime, no browser framework, no audio framework |
+| `rusqlite` 0.40.2 (`bundled`) + `getrandom` 0.4.3 | 15 (server) | SQLite is the legacy server's index format; byte-compatibility with C-created databases requires a real SQLite. The amalgamation's C/`unsafe` is confined to the dependency inside the native-only `crates/musicpack-server` (behind its `Store` trait); the crate itself keeps `#![forbid(unsafe_code)]` and no other crate may depend on it. `getrandom` supplies the OS CSPRNG for token secrets | server-crate-only; the AGENTS.md rule is unchanged for every other crate |
 | `proptest` / `cargo-fuzz` | dev | property testing and fuzzing are explicit requirements | dev-dependencies only |
 | `criterion` | bench | statistically sound benchmarking | bench-only |
 
@@ -663,7 +671,17 @@ reflects what the reference actually layers:
     Node smoke test runs without a browser or `wasm-pack`). The production
     browser/Svelte cutover — Web Audio, Media Session, HTTP/OPFS range
     fetching — remains future work in the TypeScript host.
-14. Integration with the existing application (server consumes Rust core or keeps C until parity is proven)
+14. Integration with the existing application — phase 14 investigated the
+    server migration (`docs/server-migration.md`); **stages 1–6 are
+    implemented** (`crates/musicpack-server`: CLI/config skeleton,
+    byte-compatible SQLite layer, token management, collector identity,
+    bounded discovery, full ingestion state machine with live C-oracle
+    parity, read-only JSON API with live C-oracle parity, secure byte/media
+    serving with live C-oracle parity, static hosting/SPA fallback and
+    library jobs with live C-oracle parity; deployment/cutover are the
+    remaining steps, gated by `docs/server-cutover-checklist.md`).
+    The legacy server remains the production implementation until parity is
+    proven stage by stage
 15. Performance optimization (benchmarked, correctness-preserving)
 
 Phases 3–7 are the compatibility heart: the format must be byte- and
@@ -790,9 +808,13 @@ parser because `strtod` cannot produce NaN from the accepted grammar.
   are rejected.
 - **The host seam is proven, not wired to a device.** `crates/musicpack-host`
   implements the pull loop a device/AudioWorklet callback would drive and is
-  covered by 16 integration tests, but no native device backend or browser
-  cutover is wired in this phase. The reference TypeScript engines remain the
-  production browser implementation.
+  covered by 16 integration tests, but no native device backend is wired up
+  here. On the web, the Rust WASM engine is now the *default* backend for
+  network musepack/FLAC/WAV sources in the production client (with the
+  reference TypeScript engines as the tested escape hatch — see the
+  `rust-default` e2e spec and `controller.ts` backend selection); audio
+  output itself remains platform/TS-owned per the playback ADR
+  (`docs/adr/0003-playback-architecture.md`).
 - **The host handle is single-threaded.** `musicpack-host` shares the engine
   through `Rc<RefCell<…>>` (browser main thread / one device callback). A
   device host that runs the callback on another thread owns its own

@@ -1,0 +1,154 @@
+{
+  "album": {
+    "artists": [
+      {
+        "name": "Alphaville"
+      },
+      {
+        "name": "Bleachers"
+      }
+    ],
+    "originalReleaseDate": "1984-06-01",
+    "releaseType": "compilation",
+    "title": "Synthetic Test Compilation"
+  },
+  "artwork": [
+    {
+      "path": "artwork/front.jpg",
+      "role": "front",
+      "sha256": "53351839f90e50ddff3e3fef04175f1af0150536fa90ae45d5863171fb3d22ca"
+    }
+  ],
+  "booklet": [
+    {
+      "path": "booklet/booklet.pdf",
+      "sha256": "e67f5bbc0a2af0340621fe52d44c557ebe70920346e0319cfba82b13a6d568e0"
+    }
+  ],
+  "extras": [
+    {
+      "path": "extras/notes.txt",
+      "sha256": "67e7a48bca29ab66eb141759661593b9a30f090c4b1e942365bedb1dd13380d3"
+    }
+  ],
+  "format": "musicpack",
+  "loudness": {
+    "albumLUFS": -7.2792484,
+    "albumTruePeakDbTP": -4.1897838,
+    "algorithm": "ITU-R BS.1770-5"
+  },
+  "lyrics": [
+    {
+      "path": "lyrics/01 - Big in Japan.lrc",
+      "sha256": "77842ef83aa748cbcc39874317e1fd80765ec6be0857718c4c1d8c3cb66ca3b2"
+    },
+    {
+      "path": "lyrics/02 - The Van.lrc",
+      "sha256": "86168c1a4b2594abca6f221086d10ef07bf356ee5a7c03a301884d610ef62e02"
+    }
+  ],
+  "media": [
+    {
+      "disc": 1,
+      "format": "Digital",
+      "tracks": [
+        {
+          "audio": {
+            "path": "audio/01 - Alphaville - Big in Japan.mpc",
+            "sha256": "96fc6a680e8c6b9279df4765e96e9fea53c5787c33cce4d0f47d986f8be612cf"
+          },
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.1915088,
+            "truePeakDbTP": -4.1897838
+          },
+          "title": "Alphaville - Big in Japan",
+          "track": 1,
+          "waveform": {
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "intervalMs": 100,
+            "path": "analysis/waveform/01-01.wfm",
+            "points": 10,
+            "sha256": "6b0717ecd2f1dc1ede6358a2e12f5395f0dad458ed47dcbe58c55362c5908479",
+            "version": 1
+          }
+        },
+        {
+          "audio": {
+            "path": "audio/02 - Bleachers - The Van.mpc",
+            "sha256": "a851e3aaca96c713a6951eec527c75726694d9c811a270761a5574b30a9dd79c"
+          },
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.1860582,
+            "truePeakDbTP": -4.230453
+          },
+          "title": "Bleachers - The Van",
+          "track": 2,
+          "waveform": {
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "intervalMs": 100,
+            "path": "analysis/waveform/01-02.wfm",
+            "points": 10,
+            "sha256": "82b9a9729bd18ce54f827fa7dffca78ce1cf686ebc8faa21aff6386324020f60",
+            "version": 1
+          }
+        },
+        {
+          "audio": {
+            "path": "audio/03 - Synthwave - Night Drive.mpc",
+            "sha256": "7f2a66e8d1758dedef339260054ee35db98951176678b0fa82cec26085b1e747"
+          },
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.3781085,
+            "truePeakDbTP": -4.2659945
+          },
+          "title": "Synthwave - Night Drive",
+          "track": 3,
+          "waveform": {
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "intervalMs": 100,
+            "path": "analysis/waveform/01-03.wfm",
+            "points": 10,
+            "sha256": "f8656d3ed196f5a38b7bba3a8a00576a06145f0c9cfbb11b6e55adc7c7e6f645",
+            "version": 1
+          }
+        },
+        {
+          "audio": {
+            "path": "audio/04 - Test Artist - Fourth Track.mpc",
+            "sha256": "e99002a619704d137611bf928f4d328a5d3cf5cb0e0bba62a343f6281e79bd29"
+          },
+          "duration": 1,
+          "loudness": {
+            "trackLUFS": -7.3654852,
+            "truePeakDbTP": -4.2588095
+          },
+          "title": "Test Artist - Fourth Track",
+          "track": 4,
+          "waveform": {
+            "encoding": "peak-rms-u8",
+            "floorDb": -60,
+            "intervalMs": 100,
+            "path": "analysis/waveform/01-04.wfm",
+            "points": 10,
+            "sha256": "221c65abb961c5a4f3eebedc52b4802a5ff0de592f8e03c75f938b8f70d7b0f7",
+            "version": 1
+          }
+        }
+      ]
+    }
+  ],
+  "release": {
+    "catalogueNumber": "ERCD 001",
+    "country": "XE",
+    "edition": "2016 Digital Remaster",
+    "label": "Example Records",
+    "releaseDate": "2016-09-23"
+  },
+  "version": 1
+}

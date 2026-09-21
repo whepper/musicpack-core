@@ -1,0 +1,14 @@
+# Web client build artifacts (generated + toolchain).
+node_modules/
+app/dist/
+app/public/rust/
+test-results/
+playwright-report/
+.tmp/
+tests/e2e/.server-env.json
+
+# The hand-written reader/worker scripts (networker.js, rangereader.js,
+# reader_mailbox.js, localreader.js, decoder.worker.js, rust-*.js) and the
+# frozen legacy decoder (musepack.js, musepack.wasm — see PROVENANCE.md)
+# are COMMITTED sources/artifacts, unlike the legacy repo where the decoder
+# and readers were gitignored build-time copies.

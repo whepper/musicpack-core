@@ -1,0 +1,69 @@
+name: Web CI
+
+on:
+  workflow_call:
+    inputs:
+      soak:
+        description: 'Run only the long soak/underrun audio stress suites'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # Keep in lockstep with the `wasm-bindgen` dependency resolved in
+  # Cargo.lock (currently 0.2.128) — the CLI must match the crate.
+  WASM_BINDGEN_VERSION: 0.2.128
+
+jobs:
+  web:
+    name: web player
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: Install wasm-bindgen CLI
+        run: cargo install wasm-bindgen-cli --version "$WASM_BINDGEN_VERSION"
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+      - name: Type-check
+        working-directory: web
+        run: npx svelte-check --tsconfig ./tsconfig.json
+      - name: Unit tests
+        working-directory: web
+        run: npx vitest run
+
+      # The e2e harness serves the built client from the Rust server.
+      - name: Build Rust server
+        run: cargo build -p musicpack-server
+      - name: Build client (cargo → wasm-bindgen → vite)
+        working-directory: web
+        run: npm run build
+      - name: Browser tests
+        working-directory: web
+        run: |
+          npx playwright install --with-deps chromium
+          if [ "${{ inputs.soak }}" = "true" ]; then
+            # Long audio stress suites: scheduled / manual only.
+            npx playwright test --project=soak
+          else
+            # Fast UI tier first (parallelised; no audio-timing asserts),
+            # then the isolated visual baselines, then the sequential
+            # real-audio playback suites. Soak is NOT part of pushes —
+            # it runs on the nightly schedule (web-soak.yml).
+            npx playwright test --project=ui --workers=2
+            npx playwright test --project=visual
+            npx playwright test --project=playback
+          fi

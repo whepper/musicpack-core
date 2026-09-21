@@ -9,7 +9,10 @@
 //!   over the engine's [`musicpack_engine::DecodeSession`];
 //! - `WasmPlayer`, a handle over `musicpack_core`'s `Player` plus a
 //!   [`musicpack_engine::DecoderEngine`], with `add_source`, `load`,
-//!   `command`, `render`, model/snapshot access.
+//!   `command`, `render`, model/snapshot access;
+//! - `lyrics_open / lyrics_doc / lyrics_active_line / lyrics_close` over
+//!   `musicpack_core::lyrics` — parsing stays in Rust and the normative
+//!   active-line lookup never leaves it.
 //!
 //! Everything real (async range fetching, OPFS, `AudioContext`, Media
 //! Session, persistence scheduling) stays in JavaScript. The binding works
@@ -23,6 +26,7 @@ use std::rc::Rc;
 
 use musicpack_core::audio;
 use musicpack_core::json::{self, Value};
+use musicpack_core::lyrics::{self, LyricsContent, LyricsDocument};
 use musicpack_core::player::engine::{CrossfadeStart, Engine, EngineCapabilities, EngineResult};
 use musicpack_core::player::events::PlayerEvent;
 use musicpack_core::player::player::{Player, PlayerOptions, PlayerPorts, PlayerState};
@@ -185,6 +189,117 @@ pub mod core_impl {
                 .and_then(|s| s.as_deref_mut())
                 .ok_or_else(|| "invalid decode handle".to_string())
         }
+    }
+
+    /// A slab of parsed lyrics documents (the host's registry).
+    ///
+    /// The document lives in WASM memory behind a handle; the timing
+    /// lookup stays in Rust ([`LyricsDocs::active_line`]) so the browser
+    /// never reimplements selection. Static content crosses the boundary
+    /// once, as canonical JSON via [`LyricsDocs::doc`]; the per-tick call
+    /// crosses only an integer index.
+    #[derive(Default)]
+    pub struct LyricsDocs {
+        slots: Vec<Option<Box<LyricsDocument>>>,
+    }
+
+    impl LyricsDocs {
+        /// Parses LRC bytes under the strict profile and stores the
+        /// document; returns a handle.
+        pub fn open(&mut self, bytes: &[u8]) -> Result<u32, String> {
+            let doc = lyrics::parse(bytes).map_err(|e| e.to_string())?;
+            let handle = self
+                .slots
+                .iter()
+                .position(|s| s.is_none())
+                .unwrap_or(self.slots.len());
+            if handle == self.slots.len() {
+                self.slots.push(Some(Box::new(doc)));
+            } else {
+                self.slots[handle] = Some(Box::new(doc));
+            }
+            Ok(handle as u32)
+        }
+
+        /// The document's static content as canonical JSON (fetch once,
+        /// render from it):
+        ///
+        /// `{"synced":bool,"wordTagsStripped":bool,
+        ///   "metadata":{"artist"?,"title"?,"album"?,"by"?},
+        ///   "lines":[{"t":ms,"text":…} | {"text":…}]}`
+        ///
+        /// `metadata` is present only when at least one tag was captured;
+        /// plain entries omit `"t"` (a coherent one-shape API for both
+        /// content classes).
+        pub fn doc(&self, handle: u32) -> Result<String, String> {
+            let doc = self.get(handle)?;
+            let mut root: Vec<(String, Value)> = Vec::new();
+            root.push(("synced".into(), Value::Number(bool_num(doc.is_synced()))));
+            root.push((
+                "wordTagsStripped".into(),
+                Value::Number(bool_num(doc.word_tags_stripped)),
+            ));
+            if doc.metadata.is_present() {
+                let mut m: Vec<(String, Value)> = Vec::new();
+                for (key, value) in [
+                    ("artist", &doc.metadata.artist),
+                    ("title", &doc.metadata.title),
+                    ("album", &doc.metadata.album),
+                    ("by", &doc.metadata.by),
+                ] {
+                    if let Some(v) = value {
+                        m.push((key.into(), Value::String(v.clone())));
+                    }
+                }
+                root.push(("metadata".into(), Value::Object(m)));
+            }
+            let lines: Vec<Value> = match &doc.content {
+                LyricsContent::Plain(plain) => plain
+                    .iter()
+                    .map(|text| Value::Object(vec![("text".into(), Value::String(text.clone()))]))
+                    .collect(),
+                LyricsContent::Synced(synced) => synced
+                    .iter()
+                    .map(|line| {
+                        Value::Object(vec![
+                            ("t".into(), Value::Number(line.timestamp_ms as f64)),
+                            ("text".into(), Value::String(line.text.clone())),
+                        ])
+                    })
+                    .collect(),
+            };
+            root.push(("lines".into(), Value::Array(lines)));
+            Ok(json::print_canonical(&Value::Object(root)))
+        }
+
+        /// The normative timing lookup (spec §9): index of the active
+        /// line at `position_ms`, or `-1` for none (before the first
+        /// timestamp, or a plain document).
+        pub fn active_line(&self, handle: u32, position_ms: i64) -> Result<i32, String> {
+            let doc = self.get(handle)?;
+            Ok(match lyrics::active_line(doc, position_ms) {
+                Some(index) => index as i32,
+                None => -1,
+            })
+        }
+
+        /// Closes a document handle.
+        pub fn close(&mut self, handle: u32) {
+            if let Some(slot) = self.slots.get_mut(handle as usize) {
+                *slot = None;
+            }
+        }
+
+        fn get(&self, handle: u32) -> Result<&LyricsDocument, String> {
+            self.slots
+                .get(handle as usize)
+                .and_then(|s| s.as_deref())
+                .ok_or_else(|| "invalid lyrics handle".to_string())
+        }
+    }
+
+    fn bool_num(v: bool) -> f64 {
+        if v { 1.0 } else { 0.0 }
     }
 
     /// Shared host-side engine wrapper (single-threaded wasm).
@@ -994,7 +1109,7 @@ pub mod core_impl {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::core_impl::{Decodes, EngineCore, PlayerCore};
+    use super::core_impl::{Decodes, EngineCore, LyricsDocs, PlayerCore};
     use js_sys::Float32Array;
     use wasm_bindgen::JsValue;
     use wasm_bindgen::prelude::*;
@@ -1005,6 +1120,38 @@ mod wasm {
 
     thread_local! {
         static DECODES: std::cell::RefCell<Decodes> = std::cell::RefCell::new(Decodes::default());
+        static LYRICS: std::cell::RefCell<LyricsDocs> = std::cell::RefCell::new(LyricsDocs::default());
+    }
+
+    /// Parses LRC bytes under the strict lyrics profile
+    /// (`docs/musicpack-lyrics-v1.md`) and stores the document; returns a
+    /// handle for [`lyrics_doc`]/[`lyrics_active_line`].
+    #[wasm_bindgen]
+    pub fn lyrics_open(bytes: &[u8]) -> Result<u32, JsValue> {
+        LYRICS.with(|l| l.borrow_mut().open(bytes).map_err(err))
+    }
+
+    /// The document's static content as canonical JSON (see
+    /// `core_impl::LyricsDocs::doc` for the shape). Fetch once per
+    /// document; per-tick updates go through [`lyrics_active_line`].
+    #[wasm_bindgen]
+    pub fn lyrics_doc(handle: u32) -> Result<String, JsValue> {
+        LYRICS.with(|l| l.borrow().doc(handle).map_err(err))
+    }
+
+    /// The timing lookup: 0-based active-line index at `position_ms`, or
+    /// `-1` when no line is active (before the first timestamp, or a
+    /// plain document). Pure and stateless — safe to call at any tick
+    /// rate with any position, in any order.
+    #[wasm_bindgen]
+    pub fn lyrics_active_line(handle: u32, position_ms: i64) -> Result<i32, JsValue> {
+        LYRICS.with(|l| l.borrow().active_line(handle, position_ms).map_err(err))
+    }
+
+    /// Closes a lyrics document handle.
+    #[wasm_bindgen]
+    pub fn lyrics_close(handle: u32) {
+        LYRICS.with(|l| l.borrow_mut().close(handle));
     }
 
     /// Opens a decode session over complete bytes; returns a handle.
@@ -1281,7 +1428,9 @@ mod wasm {
 
 #[cfg(test)]
 mod tests {
-    use super::core_impl::{Decodes, EngineCore, PlayerCore, RangeFetch, representation_select};
+    use super::core_impl::{
+        Decodes, EngineCore, LyricsDocs, PlayerCore, RangeFetch, representation_select,
+    };
 
     struct VecFetch {
         data: Vec<u8>,
@@ -1510,5 +1659,46 @@ mod tests {
         let snapshot = core.snapshot().unwrap();
         let restored = core.restore(&snapshot).unwrap();
         assert!(restored.contains("model"), "restored: {restored}");
+    }
+
+    #[test]
+    fn lyrics_open_doc_active_line_close() {
+        // The wasm lyrics surface: parse once (doc JSON), tick cheaply
+        // (integer index), close invalidates the handle.
+        let mut docs = LyricsDocs::default();
+        let handle = docs
+            .open(b"[ar:Me]\n[00:01.00]one\n[00:02.00][00:03.00]two\n")
+            .expect("parses");
+        let doc = docs.doc(handle).expect("doc json");
+        assert!(doc.contains("\"synced\": 1"), "doc: {doc}");
+        assert!(doc.contains("\"artist\": \"Me\""), "doc: {doc}");
+        assert!(doc.contains("\"t\": 1000"), "doc: {doc}");
+        assert!(doc.contains("\"t\": 3000"), "doc: {doc}");
+        assert_eq!(docs.active_line(handle, 0).unwrap(), -1);
+        assert_eq!(docs.active_line(handle, 1_000).unwrap(), 0);
+        assert_eq!(docs.active_line(handle, 2_500).unwrap(), 1);
+        assert_eq!(docs.active_line(handle, 3_000).unwrap(), 2);
+        assert_eq!(docs.active_line(handle, 99_000).unwrap(), 2);
+        docs.close(handle);
+        assert!(docs.doc(handle).is_err());
+        assert!(docs.active_line(handle, 0).is_err());
+    }
+
+    #[test]
+    fn lyrics_plain_document_has_no_active_line() {
+        let mut docs = LyricsDocs::default();
+        let handle = docs.open(b"just\ntext\n").expect("parses");
+        let doc = docs.doc(handle).expect("doc json");
+        assert!(doc.contains("\"synced\": 0"), "doc: {doc}");
+        assert!(!doc.contains("\"metadata\""), "doc: {doc}");
+        assert_eq!(docs.active_line(handle, 0).unwrap(), -1);
+        assert_eq!(docs.active_line(handle, i64::MAX).unwrap(), -1);
+    }
+
+    #[test]
+    fn lyrics_open_rejects_malformed_input() {
+        let mut docs = LyricsDocs::default();
+        assert!(docs.open(b"[00:xx]bad").is_err());
+        assert!(docs.open(b"[offset:nope]\n[00:01.00]x").is_err());
     }
 }
