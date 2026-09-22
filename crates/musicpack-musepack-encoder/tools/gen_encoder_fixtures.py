@@ -145,6 +145,33 @@ def matrix_cases():
     return rows
 
 
+def fractional_cases():
+    """J.2 fractional-parity rows: (name, quality, rate, kind, frames,
+    channels).
+
+    Deliberately sparse (27 rows, additive — never regenerates existing
+    fixtures): the four representative fractional interiors across all four
+    SV8 rates on `noise`, the same interiors on the deterministic periodic
+    `ramp` signal at 44.1 kHz (the tonal input — stream equality on one
+    input is never treated as the table oracle), the f32 parse-merge
+    boundaries around5/6, arbitrary-precision values, and q9.9999 for the
+    near-clip inequality. Table-level parity is covered separately by the
+    committed `tests/data/psy/psy_q<qual>-<rate>.txt` oracles.
+    """
+    rows = []
+    for q in (4.25, 5.5, 6.5, 8.5):
+        for rate in RATES:
+            rows.append((f"q{q}-{rate}-noise", q, rate, "noise", 5000, 2))
+    for q in (4.25, 5.5, 6.5, 8.5):
+        rows.append((f"q{q}-44100-ramp", q, 44100, "ramp", 5000, 2))
+    for q in (4.9999999, 5.0000001, 5.9999999, 6.0000001):
+        rows.append((f"q{q}-44100-noise", q, 44100, "noise", 5000, 2))
+    for q in (4.2501, 6.0000005):
+        rows.append((f"q{q}-44100-noise", q, 44100, "noise", 5000, 2))
+    rows.append(("q9.9999-44100-noise", 9.9999, 44100, "noise", 5000, 2))
+    return rows
+
+
 def write_wav(path, rate, pcm, channels):
     with wave.open(path, "wb") as w:
         w.setnchannels(channels)
@@ -181,10 +208,12 @@ def main():
     global SCALAR_FLAGS
     SCALAR_FLAGS = ["--impl", "scalar", "--psy-impl", "scalar"]
 
-    # Generate (or reuse) every unique fixture referenced by either manifest.
+    # Generate (or reuse) every unique fixture referenced by any manifest.
     seen = set()
     for name, qual, rate, kind, frames, channels in (
-        [(n, q, r, k, f, 2) for (n, q, r, k, f) in CASES] + matrix_cases()
+        [(n, q, r, k, f, 2) for (n, q, r, k, f) in CASES]
+        + matrix_cases()
+        + fractional_cases()
     ):
         if name in seen:
             continue
@@ -206,8 +235,17 @@ def main():
         sha = hashlib.sha256(data).hexdigest()
         matrix.append(f"{name} {qual} {rate} {kind} {frames} {channels} {len(data)} {sha}")
     open(os.path.join(OUTDIR, "matrix_manifest.txt"), "w").write("\n".join(matrix) + "\n")
-    print(f"wrote manifest.txt ({len(CASES)} cases) and matrix_manifest.txt "
-          f"({len(matrix_cases())} rows)")
+
+    # J.2 fractional-parity manifest (additive; integer manifests untouched).
+    frac = ["# name quality rate kind frames channels bytes sha256"]
+    for name, qual, rate, kind, frames, channels in fractional_cases():
+        data = open(os.path.join(OUTDIR, name + ".mpc"), "rb").read()
+        sha = hashlib.sha256(data).hexdigest()
+        frac.append(f"{name} {qual} {rate} {kind} {frames} {channels} {len(data)} {sha}")
+    open(os.path.join(OUTDIR, "fractional_manifest.txt"), "w").write("\n".join(frac) + "\n")
+    print(f"wrote manifest.txt ({len(CASES)} cases), matrix_manifest.txt "
+          f"({len(matrix_cases())} rows) and fractional_manifest.txt "
+          f"({len(fractional_cases())} rows)")
 
 
 main()
