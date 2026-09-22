@@ -58,8 +58,11 @@ interface WorkerHandle {
    *  re-emit the core's eos once this handle becomes current. */
   syntheticEosPending?: boolean;
   /** Continuous-frame position of this handle's audible end after a
-   *  lane-decoded promotion (`resetBase + outgoingFrames + remaining`).
-   *  The raw length no longer applies: the overlap consumed part of it. */
+   *  lane-decoded promotion (`resetBase + swapBase + lengthSamples`: the
+   *  promoted ring reports boundary + own reads per the blend-clock
+   *  invariant, so the audible end is the boundary plus the full
+   *  successor length). The raw length no longer applies: the overlap
+   *  consumed part of it. */
   syntheticEosAt?: number;
 }
 
@@ -750,12 +753,16 @@ export class MusepackEngine implements Engine {
       if (incoming.eos && incoming.info) {
         incoming.eos = false;
         incoming.syntheticEosPending = true;
-        // Expressed from the swap's BOUNDARY (swapBaseFrames), not the
-        // outgoing ring's raw uncompressed swap-time count — the promoted
-        // ring's own playhead was rebased to that same boundary in
-        // completeXfadeSwap(), so the two stay in the same frame space.
+        // Blend-clock invariant (BUG-1 Fix B): the promoted ring reports
+        // `boundary (swapBaseFrames) + its own reads`, so this successor's
+        // audible end is exactly boundary + its full length — the same
+        // frame at which a non-faded track would end relative to the
+        // boundary. (The old `boundary + (length − incomingFrames)`
+        // expressed the pre-Fix-B "successor-local zero at swap" space and
+        // disagreed with the published clock by the frames the lane had
+        // already consumed at the swap.)
         incoming.syntheticEosAt =
-          this.resetBase + facts.swapBaseFrames + Math.max(0, incoming.info.lengthSamples - facts.incomingFrames);
+          this.resetBase + facts.swapBaseFrames + incoming.info.lengthSamples;
       }
       await this.closeWorker(outgoing);
       // overlapFrames is the TRUE overlap the outgoing ring actually

@@ -922,13 +922,14 @@ describe('MusepackEngine crossfade lifecycle regressions', () => {
       await expect(pendingPromise).resolves.toBeTruthy();
       expect(incoming.syntheticEosPending).toBe(true);
 
-      // lengthSamples = 441000; the audible end sits at
-      // 400000 + (441000 - 100000) = 741000 continuous frames. At 500000
-      // the old raw-length check fired far too early (B had barely begun).
+      // lengthSamples = 441000; blend-clock invariant (BUG-1 Fix B): the
+      // published clock is boundary (swapBase 400000) + successor reads,
+      // so the audible end sits at 400000 + 441000 = 841000. At 500000
+      // the check must not have fired (B had barely begun).
       h.onWorkletMessage({ type: 'rendered', frames: 500000, generation: 0 });
       expect(eosSpy).not.toHaveBeenCalled();
 
-      h.onWorkletMessage({ type: 'rendered', frames: 741001, generation: 0 });
+      h.onWorkletMessage({ type: 'rendered', frames: 841001, generation: 0 });
       expect(eosSpy).toHaveBeenCalledTimes(1);
     },
   );

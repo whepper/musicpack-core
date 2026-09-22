@@ -70,12 +70,15 @@ export class MusicPackPcmProcessor extends AudioWorkletProcessor {
   private xincomingAtSwap = 0;
   /** Outgoing ring's own renderedFrames at the instant mixing began (i.e.
    *  the album-clock position of the boundary itself, BEFORE any overlap).
-   *  This is the swap's rebase target: the promoted ring should report as
-   *  if it started exactly here, so the reported position advances by the
-   *  same amount the caller compresses the outgoing track's declared
-   *  length by (`overlapFrames` below) — position and declared duration
-   *  can never disagree by construction, instead of both drifting by the
-   *  nominal fade window on every single transition. */
+   *  Blend-clock invariant (BUG-1 Fix B): every published position during
+   *  and after the swap is `boundary + incoming-lane frames consumed` —
+   *  this snapshot is BOTH the in-mix blend-clock anchor (see
+   *  reportRendered below) and the promoted ring's rebase target at the
+   *  swap (see completeXfadeSwap), so the reported series is continuous
+   *  across the swap by construction and stays in step with the caller's
+   *  overlap-compressed declared offsets: the promoted ring's own reads
+   *  are exactly the successor-content frames the caller counts from the
+   *  declared boundary. */
   private xoutgoingAtMixStart = 0;
   /** True frames of the outgoing track's tail actually blended with the
    *  incoming lane (bounded by the fade window, and SHORTER than it
@@ -434,14 +437,14 @@ export class MusicPackPcmProcessor extends AudioWorkletProcessor {
     }
   }
 
-  private reportRendered(): void {
+  private reportRendered(frames?: number): void {
     if (!this.ring) return;
     const t = currentTime;
     if (this.lastRenderedReport < 0 || t - this.lastRenderedReport >= 0.2) {
       this.lastRenderedReport = t;
       this.port.postMessage({
         type: 'rendered',
-        frames: this.ring.renderedFrames,
+        frames: frames ?? this.ring.renderedFrames,
         generation: this.generation,
         available: this.ring.availableFrames,
       });
@@ -480,7 +483,20 @@ export class MusicPackPcmProcessor extends AudioWorkletProcessor {
         this.cancelXfade();
         this.reportLevel();
       }
-      this.reportRendered();
+      // Blend-clock invariant (BUG-1 Fix B): while the blend runs the
+      // published position is `mix-start boundary + incoming-lane frames
+      // consumed` — successor-content time, exactly what the promoted
+      // ring reports right after the swap (completeXfadeSwap rebases it
+      // to the same boundary). Reporting the OUTGOING ring here instead
+      // climbed to boundary + overlap and, whenever the incoming track
+      // dried before the window closed (short incoming), overshot the
+      // compressed timeline — making the swap a backward step of
+      // (outgoingConsumed − incomingConsumed), the BUG-1 48.882 → 46.5 s
+      // failure. Post-swap (lane absorbed) this falls through to the
+      // promoted ring, which carries the same boundary in its playhead.
+      this.reportRendered(
+        this.xlane ? this.xoutgoingAtMixStart + this.xlane.ring.renderedFrames : undefined,
+      );
       return true;
     }
 
@@ -580,7 +596,8 @@ export class MusicPackPcmProcessor extends AudioWorkletProcessor {
   }
 
   /** Promotes the crossfade lane to the main decode path at the end of the
-   *  fade window: its ring becomes THE ring (counter reset, so all
+   *  fade window: its ring becomes THE ring (rebased to report
+   *  `boundary + own reads` per the blend-clock invariant, so all
    *  accounting simply continues on the new track), its resampler and
    *  pending chunk are absorbed, and any straggler `xsamples`/`xend`
    *  messages now fall through the normal `samples`/`end` handlers. */
@@ -596,19 +613,27 @@ export class MusicPackPcmProcessor extends AudioWorkletProcessor {
     // advancing once availableFrames hits 0, see processMixing above).
     this.xoverlapAtSwap = Math.max(0, this.xoutgoingAtSwap - this.xoutgoingAtMixStart);
     this.ring = lane.ring;
-    // Continue the album clock from the BOUNDARY itself (xoutgoingAtMixStart),
-    // not from the outgoing ring's raw swap-time count: the caller (Player)
-    // compresses the outgoing track's declared length by the same overlap,
-    // so rebasing to the boundary keeps the reported position and the
-    // declared offsets model in agreement by construction. Rebasing to the
-    // raw swap-time count instead (the previous behavior) credited the
-    // outgoing track with its FULL uncompressed length every time, so the
-    // reported position silently ran one fade-window ahead of the declared
-    // offsets after every single crossfade — tick()'s cursor catch-up would
-    // then "resolve" that manufactured gap by force-advancing the queue,
-    // visible as skipping through several tracks right after a fade.
-    const delta = this.xoutgoingAtMixStart - this.xincomingAtSwap;
-    if (delta > 0) this.ring.continuePlayheadFrom(delta);
+    // Blend-clock invariant (BUG-1 Fix B): rebase the promoted playhead
+    // onto the boundary UNCONDITIONALLY so the promoted ring reports
+    // `boundary + its own reads` — the same successor-content formula the
+    // in-mix blend clock just published (see the reportRendered override
+    // in process()), making the published series continuous across the
+    // swap by construction. The caller (Player) compresses the outgoing
+    // track's declared length at this same boundary, so position and
+    // declared offsets stay in step: the promoted ring's reads ARE the
+    // successor-content frames the caller counts from that boundary. The
+    // previous conditional rebase (delta > 0 only) landed at
+    // max(lane, boundary): for an incoming lane shorter than the blend
+    // that sits behind the values published during the mix by
+    // (outgoingConsumed − incomingConsumed) — the BUG-1 backward step
+    // (48.882 → 46.5 s) — and in the other delta direction it dropped
+    // the successor's already-consumed frames (a −boundary step). The
+    // pre-BUG-2 behavior (raw outgoing swap-time count) is equally wrong
+    // in the opposite direction: it credits the outgoing track its FULL
+    // uncompressed length, so the clock runs ahead of the declared
+    // offsets by one fade window per crossfade and tick()'s catch-up
+    // force-advances the queue (multi-track skips after a fade).
+    this.ring.continuePlayheadFrom(this.xoutgoingAtMixStart);
     this.resampler = lane.resampler;
     this.pending = lane.pending;
     this.ending = lane.ending;

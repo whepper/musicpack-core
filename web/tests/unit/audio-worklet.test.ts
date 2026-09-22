@@ -275,23 +275,21 @@ describe('MusicPackPcmProcessor crossfade lane (M8 Phase B)', () => {
     // queued, so it runs dry on the 4th fade frame (a defensive edge case
     // per the next test's comment, not a production path).
     //
-    // Earlier revision of this test asserted 4 here ("continue counting
-    // from the outgoing ring's raw swap-time count"), which kept the raw
-    // engine counter monotonic across the swap but is what let the exposed
-    // album position silently run ahead of the declared (overlap-shrunk)
-    // offsets by one fade window on EVERY crossfade — the root cause behind
-    // multi-track skips right after a fade (see player.ts's
-    // beginCrossfadeTransition, which shrinks the outgoing track's declared
-    // length by the reported overlap). Rebasing to the boundary instead
-    // means the promoted ring reports exactly what the declared offsets
-    // model expects once the incoming track becomes current: here, that is
-    // the boundary itself (0), plus however far the incoming lane's own
-    // reads have progressed (3) — NOT the outgoing side's unrelated raw
-    // count. The one-time backward step this produces is the
-    // necessary, self-correcting price of that consistency: two tracks
-    // briefly share the timeline during the overlap, so no single
-    // continuous low-level counter can describe both without a snap at the
-    // instant one of them stops being "current".
+    // Landing = boundary (0) + lane-consumed (3) = 3 under the blend-clock
+    // invariant (BUG-1 Fix B) — identical to the BUG-2-era expectation
+    // because the boundary is 0 here. Two earlier revisions are worth
+    // distinguishing: the original counted from the outgoing ring's raw
+    // swap-time count (4), which let the exposed album position run ahead
+    // of the declared (overlap-shrunk) offsets by one fade window on EVERY
+    // crossfade — the root cause behind multi-track skips right after a
+    // fade (see player.ts's beginCrossfadeTransition, which shrinks the
+    // outgoing track's declared length by the reported overlap). Then
+    // landing at the boundary alone was defended with a "one-time
+    // backward step is the necessary price" argument — Fix B showed that
+    // step is NOT necessary: publishing `boundary + lane-consumed` during
+    // the mix makes the whole series continuous with this same landing,
+    // with successor content still counted from the boundary (here, 0 + 3
+    // = 3).
     const { processor, port, go } = armFade(4);
     sendX(port, 'xsamples', Float32Array.of(0.5, 0.5, 0.5), 7);
     port.send({ type: 'samples', buffer: Float32Array.of(1, 1, 1, 1, 1, 1).buffer, generation: 1 });
@@ -368,12 +366,17 @@ describe('MusicPackPcmProcessor crossfade lane (M8 Phase B)', () => {
     const ring = (
       processor as unknown as { ring: { renderedFrames: number } }
     ).ring;
-    // Because the lane's own natural count (4) stayed within the boundary
-    // (6), the rebase fully corrects for the underrun: the album clock
-    // lands EXACTLY on the boundary post-swap, with no drift carried
-    // forward — despite the outgoing side having delivered only half of
-    // the requested overlap.
-    expect(ring.renderedFrames).toBe(6);
+    // Blend-clock invariant (BUG-1 Fix B): the clock lands at
+    // boundary (6) + incoming-lane frames consumed (4) = 10 — the
+    // successor-content position, exactly matching the declared model
+    // (declared boundary = raw length 8 − true overlap 2 = 6, then the
+    // successor's 4 played frames). The old expectation here was 6
+    // ("lands exactly on the boundary"), which discarded the successor's
+    // consumed frames and left the outgoing clock's own published values
+    // (up to 8) hanging above the landing — a −2 backward step, the same
+    // defect class as the BUG-1 48.882 → 46.5 s failure in the other
+    // delta direction.
+    expect(ring.renderedFrames).toBe(10);
   });
 
   it('reports xfadeReady only when the whole incoming track is queued', () => {
@@ -475,5 +478,150 @@ describe('MusicPackPcmProcessor crossfade lane (M8 Phase B)', () => {
     sendX(port, 'xsamples', Float32Array.of(1), 9);
     expect(port.messages.filter((m) => m.type === 'accepted')).toHaveLength(0);
     void processor;
+  });
+});
+
+// BUG-1 Fix B: swap clock continuity. The published position must be ONE
+// continuous series across a crossfade swap, under the blend-clock
+// invariant:
+//
+//     position(t) = mix-start boundary (M) + incoming-lane frames consumed
+//
+// during the mix AND after the swap (`ring.playhead + M` on the promoted
+// ring). Before Fix B the worklet published the OUTGOING ring during the
+// mix (climbing to M + overlap) but landed the promoted ring at
+// `max(M, L)` — so whenever the incoming track supplied FEWER frames than
+// the outgoing tail blended (BUG-1: a 1 s incoming track = 48,000 frames
+// under a 2.5 s fade = 120,000), the reported position stepped BACKWARD
+// by roughly (outgoingConsumed − incomingConsumed): the observed
+// 48.882 s → 46.5 s failure. Long incoming lanes supplied both sides
+// equally (L ≈ O), which is why existing long-track cases agreed.
+//
+// Frame values below are the exact numbers measured in the BUG-1 failing
+// trace (48 kHz context, seek-anchored ring).
+describe('swap clock continuity (BUG-1 Fix B: short incoming lanes)', () => {
+  const RATE_HZ = 48_000;
+  const M = 5_969; // mix-start boundary: frames rendered between seek and xfade-go
+  const FADE = 120_000; // 2.5 s fade window (the EOS-clamped overlap in the trace)
+  const SHORT_IN = 48_000; // 1 s incoming track — fully consumed by the blend
+  const OUT_SUPPLIED = 119_743; // outgoing frames the tail actually supplied (dried 257 early)
+  const CALLBACK = 128;
+
+  interface SwapRun {
+    preSwap: number[];
+    postSwap: number[];
+    landing: number;
+    xfaded: WorkletReport;
+  }
+
+  /** Plays out `written` outgoing frames, pre-rolls the clock to `M`,
+   *  arms the fade, feeds the given lane, and renders until the swap. */
+  function runSwap(opts: { written: number; laneFrames: number }): SwapRun {
+    const { processor, port } = createProcessor(RATE_HZ, 1, 1, RATE_HZ, 1);
+    port.send({ type: 'samples', buffer: new Float32Array(opts.written).buffer, generation: 1 });
+
+    // Pre-roll: play M frames of outgoing content (the blend starts here).
+    let t = 0;
+    for (let played = 0; played < M; played += CALLBACK) {
+      vi.stubGlobal('currentTime', (t += CALLBACK / RATE_HZ));
+      render(processor, Math.min(CALLBACK, M - played));
+    }
+
+    port.send({ type: 'xfade', sourceRate: RATE_HZ, sourceChannels: 1, fadeFrames: FADE, token: 7, generation: 1 });
+    port.send({ type: 'xsamples', buffer: new Float32Array(opts.laneFrames).buffer, token: 7, generation: 1 });
+    port.send({ type: 'xend', token: 7, generation: 1 });
+    port.send({ type: 'xfade-go', token: 7, generation: 1 });
+
+    // Mix in real-time-sized callbacks until the swap completes; advance
+    // the context clock so the 0.2 s 'rendered' throttle emits a series.
+    let swapIndex = -1;
+    for (let i = 0; i < 4_000 && swapIndex < 0; i++) {
+      vi.stubGlobal('currentTime', (t += CALLBACK / RATE_HZ));
+      render(processor, CALLBACK);
+      swapIndex = port.messages.findIndex((m) => m.type === 'xfaded');
+    }
+    expect(swapIndex).toBeGreaterThanOrEqual(0);
+
+    // Capture the landing BEFORE driving another callback: the promoted
+    // ring advances with real output frames from here on.
+    const landing = (processor as unknown as { ring: { renderedFrames: number } }).ring.renderedFrames;
+
+    // One more throttled report AFTER the swap so the post-swap series is
+    // observable through the same channel callers consume.
+    vi.stubGlobal('currentTime', (t += 0.25));
+    render(processor, CALLBACK);
+
+    const rendered = port.messages
+      .slice(0, swapIndex)
+      .filter((m) => m.type === 'rendered')
+      .map((m) => m.frames as number);
+    const after = port.messages
+      .slice(swapIndex)
+      .filter((m) => m.type === 'rendered')
+      .map((m) => m.frames as number);
+    return {
+      preSwap: rendered,
+      postSwap: after,
+      landing,
+      xfaded: port.messages.find((m) => m.type === 'xfaded')!,
+    };
+  }
+
+  it('short incoming (L < O): the first published position after the swap never steps backward', () => {
+    // Exact BUG-1 shape: outgoing supplied 119,743 of the 120,000-frame
+    // window; the 1 s incoming lane dried at 48,000. The old code climbed
+    // to M + O ≈ 125,712 during the mix and landed at 48,000 — the
+    // 48.882 → 46.5 failure in miniature. The landing must be M + L and
+    // no value ever published may exceed it.
+    const run = runSwap({ written: M + OUT_SUPPLIED, laneFrames: SHORT_IN });
+
+    const lastPre = run.preSwap[run.preSwap.length - 1];
+    expect(lastPre).toBeDefined();
+    expect(run.landing).toBeGreaterThanOrEqual(lastPre!); // no backward step
+    expect(Math.max(...run.preSwap)).toBeLessThanOrEqual(run.landing); // no overshoot ever published
+
+    // Landing = boundary + incoming content consumed.
+    expect(run.landing).toBe(M + SHORT_IN);
+    expect(run.postSwap.length).toBeGreaterThan(0);
+    expect(run.postSwap[0]).toBeGreaterThanOrEqual(run.landing);
+    for (let i = 1; i < run.postSwap.length; i++) {
+      expect(run.postSwap[i]!).toBeGreaterThanOrEqual(run.postSwap[i - 1]!);
+    }
+
+    // Swap facts unchanged by Fix B: Player's declared-boundary shrink
+    // still keys off overlapFrames.
+    expect(run.xfaded).toMatchObject({
+      swapBaseFrames: M,
+      outgoingFrames: M + OUT_SUPPLIED,
+      incomingFrames: SHORT_IN,
+      overlapFrames: OUT_SUPPLIED,
+    });
+  });
+
+  it('long incoming (L >= O): the series stays continuous at boundary + fade window', () => {
+    // Same outgoing tail, but the incoming lane holds the whole window:
+    // L = FADE = 120,000 while the outgoing side dried at 119,743.
+    const run = runSwap({ written: M + OUT_SUPPLIED, laneFrames: FADE + 1_024 });
+
+    const lastPre = run.preSwap[run.preSwap.length - 1];
+    expect(lastPre).toBeDefined();
+    expect(run.landing).toBeGreaterThanOrEqual(lastPre!);
+    expect(Math.max(...run.preSwap)).toBeLessThanOrEqual(run.landing);
+    expect(run.landing).toBe(M + FADE); // boundary + full window consumed
+    expect(run.xfaded).toMatchObject({ incomingFrames: FADE, overlapFrames: OUT_SUPPLIED });
+  });
+
+  it('equality (incoming consumed == outgoing supplied): exact continuity at boundary + O', () => {
+    // Outgoing holds exactly the fade window (nothing dried) and the lane
+    // more than the window: L = O = FADE, so landing = M + FADE = the
+    // outgoing ring's own swap-time count.
+    const run = runSwap({ written: M + FADE, laneFrames: FADE + 512 });
+
+    const lastPre = run.preSwap[run.preSwap.length - 1];
+    expect(lastPre).toBeDefined();
+    expect(run.landing).toBeGreaterThanOrEqual(lastPre!);
+    expect(Math.max(...run.preSwap)).toBeLessThanOrEqual(run.landing);
+    expect(run.landing).toBe(M + FADE);
+    expect(run.xfaded).toMatchObject({ incomingFrames: FADE, overlapFrames: FADE });
   });
 });

@@ -126,9 +126,12 @@ export interface WorkletReport {
   outgoingFrames?: number;
   incomingFrames?: number;
   /** `xfaded`: outgoing ring's own position when mixing began — the
-   *  boundary itself, before any overlap. The rebase target that keeps the
-   *  reported position aligned with the declared (overlap-compressed)
-   *  offsets model on the caller side. */
+   *  boundary itself, before any overlap. Blend-clock invariant (BUG-1
+   *  Fix B): the published position during and after the swap is
+   *  `swapBaseFrames + incoming frames consumed`, anchored here; the
+   *  caller's overlap-compressed declared boundary is this same boundary
+   *  (to within trigger-lead/priming), so reported position and declared
+   *  offsets advance together. */
   swapBaseFrames?: number;
   /** `xfaded`: true frames of the outgoing track's tail actually blended
    *  with the incoming lane (≤ fadeFrames; shorter when the outgoing ring
