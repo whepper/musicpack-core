@@ -71,11 +71,11 @@ fn names(candidates: &[PackageCandidate], root: &Path) -> Vec<String> {
     candidates
         .iter()
         .map(|c| {
-            c.path
-                .strip_prefix(root)
-                .unwrap()
-                .to_string_lossy()
-                .into_owned()
+            let rel = c.path.strip_prefix(root).unwrap().to_string_lossy();
+            // Discovery yields native paths; the contract under test is the
+            // package set, so normalize Windows separators for comparison.
+            // (Fixture names never contain backslashes.)
+            rel.replace('\\', "/")
         })
         .collect()
 }
