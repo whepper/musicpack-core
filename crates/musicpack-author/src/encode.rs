@@ -16,13 +16,15 @@
 //!
 //! # Known compatibility gap (documented, not silent)
 //!
-//! The Rust encoder's frozen psychoacoustic tables exist only for the
-//! combinations `{4,5,6,7} @ 44100 Hz` and `q5 @ {48000, 37800, 32000} Hz`
-//! (see `musicpack-musepack-encoder/tests/data/encoder/manifest.txt`). Every
-//! other `(quality, sample-rate)` pair is rejected with a typed
+//! The Rust encoder's frozen psychoacoustic tables cover the complete
+//! **integer** quality matrix of the reference `mpcenc`: qualities `0..=10`
+//! at `44100`, `48000`, `37800` and `32000` Hz (44 configurations; see
+//! `musicpack-musepack-encoder/tests/data/encoder/matrix_manifest.txt`).
+//! Fractional qualities (e.g. `5.5`, which the C encoder interpolates) and
+//! out-of-range qualities (which the C encoder clips) are deliberately
+//! deferred to a separate parity slice and are rejected with a typed
 //! [`AuthorError::Unsupported`] rather than being silently mapped to a
-//! different profile. The C encoder still covers those pairs; expanding the
-//! frozen tables is encoder-crate work, not pipeline work.
+//! different profile.
 //!
 //! Sources deeper than 16 bits are reduced to 16 bits for the encoder
 //! (the top 16 bits of the sample, which is exact for 16-bit sources). The
@@ -115,7 +117,8 @@ pub fn encode_to(source: &Path, dest: &Path, quality: f32) -> Result<EncodeInfo>
         } => AuthorError::Unsupported {
             detail: format!(
                 "the Rust encoder has no frozen profile for quality {qual} at {sample_rate} Hz \
-                 (supported: q4-q7 at 44100 Hz, q5 at 32000/37800/48000 Hz)"
+                 (supported: integer qualities 0..=10 at 32000/37800/44100/48000 Hz; \
+                 fractional qualities are deferred)"
             ),
         },
         other => AuthorError::Encode {

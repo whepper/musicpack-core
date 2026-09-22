@@ -228,15 +228,32 @@ fn waveform_payload_is_the_core_kernel() {
 fn encoder_rejects_unsupported_configs() {
     let temp = TempDir::new("unsupported");
     let root = album_root(&temp, false);
-    // q6 has frozen tables only at 44100 Hz; a 48 kHz source must fail
-    // closed rather than silently pick another profile.
+    // Integer quality parity (J.1) accepts 0..=10 at every SV8 rate, but a
+    // fractional quality is deliberately deferred (J.2): it must fail closed
+    // rather than silently pick another profile.
     let out = temp.path().join("x.mpc");
-    let err = encode::encode_to(&root.join("one.flac"), &out, 8.0).unwrap_err();
+    let err = encode::encode_to(&root.join("one.flac"), &out, 5.5).unwrap_err();
     assert!(
         matches!(err, musicpack_author::AuthorError::Unsupported { .. }),
         "{err:?}"
     );
     assert!(!out.exists());
+}
+
+#[test]
+fn encoder_accepts_every_ui_quality_at_every_source_rate() {
+    // The Author UI offers q5/6/7/8; after integer parity (J.1) all of them
+    // are valid at every SV8 source rate, so the UI and the encoder no longer
+    // disagree anywhere the reference C encoder supports.
+    let temp = TempDir::new("ui-qualities");
+    let root = album_root(&temp, false);
+    for (n, quality) in [5.0f32, 6.0, 7.0, 8.0].into_iter().enumerate() {
+        let out = temp.path().join(format!("q{quality}.mpc"));
+        encode::encode_to(&root.join("one.flac"), &out, quality)
+            .unwrap_or_else(|e| panic!("q{quality} must encode: {e}"));
+        assert!(out.exists(), "q{quality} output missing");
+        assert!(n < 4);
+    }
 }
 
 // ---------------------------------------------------------------------

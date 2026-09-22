@@ -554,12 +554,14 @@ mod tests {
 
     #[test]
     fn host_errors_carry_stable_codes() {
+        // "q8@48000" is valid since integer encoder parity (J.1); use a
+        // genuinely unsupported pair as the example detail.
         let e: HostError = author::AuthorError::Unsupported {
-            detail: "q8@48000".into(),
+            detail: "fractional quality 5.5@44100".into(),
         }
         .into();
         assert_eq!(e.code, "unsupported");
-        assert!(e.message.contains("q8@48000"));
+        assert!(e.message.contains("fractional quality 5.5@44100"));
 
         let e: HostError = author::AuthorError::Encode {
             disc: 1,
