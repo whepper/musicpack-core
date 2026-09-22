@@ -86,7 +86,7 @@ pub fn stream_info_payload(info: &StreamInfo) -> Result<Vec<u8>, EncoderError> {
     if !(1..=16).contains(&info.channels) {
         return Err(EncoderError::InvalidChannelCount(info.channels));
     }
-    if info.frames_per_block_pwr > 14 {
+    if info.frames_per_block_pwr > 14 || info.frames_per_block_pwr % 2 == 1 {
         return Err(EncoderError::InvalidBlockPower(info.frames_per_block_pwr));
     }
 
@@ -350,6 +350,30 @@ mod tests {
             }),
             Err(EncoderError::InvalidBlockPower(15))
         );
+    }
+
+    /// The `SH` field stores `frames_per_block_pwr >> 1`, so odd powers are
+    /// not representable and must be rejected; even powers `0..=14` are
+    /// accepted (including `0`).
+    #[test]
+    fn stream_info_rejects_odd_block_powers_and_accepts_even_ones() {
+        assert_eq!(
+            stream_info_payload(&StreamInfo {
+                frames_per_block_pwr: 5,
+                ..info()
+            }),
+            Err(EncoderError::InvalidBlockPower(5))
+        );
+        for pwr in [0u32, 2, 6, 14] {
+            assert!(
+                stream_info_payload(&StreamInfo {
+                    frames_per_block_pwr: pwr,
+                    ..info()
+                })
+                .is_ok(),
+                "even frames_per_block_pwr {pwr} must be accepted"
+            );
+        }
     }
 
     #[test]

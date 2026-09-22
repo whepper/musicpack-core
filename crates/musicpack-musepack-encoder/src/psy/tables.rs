@@ -229,30 +229,392 @@ impl PsyTables {
     }
 }
 
+/// The complete integer SV8 quality matrix: `(quality, sample rate)` pairs
+/// accepted by the reference `mpcenc` for which tables are frozen.
+///
+/// Integer quality `0..=10` × the four SV8 sample rates = 44 configurations.
+/// Each entry maps the exact `f32` bit patterns of the pair onto the const
+/// transcribed from the C oracle dump `tests/data/psy/psy_<q>-<rate>.txt`.
+const MATRIX: [(u32, u32, &frozen::PsyTablesBits); 44] = [
+    (
+        0.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q0_44100,
+    ),
+    (
+        0.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q0_48000,
+    ),
+    (
+        0.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q0_37800,
+    ),
+    (
+        0.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q0_32000,
+    ),
+    (
+        1.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q1_44100,
+    ),
+    (
+        1.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q1_48000,
+    ),
+    (
+        1.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q1_37800,
+    ),
+    (
+        1.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q1_32000,
+    ),
+    (
+        2.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q2_44100,
+    ),
+    (
+        2.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q2_48000,
+    ),
+    (
+        2.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q2_37800,
+    ),
+    (
+        2.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q2_32000,
+    ),
+    (
+        3.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q3_44100,
+    ),
+    (
+        3.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q3_48000,
+    ),
+    (
+        3.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q3_37800,
+    ),
+    (
+        3.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q3_32000,
+    ),
+    (
+        4.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q4_44100,
+    ),
+    (
+        4.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q4_48000,
+    ),
+    (
+        4.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q4_37800,
+    ),
+    (
+        4.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q4_32000,
+    ),
+    (
+        5.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q5_44100,
+    ),
+    (
+        5.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q5_48000,
+    ),
+    (
+        5.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q5_37800,
+    ),
+    (
+        5.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q5_32000,
+    ),
+    (
+        6.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q6_44100,
+    ),
+    (
+        6.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q6_48000,
+    ),
+    (
+        6.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q6_37800,
+    ),
+    (
+        6.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q6_32000,
+    ),
+    (
+        7.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q7_44100,
+    ),
+    (
+        7.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q7_48000,
+    ),
+    (
+        7.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q7_37800,
+    ),
+    (
+        7.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q7_32000,
+    ),
+    (
+        8.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q8_44100,
+    ),
+    (
+        8.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q8_48000,
+    ),
+    (
+        8.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q8_37800,
+    ),
+    (
+        8.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q8_32000,
+    ),
+    (
+        9.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q9_44100,
+    ),
+    (
+        9.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q9_48000,
+    ),
+    (
+        9.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q9_37800,
+    ),
+    (
+        9.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q9_32000,
+    ),
+    (
+        10.0f32.to_bits(),
+        44100.0f32.to_bits(),
+        &frozen::PSY_Q10_44100,
+    ),
+    (
+        10.0f32.to_bits(),
+        48000.0f32.to_bits(),
+        &frozen::PSY_Q10_48000,
+    ),
+    (
+        10.0f32.to_bits(),
+        37800.0f32.to_bits(),
+        &frozen::PSY_Q10_37800,
+    ),
+    (
+        10.0f32.to_bits(),
+        32000.0f32.to_bits(),
+        &frozen::PSY_Q10_32000,
+    ),
+];
+
 /// Returns the frozen tables for a `(quality, sample rate)` pair.
 ///
-/// Only the combinations exercised by the oracle are frozen; other pairs
-/// return `None`. Extending coverage means re-running the oracle tool.
+/// The frozen set covers the complete **integer SV8 quality matrix** of the
+/// reference `mpcenc`: integer qualities `0..=10` at 44100, 48000, 37800 and
+/// 32000 Hz — 44 configurations total. Quality and rate are matched by exact
+/// `f32` bit equality, so anything else (fractional qualities such as `5.5`,
+/// out-of-range qualities, other rates) returns `None` and the caller fails
+/// closed with [`crate::error::EncoderError::UnsupportedPsyConfig`].
+///
+/// Fractional-quality parity (the C encoder interpolates the profile and
+/// clips out-of-range qualities) is a **separately deferred parity slice
+/// (J.2)**; see `PSYCHOACOUSTIC_CONTRACT.md` §10. Nothing here reinterprets
+/// quality: each pair maps to the tables the C oracle produced for exactly
+/// that pair.
 #[must_use]
 pub fn frozen_psy_tables(qual: f32, sample_rate: f32) -> Option<&'static frozen::PsyTablesBits> {
     let q = qual.to_bits();
     let r = sample_rate.to_bits();
-    let q4 = 4.0f32.to_bits();
-    let q5 = 5.0f32.to_bits();
-    let q6 = 6.0f32.to_bits();
-    let q7 = 7.0f32.to_bits();
-    let s44 = 44100.0f32.to_bits();
-    let s48 = 48000.0f32.to_bits();
-    let s37 = 37800.0f32.to_bits();
-    let s32 = 32000.0f32.to_bits();
-    match (q, r) {
-        _ if q == q4 && r == s44 => Some(&frozen::PSY_Q4_44100),
-        _ if q == q5 && r == s44 => Some(&frozen::PSY_Q5_44100),
-        _ if q == q6 && r == s44 => Some(&frozen::PSY_Q6_44100),
-        _ if q == q7 && r == s44 => Some(&frozen::PSY_Q7_44100),
-        _ if q == q5 && r == s48 => Some(&frozen::PSY_Q5_48000),
-        _ if q == q5 && r == s37 => Some(&frozen::PSY_Q5_37800),
-        _ if q == q5 && r == s32 => Some(&frozen::PSY_Q5_32000),
-        _ => None,
+    MATRIX
+        .iter()
+        .find(|(mq, mr, _)| *mq == q && *mr == r)
+        .map(|(_, _, tables)| *tables)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::BTreeSet;
+    use std::path::PathBuf;
+
+    /// Integer qualities `0..=10` (independent of `MATRIX`).
+    const QUALITIES: [f32; 11] = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
+    /// The four SV8 sample rates.
+    const RATES: [f32; 4] = [44100.0, 48000.0, 37800.0, 32000.0];
+
+    fn dump_path(qual: f32, rate: f32) -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data/psy")
+            .join(format!("psy_q{qual}-{rate}.txt"))
+    }
+
+    /// Parses one committed C-oracle dump `psy_<q>-<rate>.txt`, returning
+    /// `(max_band, [(field name, bits)])` in file order.
+    fn parse_dump(qual: f32, rate: f32) -> (i32, Vec<(&'static str, Vec<u32>)>) {
+        let text = std::fs::read_to_string(dump_path(qual, rate))
+            .unwrap_or_else(|e| panic!("missing oracle dump for q{qual} @{rate}: {e}"));
+        let mut lines = text.lines().filter(|l| !l.trim().is_empty());
+        let first = lines.next().expect("dump header");
+        let mut header = first.split_whitespace();
+        assert_eq!(header.next(), Some("max_band"));
+        let max_band: i32 = header.next().expect("max_band value").parse().unwrap();
+        let mut sections = Vec::new();
+        while let Some(name) = lines.next() {
+            let mut parts = name.split_whitespace();
+            let key = parts.next().unwrap();
+            let count: usize = parts.next().expect("section count").parse().unwrap();
+            let bits: Vec<u32> = (0..count)
+                .map(|_| {
+                    let line = lines.next().unwrap_or_else(|| panic!("short dump {key}"));
+                    u32::from_str_radix(line.trim(), 16).expect("hex bits")
+                })
+                .collect();
+            let named = match key {
+                "fftLtq" => "fft_ltq",
+                "partLtq" => "part_ltq",
+                "invLtq" => "inv_ltq",
+                "MinVal" => "min_val",
+                "Loudness" => "loudness",
+                "SPRD" => "sprd",
+                "scalars" => "scalars",
+                other => panic!("unknown dump section {other}"),
+            };
+            sections.push((named, bits));
+        }
+        (max_band, sections)
+    }
+
+    fn table_bits(t: &frozen::PsyTablesBits) -> Vec<(&'static str, &[u32])> {
+        vec![
+            ("fft_ltq", &t.fft_ltq),
+            ("part_ltq", &t.part_ltq),
+            ("inv_ltq", &t.inv_ltq),
+            ("min_val", &t.min_val),
+            ("loudness", &t.loudness),
+            ("sprd", &t.sprd),
+            ("scalars", &t.scalars),
+        ]
+    }
+
+    /// Every integer `(quality, rate)` pair resolves to exactly one frozen
+    /// table, each pair points at a distinct const, and every bit matches the
+    /// committed dump the C oracle produced for that pair. This is the
+    /// psy-layer acceptance test for the 44-configuration matrix: lookup
+    /// succeeds, the expected table identity is selected (a mis-wired pair
+    /// would compare against the wrong dump and fail), no fallback occurs,
+    /// and the values equal the C oracle data.
+    #[test]
+    fn integer_matrix_resolves_to_distinct_tables_matching_the_c_oracle_dumps() {
+        let mut seen_keys = BTreeSet::new();
+        let mut seen_ptrs = BTreeSet::new();
+        for &qual in &QUALITIES {
+            for &rate in &RATES {
+                let tables = frozen_psy_tables(qual, rate)
+                    .unwrap_or_else(|| panic!("q{qual} @{rate} Hz must resolve"));
+                seen_keys.insert((qual.to_bits(), rate.to_bits()));
+                seen_ptrs.insert(std::ptr::from_ref(tables) as usize);
+
+                let (max_band, sections) = parse_dump(qual, rate);
+                assert_eq!(
+                    tables.max_band, max_band,
+                    "q{qual} @{rate}: max_band differs from the C oracle dump"
+                );
+                let own = table_bits(tables);
+                assert_eq!(own.len(), sections.len());
+                for ((field, bits), (dump_field, dump_bits)) in own.iter().zip(&sections) {
+                    assert_eq!(field, dump_field, "q{qual} @{rate}: section order");
+                    assert_eq!(
+                        *bits,
+                        dump_bits.as_slice(),
+                        "q{qual} @{rate}: `{field}` differs from the C oracle dump"
+                    );
+                }
+            }
+        }
+        assert_eq!(
+            seen_keys.len(),
+            44,
+            "the matrix must cover 44 distinct pairs"
+        );
+        assert_eq!(
+            seen_ptrs.len(),
+            44,
+            "each pair must resolve to its own frozen table (no aliasing/fallback)"
+        );
+    }
+
+    /// Anything outside the integer matrix must keep failing closed — in
+    /// particular the deliberately deferred J.2 surfaces: fractional quality,
+    /// out-of-range quality (C would clip; Rust rejects before clipping), and
+    /// non-SV8 rates. This pins the J.1/J.2 boundary.
+    #[test]
+    fn out_of_matrix_pairs_fail_closed() {
+        let rejected: &[(f32, f32)] = &[
+            (5.5, 44100.0),       // fractional (J.2)
+            (4.25, 44100.0),      // fractional, the C "centesimal" example (J.2)
+            (6.0000005, 44100.0), // not the exact integer bit pattern (J.2)
+            (11.0, 44100.0),      // C clips to q10 (J.2 clip parity)
+            (-1.0, 44100.0),      // C clips to q0 (J.2 clip parity)
+            (5.0, 96000.0),       // not an SV8 rate
+            (5.0, 22050.0),       // not an SV8 rate
+            (8.0, 44101.0),       // near-miss rate
+        ];
+        for &(qual, rate) in rejected {
+            assert!(
+                frozen_psy_tables(qual, rate).is_none(),
+                "q{qual} @{rate} must stay rejected"
+            );
+        }
     }
 }

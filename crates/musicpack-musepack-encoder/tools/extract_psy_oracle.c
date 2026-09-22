@@ -202,6 +202,7 @@ typedef struct {
 } config_t;
 
 static const config_t CONFIGS [] = {
+    /* The original seven oracle configurations (Phase 15F), unchanged. */
     { "q4-44100", 4.0f, 44100.0 },
     { "q5-44100", 5.0f, 44100.0 },
     { "q6-44100", 6.0f, 44100.0 },
@@ -209,6 +210,49 @@ static const config_t CONFIGS [] = {
     { "q5-48000", 5.0f, 48000.0 },
     { "q5-37800", 5.0f, 37800.0 },
     { "q5-32000", 5.0f, 32000.0 },
+    /* Encoder-parity slice J.1: the remaining integer quality x sample-rate
+     * combinations accepted by the reference mpcenc (quality 0..=10 is
+     * clipped/integer-accepted at all four SV8 rates; profile.c
+     * SetQualityParams + psy_tab.c Init_Psychoakustiktabellen handle every
+     * pair). Added so the Rust gate can cover the full 44-configuration
+     * integer matrix with oracle-exact frozen tables. */
+    { "q0-44100",  0.0f, 44100.0 },
+    { "q0-48000",  0.0f, 48000.0 },
+    { "q0-37800",  0.0f, 37800.0 },
+    { "q0-32000",  0.0f, 32000.0 },
+    { "q1-44100",  1.0f, 44100.0 },
+    { "q1-48000",  1.0f, 48000.0 },
+    { "q1-37800",  1.0f, 37800.0 },
+    { "q1-32000",  1.0f, 32000.0 },
+    { "q2-44100",  2.0f, 44100.0 },
+    { "q2-48000",  2.0f, 48000.0 },
+    { "q2-37800",  2.0f, 37800.0 },
+    { "q2-32000",  2.0f, 32000.0 },
+    { "q3-44100",  3.0f, 44100.0 },
+    { "q3-48000",  3.0f, 48000.0 },
+    { "q3-37800",  3.0f, 37800.0 },
+    { "q3-32000",  3.0f, 32000.0 },
+    { "q4-48000",  4.0f, 48000.0 },
+    { "q4-37800",  4.0f, 37800.0 },
+    { "q4-32000",  4.0f, 32000.0 },
+    { "q6-48000",  6.0f, 48000.0 },
+    { "q6-37800",  6.0f, 37800.0 },
+    { "q6-32000",  6.0f, 32000.0 },
+    { "q7-48000",  7.0f, 48000.0 },
+    { "q7-37800",  7.0f, 37800.0 },
+    { "q7-32000",  7.0f, 32000.0 },
+    { "q8-44100",  8.0f, 44100.0 },
+    { "q8-48000",  8.0f, 48000.0 },
+    { "q8-37800",  8.0f, 37800.0 },
+    { "q8-32000",  8.0f, 32000.0 },
+    { "q9-44100",  9.0f, 44100.0 },
+    { "q9-48000",  9.0f, 48000.0 },
+    { "q9-37800",  9.0f, 37800.0 },
+    { "q9-32000",  9.0f, 32000.0 },
+    { "q10-44100", 10.0f, 44100.0 },
+    { "q10-48000", 10.0f, 48000.0 },
+    { "q10-37800", 10.0f, 37800.0 },
+    { "q10-32000", 10.0f, 32000.0 },
 };
 #define NCONFIGS ((int) (sizeof CONFIGS / sizeof CONFIGS[0]))
 

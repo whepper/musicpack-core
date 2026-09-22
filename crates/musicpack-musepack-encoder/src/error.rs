@@ -21,7 +21,9 @@ pub enum EncoderError {
     InvalidBandCount(u32),
     /// Channels must fit the four-bit `Channels - 1` field (`1..=16`).
     InvalidChannelCount(u32),
-    /// `frames_per_block_pwr` must fit the three-bit `>> 1` field (`0..=14`).
+    /// `frames_per_block_pwr` must fit the three-bit `>> 1` field: even and
+    /// within `0..=14` (the field stores the log4 exponent, so odd powers
+    /// are not representable).
     InvalidBlockPower(u32),
     /// The `EI` profile must fit the seven-bit field.
     InvalidProfile(f64),
@@ -84,7 +86,8 @@ impl fmt::Display for EncoderError {
             ),
             Self::InvalidBlockPower(power) => write!(
                 f,
-                "frames_per_block_pwr {power} does not fit the 3-bit block-power field"
+                "frames_per_block_pwr {power} must be even and within 0..=14 to fit \
+                 the 3-bit block-power field"
             ),
             Self::InvalidProfile(profile) => {
                 write!(f, "encoder profile {profile} does not fit the 7-bit field")

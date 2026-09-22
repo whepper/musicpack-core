@@ -54,10 +54,18 @@ compared.
 
 ### Configurations
 
-`q4-44100`, `q5-44100`, `q6-44100`, `q7-44100`, `q5-48000`, `q5-37800`,
-`q5-32000`. PCM cases: silence, impulse, constant, alternating, sine,
-multitone, lowfreq, highfreq, noise, transient, stereo_same, stereo_diff,
-left_only, right_only, phase_invert, ramp — three consecutive frames each.
+Model-case configs (the `<config>_<case>.f32le` records and
+`ms_<config>_k<n>.txt` sub-oracles): `q4-44100`, `q5-44100`, `q6-44100`,
+`q7-44100`, `q5-48000`, `q5-37800`, `q5-32000`. PCM cases: silence, impulse,
+constant, alternating, sine, multitone, lowfreq, highfreq, noise, transient,
+stereo_same, stereo_diff, left_only, right_only, phase_invert, ramp — three
+consecutive frames each.
+
+The frozen numerical **table** dumps `psy_<config>.txt` are wider than the
+model cases: since the J.1 integer-parity slice they cover **all 44 integer
+configurations** (quality `0..=10` × 44100/48000/37800/32000 Hz), which
+`tools/gen_psy_tables.py` transcribes into `src/psy/frozen.rs`. The model
+cases intentionally stay at the original seven configurations.
 
 PCM generation is deterministic: a continuous stream windowed exactly like
 `mpcenc` (`[g[f·1152]]·448 ++ g[f·1152 .. f·1152+1152]`, `M/S = (L±R)/2`), and

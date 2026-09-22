@@ -210,9 +210,28 @@ pub struct MusepackEncoder {
 
 impl MusepackEncoder {
     /// Creates an encoder for the given configuration.
+    ///
+    /// Validation mirrors the reference where the reference validates, and
+    /// fails closed where an accepted value would produce an inconsistent
+    /// stream:
+    ///
+    /// * `frames_per_block_pwr` must be even and `<= 14`. `SH` stores
+    ///   `frames_per_block_pwr >> 1` (three bits, log4), so only even powers
+    ///   `0..=14` are representable; the reference CLI only ever produces
+    ///   even values (`--num_frames x` sets `2x`). Odd values are rejected
+    ///   (`EncoderError::InvalidBlockPower`) instead of silently emitting a
+    ///   header that disagrees with the actual `AP` block size.
+    /// * `seek_pwr > 15` is reset to `1`, exactly like the reference
+    ///   `mpc_encoder_init` (`if (SeekDistance > 15) SeekDistance = 1;`),
+    ///   rather than being written into the four-bit `ST` field truncated or
+    ///   panicking on the seek-entry shift.
     pub fn new(config: EncoderConfig) -> Result<Self, EncoderError> {
-        if config.frames_per_block_pwr > 14 {
+        if config.frames_per_block_pwr > 14 || config.frames_per_block_pwr % 2 == 1 {
             return Err(EncoderError::InvalidBlockPower(config.frames_per_block_pwr));
+        }
+        let mut config = config;
+        if config.seek_pwr > 15 {
+            config.seek_pwr = 1;
         }
         let params = PsyParams::from_quality(config.quality);
         let psy = PsychoacousticModel::new(config.quality, config.sample_rate as f32)?;
@@ -737,8 +756,87 @@ mod tests {
         assert!(out.windows(2).any(|w| w == b"SE"));
     }
 
+    /// The complete integer matrix (qualities `0..=10` × the four SV8 rates)
+    /// must construct an encoder; this replaces the pre-J.1 test that pinned
+    /// `q3 @ 44100` as unsupported.
+    #[test]
+    fn accepts_the_full_integer_quality_matrix() {
+        for quality in 0..=10 {
+            for &rate in &[44100u32, 48000, 37800, 32000] {
+                MusepackEncoder::new(EncoderConfig::new(quality as f32, rate, 2))
+                    .unwrap_or_else(|e| panic!("q{quality} @{rate} Hz must be accepted: {e}"));
+            }
+        }
+    }
+
+    /// Odd `frames_per_block_pwr` values are not representable in `SH`
+    /// (`>> 1`), so they must fail closed instead of emitting a header that
+    /// disagrees with the actual `AP` block size (audit §9).
+    #[test]
+    fn odd_frame_block_powers_are_rejected() {
+        for pwr in [1u32, 5, 13] {
+            let config = EncoderConfig {
+                frames_per_block_pwr: pwr,
+                ..EncoderConfig::new(5.0, 44100, 2)
+            };
+            assert!(
+                matches!(
+                    MusepackEncoder::new(config),
+                    Err(EncoderError::InvalidBlockPower(p)) if p == pwr
+                ),
+                "odd frames_per_block_pwr {pwr} must be rejected"
+            );
+        }
+        // Even powers stay accepted, including the extremes.
+        for pwr in [0u32, 2, 14] {
+            let config = EncoderConfig {
+                frames_per_block_pwr: pwr,
+                ..EncoderConfig::new(5.0, 44100, 2)
+            };
+            assert!(
+                MusepackEncoder::new(config).is_ok(),
+                "even frames_per_block_pwr {pwr} must be accepted"
+            );
+        }
+    }
+
+    /// `seek_pwr > 15` must clamp to `1` exactly like the reference
+    /// `mpc_encoder_init`, instead of truncating the four-bit `ST` field or
+    /// panicking on the seek-entry shift (audit §9).
+    #[test]
+    fn oversized_seek_pwr_clamps_to_the_reference_value() {
+        let pcm = vec![1234i16; 9000 * 2];
+        let encode = |seek_pwr: u32| -> Vec<u8> {
+            let config = EncoderConfig {
+                seek_pwr,
+                ..EncoderConfig::new(5.0, 44100, 2)
+            };
+            MusepackEncoder::new(config)
+                .expect("seek_pwr validation")
+                .encode(&pcm)
+                .expect("encode")
+        };
+        let reference = encode(1);
+        assert_eq!(
+            encode(16),
+            reference,
+            "seek_pwr 16 must behave like the clamped reference value 1"
+        );
+        assert_eq!(
+            encode(63),
+            reference,
+            "a shift-overflowing seek_pwr must clamp instead of panicking"
+        );
+        assert!(!encode(0).is_empty(), "seek_pwr 0 stays valid");
+    }
+
+    /// Surfaces deliberately deferred to the fractional/clip parity slice
+    /// (J.2) and non-SV8 rates must keep failing closed.
     #[test]
     fn rejects_unsupported_configuration() {
-        assert!(MusepackEncoder::new(EncoderConfig::new(3.0, 44100, 2)).is_err());
+        assert!(MusepackEncoder::new(EncoderConfig::new(5.5, 44100, 2)).is_err()); // fractional (J.2)
+        assert!(MusepackEncoder::new(EncoderConfig::new(11.0, 44100, 2)).is_err()); // clip parity (J.2)
+        assert!(MusepackEncoder::new(EncoderConfig::new(-1.0, 44100, 2)).is_err()); // clip parity (J.2)
+        assert!(MusepackEncoder::new(EncoderConfig::new(5.0, 96000, 2)).is_err()); // non-SV8 rate
     }
 }
