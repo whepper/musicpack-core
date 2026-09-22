@@ -11,12 +11,17 @@
 //!
 //! The crate is the production `PCM → SV8` encoder
 //! (`encoder::MusepackEncoder`) and reproduces the reference `mpcenc` stream
-//! byte-for-byte across the complete **integer** SV8 quality surface:
-//! qualities `0..=10` at 44100/48000/37800/32000 Hz — 44 configurations
-//! (plus mono streams; see `tests/data/encoder/matrix_manifest.txt` and the
-//! `encoder_matrix` test). Fractional qualities (the C encoder's interpolated
-//! `--quality 4.25`-style values and its out-of-range clipping) are a
-//! deliberately deferred, separately tracked parity slice (J.2); see
+//! byte-for-byte across the full **SV8 quality surface**: any finite `f32`
+//! quality clipped to `[0, 10]` at 44100/48000/37800/32000 Hz — J.2
+//! fractional-quality parity. The44 integer configurations stay frozen as
+//! C-oracle regression tables, every other finite quality is computed
+//! deterministically from frozen ATH bases (`psy::computed`), and a sparse
+//! fractional corpus (`tests/data/encoder/fractional_manifest.txt`,27 rows
+//! incl. a tonal signal) is byte-matched against the scalar C reference by
+//! the `encoder_fractional` test (plus the mono streams in
+//! `matrix_manifest.txt` / `encoder_matrix`). Non-finite qualities are
+//! rejected with `EncoderError::NonFiniteQuality` — an intentional
+//! compatibility boundary, since C's `NaN` path is undefined behaviour. See
 //! `PSYCHOACOUSTIC_CONTRACT.md` §10.
 //!
 //! The foundation primitives established in Phase 15B remain in place:

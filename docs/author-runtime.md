@@ -121,19 +121,27 @@ the suite never depends on live MusicBrainz.
 
 ## 8. Encoder limitations
 
-The isolated Rust encoder's frozen psychoacoustic tables cover the complete
-integer quality matrix: qualities `0..=10` at `44100 Hz`, `48000 Hz`,
-`37800 Hz` and `32000 Hz` (44 configurations). Outside that integer matrix
-— concretely **fractional** qualities — the runtime fails closed with
-`unsupported`; it never silently remaps quality or sample rate. For the
-current Author product:
+The isolated Rust encoder covers the full SV8 quality surface of the
+reference: any finite `f32` quality clipped to `[0,10]` at `44100 Hz`,
+`48000 Hz`, `37800 Hz` and `32000 Hz` (the 44 integer pairs use frozen
+C-oracle regression tables; fractional qualities are computed
+deterministically and byte-verified — J.2). The runtime fails closed with
+`unsupported` — it never silently remaps quality or sample rate — for:
+
+- **non-finite qualities** (`NaN`, `±inf`): an intentional compatibility
+  boundary; C's behaviour for these is undefined, so Rust rejects them
+  with a typed error instead of reproducing it;
+- **non-SV8 sample rates**.
+
+For the current Author product:
 
 - the UI's **q5/6/7/8 are supported at every source rate**
   (44.1/48/37.8/32 kHz), matching what the C reference encoder supports —
   the UI and the encoder no longer disagree anywhere;
-- **fractional qualities** (e.g. `5.5`, which the C encoder interpolates)
-  remain unsupported: a deliberately deferred parity slice (J.2), not a gap
-  in the integer surface the UI exposes.
+- the UI stays **integer-only by choice**: fractional qualities (e.g.
+  `5.5`) are supported by the encoder/API since J.2 but are deliberately
+  **not offered as UI options** — no new codec semantics reach users
+  through the product surface.
 
 Sources deeper than 16 bits are reduced to the top 16 bits (documented fidelity gap;
 exact for 16-bit sources).

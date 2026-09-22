@@ -165,23 +165,39 @@ configurations, transcribed from the C oracle dumps
 pair returns `None` and `PsychoacousticModel::new` fails with
 `EncoderError::UnsupportedPsyConfig` (no fallback, no remapping).
 
-**Deferred parity (J.2): fractional and out-of-range quality.** The C
-encoder accepts `--quality x` as a continuous value (clipped to `[0, 10]`)
-and interpolates adjacent profile rows for fractional values — so every
-distinct fractional value implies its own frozen `(quality, rate)` tables.
-That surface is deliberately *not* frozen here and is rejected rather than
-approximated. The remaining architectural question, to be resolved by the
-next parity slice:
+**Fractional parity (J.2): complete.** The C encoder accepts a continuous
+`--quality` value clipped to `[0, 10]` and interpolates adjacent profile
+rows; the Rust path reproduces this for **any finite `f32` quality** at the
+four SV8 rates:
 
-> How should full C-compatible fractional quality be implemented while
-> preserving deterministic, host-independent SV8 output?
+* integer pairs keep resolving to their frozen C-oracle tables by exact
+  `f32` bit equality (permanent regression oracles — no quantization, no
+  rounding, no fractional lookup grid);
+* every other finite quality is computed deterministically by
+  `psy::computed`: the existing profile interpolation
+  (`PsyParams::from_quality`, including the `[0, 10]` clip), the existing
+  `math::{pow10_d, mind, minf}`, the quality-independent per-rate
+  `Loudness`/`SPRD`, and the frozen ATH base arrays (`psy_bases.txt`:
+ 4 rates ×10 `EarModelFlag`s ×512 `f64` words, captured after the flag
+  roll-off and before the `Ltq_max` clamp). The extractor's `selfcheck`
+  mode proves the written bases reconstruct the reference `fftLtq` /
+  `partLtq` / `invLtq` for44 integer +23 fractional configs (`67/67`), and
+  `psy::computed`'s tests prove `computed tables == frozen tables` for all44
+  integers plus the23 committed fractional C-oracle dumps;
+* **non-finite qualities (`NaN`, `±inf`) are rejected** with
+  `EncoderError::NonFiniteQuality` — an intentional compatibility boundary:
+  C's `NaN` path is undefined/platform-dependent, so no parity is claimed;
+* no codec semantics changed: same four rates, same channels, same `EI`
+  interpretation (`(quality+5)*8` rounding), and the Author product UI
+  remains integer-only (q5/6/7/8).
 
 ## 11. Source-derived vs frozen vs Rust decisions
 
 * **Source-derived:** all model logic, constants, profile table, partition
   geometry, `Puls`/`CosWin`.
 * **Frozen:** libm-derived numerical tables, FFT windows/twiddles, `tabcos`/
-  `tabatan2`, the degenerate state seed.
+  `tabatan2`, the degenerate state seed, and the J.2 ATH base arrays
+  (`psy_bases.txt` → `frozen.rs`).
 * **Rust decisions:** explicit per-instance state, `Result`-based configuration
   errors, no globals. None of these change reference-observable values.
 

@@ -86,13 +86,16 @@ Settings: quality (default `6.0`, the Author default; the UI offers
 5/6/7/8). No other setting is part of the contract (the reference passes
 only `--quality`).
 
-**Documented gap (since closed for integers):** the encoder's frozen
-psychoacoustic tables now cover the complete integer matrix — quality
-`0..=10` at `44100`, `48000`, `37800` and `32000` Hz (44 configurations).
-Every other `(quality, sample-rate)` pair — i.e. **fractional** qualities —
-still fails closed with a typed error rather than being silently remapped;
-that remaining surface is a deferred parity slice (J.2), and extending it
-is encoder-crate work.
+**Quality surface (J.1 + J.2, closed):** the encoder covers the full SV8
+quality surface of the reference — any finite `f32` quality clipped to
+`[0,10]` at `44100`, `48000`, `37800` and `32000` Hz. The44 integer pairs
+keep frozen C-oracle tables (permanent regression oracles); fractional
+qualities are computed deterministically and proven byte-identical against
+the sparse fractional corpus (`fractional_manifest.txt`). Non-finite
+qualities (`NaN`, `±inf`) and non-SV8 sample rates still fail closed with a
+typed `unsupported` error — non-finite rejection is intentional (C's `NaN`
+behaviour is undefined), never a silent remap. The Author UI continues to
+offer only integer q5/6/7/8.
 Sources deeper than 16 bits are reduced to the top 16 bits (exact for
 16-bit); the reference passes the source bit depth to `mpcenc`.
 

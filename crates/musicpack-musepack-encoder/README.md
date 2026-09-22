@@ -4,7 +4,7 @@ The safe-Rust **Musepack SV8 encoder** that replaces the legacy C Musepack
 encoder, plus its compatibility oracle.
 
 > **Status: Phase 15L — migration complete; integer encoder parity (J.1)
-> landed afterwards.**
+> and fractional-quality parity (J.2) landed afterwards.**
 > The crate is the production `PCM → SV8` encoder
 > (`encoder::MusepackEncoder`): it reproduces the reference `mpcenc` stream
 > byte-for-byte for the original **21** committed whole-encoder cases across
@@ -14,8 +14,14 @@ encoder, plus its compatibility oracle.
 > `tests/data/encoder/matrix_manifest.txt` and the `encoder_matrix` test
 > (15G.1 resolved the two decoder-delay-frame divergences — byte-swapped
 > frozen CVD tables; see `tests/data/encoder/README.md`). Fractional
-> quality (`--quality 5.5`-style interpolation and clipping) remains a
-> deliberately deferred parity slice (J.2). The legacy C repository is
+> quality (`--quality5.5`-style interpolation and clipping to `[0,10]`) is
+> **byte-parity as well since J.2**: any finite `f32` quality at the four
+> SV8 rates, computed deterministically from frozen C-derived ATH bases,
+> while the44 integer configurations remain frozen regression oracles and
+> the sparse fractional corpus (`tests/data/encoder/fractional_manifest.txt`,
+> `encoder_fractional` test) is byte-matched to the scalar C reference.
+> Non-finite qualities are rejected (C's `NaN` path is undefined). The
+> legacy C repository is
 > retained as-is as the immutable historical reference; the frozen
 > compatibility corpus in this crate is the permanent compatibility
 > boundary.

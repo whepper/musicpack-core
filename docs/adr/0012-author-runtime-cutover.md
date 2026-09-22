@@ -48,18 +48,20 @@ C implementation stays available as a test/compatibility oracle.
    metadata into in-place APEv2 tags. `create_package` accepts the flag for
    UI compatibility and ignores it. This is not required for package
    correctness.
-7. **Encoder limitations are gated, not remapped.** The encoder's frozen
-   psychoacoustic tables cover the complete **integer** quality matrix of
-   the reference encoder — qualities `0..=10` at `44100`, `48000`, `37800`
-   and `32000` Hz (44 configurations). Any other pair (fractional qualities
-   such as `5.5`, out-of-range qualities, other rates) fails closed with a
-   typed `unsupported` error. Fractional-quality parity — the C encoder's
-   interpolated `--quality` values and its clipping to `[0, 10]` — remains
-   the one deferred encoder-parameter gap (tracked as J.2). Extending
-   coverage is encoder-crate work, not runtime work. *(Amended by the J.1
-   integer-parity slice; previously the matrix was `{4,5,6,7} @ 44100 Hz`
-   plus `q5 @ {48000, 37800, 32000} Hz`, with the default q6 44.1-kHz-only
-   and q8 unsupported.)*
+7. **Encoder coverage is gated, not remapped.** The encoder covers the full
+   SV8 quality surface of the reference — any finite `f32` quality clipped
+   to `[0,10]` at `44100`, `48000`, `37800` and `32000` Hz (the44 integer
+   pairs keep frozen C-oracle regression tables; fractional qualities are
+   computed deterministically from frozen C-derived ATH bases — J.2). What
+   still fails closed with a typed `unsupported` error: **non-finite
+   qualities** (C's `NaN` path is undefined behaviour — intentional
+   compatibility boundary, no parity claimed) and **non-SV8 sample
+   rates**. The Author product UI remains integer-only (q5/6/7/8); no new
+   codec semantics. *(Amended by the J.1 integer-parity slice — previously
+   the matrix was `{4,5,6,7} @44100 Hz` plus `q5 @ {48000,37800,32000} Hz`,
+   with the default q6 44.1-kHz-only and q8 unsupported — and closed by the
+   J.2 fractional-parity slice, which replaced the former "fractional
+   fails closed" statement.)*
 8. **Licensing.** `musicpack-author` remains BSD-3-Clause (original
    orchestration); it depends on the isolated LGPL-2.1-or-later
    `musicpack-musepack-encoder` crate. The distributed application therefore
