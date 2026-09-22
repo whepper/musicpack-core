@@ -228,16 +228,26 @@ fn waveform_payload_is_the_core_kernel() {
 fn encoder_rejects_unsupported_configs() {
     let temp = TempDir::new("unsupported");
     let root = album_root(&temp, false);
-    // Integer quality parity (J.1) accepts 0..=10 at every SV8 rate, but a
-    // fractional quality is deliberately deferred (J.2): it must fail closed
-    // rather than silently pick another profile.
+    // Fractional quality is supported since J.2; what must still fail close
+    // is a non-finite quality (typed rejection — C's NaN path is undefined).
     let out = temp.path().join("x.mpc");
-    let err = encode::encode_to(&root.join("one.flac"), &out, 5.5).unwrap_err();
+    let err = encode::encode_to(&root.join("one.flac"), &out, f32::NAN).unwrap_err();
     assert!(
         matches!(err, musicpack_author::AuthorError::Unsupported { .. }),
         "{err:?}"
     );
     assert!(!out.exists());
+}
+
+#[test]
+fn encoder_accepts_fractional_quality() {
+    // J.2: fractional qualities follow the C clip/interpolation path; the
+    // Author UI stays integer-only, but the API/CLI must not reject them.
+    let temp = TempDir::new("fractional");
+    let root = album_root(&temp, false);
+    let out = temp.path().join("frac.mpc");
+    encode::encode_to(&root.join("one.flac"), &out, 5.5).expect("fractional encode");
+    assert!(out.metadata().expect("out exists").len() > 0);
 }
 
 #[test]

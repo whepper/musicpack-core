@@ -116,11 +116,16 @@ pub fn encode_to(source: &Path, dest: &Path, quality: f32) -> Result<EncodeInfo>
             sample_rate,
         } => AuthorError::Unsupported {
             detail: format!(
-                "the Rust encoder has no frozen profile for quality {qual} at {sample_rate} Hz \
-                 (supported: integer qualities 0..=10 at 32000/37800/44100/48000 Hz; \
-                 fractional qualities are deferred)"
+                "the Rust encoder has no psychoacoustic path for quality {qual} at \
+                 {sample_rate} Hz (supported SV8 rates:32000/37800/44100/48000; quality is a \
+                 finite number clipped to0..=10 — fractional values are supported since J.2)"
             ),
         },
+        e @ musicpack_musepack_encoder::error::EncoderError::NonFiniteQuality(_) => {
+            AuthorError::Unsupported {
+                detail: e.to_string(),
+            }
+        }
         other => AuthorError::Encode {
             disc: 0,
             track: 0,
