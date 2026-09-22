@@ -450,7 +450,10 @@ fn resolve_source(root: &Path, rel: &str) -> Result<PathBuf, Error> {
         return Err(invalid("source path must not be empty"));
     }
     let rel_path = Path::new(rel);
-    if rel_path.is_absolute() {
+    // `has_root` (not just `is_absolute`): on Windows a path like
+    // `/etc/hosts` is rooted but not "absolute", yet joining it would still
+    // discard the source root — it must never be treated as relative.
+    if rel_path.has_root() {
         return Err(invalid(format!(
             "source '{rel}' must be relative to the album directory"
         )));
