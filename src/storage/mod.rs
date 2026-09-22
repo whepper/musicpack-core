@@ -9,7 +9,7 @@
 //!
 //! | Backend | Status | Security policy |
 //! |---------|--------|-----------------|
-//! | Directory bundle ([`directory`]) | reference adapter, `#[cfg(unix)]` | containment resolution, regular-file + link-count checks (port of `package.c`) |
+//! | Directory bundle ([`directory`]) | reference adapter (native targets; POSIX hardening on unix, reference-matching relaxed checks elsewhere — see its docs) | containment resolution, regular-file + link-count checks on unix (port of `package.c`) |
 //! | MPAK container | phase 6 | member-range reads; container rules |
 //! | Server storage | later | inherits the adapter's verified-only discipline |
 //! | Browser/WebAssembly | later | in-memory / OPFS-backed byte sources |
@@ -22,7 +22,6 @@
 
 use std::io::Read;
 
-#[cfg(unix)]
 pub mod directory;
 pub mod mpak;
 

@@ -74,6 +74,10 @@ pub fn open_regular_file(
     abs: &std::path::Path,
     require_single_link: bool,
 ) -> Result<(std::fs::File, u64), OpenRegularError> {
+    // The single-link policy is enforced with `nlink` on unix; other
+    // platforms follow the reference and skip it (see `directory.rs`).
+    #[cfg(not(unix))]
+    let _ = require_single_link;
     let link_meta = std::fs::symlink_metadata(abs).map_err(|_| OpenRegularError::Missing)?;
     if link_meta.file_type().is_symlink() {
         return Err(OpenRegularError::Missing);

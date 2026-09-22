@@ -141,12 +141,8 @@ pub fn unpack(file: &str, dest: &str) -> Result<ExitCode, CliError> {
         )));
     }
 
-    // Reference CLI behaviour: re-open and verify the extracted directory
-    // where a directory adapter exists.
-    #[cfg(unix)]
+    // Reference CLI behaviour: re-open and verify the extracted directory.
     let post_bad = super::verify_directory_report(&dest_path).is_none_or(|report| !report.is_ok());
-    #[cfg(not(unix))]
-    let post_bad = false;
 
     if extraction.failed || post_bad {
         println!("unpack: extracted with errors: '{dest}'");

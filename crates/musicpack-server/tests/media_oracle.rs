@@ -1001,14 +1001,18 @@ fn filesystem_edges_are_503_without_path_leaks() {
     };
     // Baseline opens.
     assert!(open(&base).is_ok());
-    // Symlinked final component → missing.
-    std::os::unix::fs::symlink("01.mpc", dir.join("pkg/audio/link.mpc")).unwrap();
-    let mut link = base.clone();
-    link.relative_path = "audio/link.mpc".into();
-    assert!(matches!(
-        open(&link),
-        Err(MediaError::Unavailable("source file missing"))
-    ));
+    // Symlinked final component → missing (unix O_NOFOLLOW semantics; the
+    // Windows adapter follows like the reference's `_stat` path).
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink("01.mpc", dir.join("pkg/audio/link.mpc")).unwrap();
+        let mut link = base.clone();
+        link.relative_path = "audio/link.mpc".into();
+        assert!(matches!(
+            open(&link),
+            Err(MediaError::Unavailable("source file missing"))
+        ));
+    }
     // Directory in place of the file → not regular.
     std::fs::create_dir_all(dir.join("pkg/audio/sub")).unwrap();
     let mut sub = base.clone();

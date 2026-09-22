@@ -7,6 +7,8 @@
 //! and permission cases are `#[cfg(unix)]`, matching the repository's
 //! convention for filesystem-semantics tests.
 
+// `HashSet` is only used by the unix-only symlink test below.
+#[cfg(unix)]
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 

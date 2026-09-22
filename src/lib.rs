@@ -34,9 +34,9 @@
 //! | [`format::mpak`] | MPAK v1 container constants, framing, CRC-16 | constants + CRC-16; parser/writer in phase 6 |
 //! | [`format::waveform`] | waveform envelope constants and quantization | kernel + limits; accumulator later |
 //! | [`identity`] | collector identity: package fingerprint, group/release keys, MBID validity | complete (promoted from the server in R4.1) |
-//! | [`authoring`] | authoring draft → canonical `.mpack` directory builder | complete (`unix`; R4.1) |
+//! | [`authoring`] | authoring draft → canonical `.mpack` directory builder | complete (native targets; R4.1, ADRs 0010/0015) |
 //! | [`lyrics`] | lyrics domain: strict LRC profile parser, model, active-line timing | complete (`docs/musicpack-lyrics-v1.md`) |
-//! | [`storage`] | platform-independent package-object backend (directory adapter on unix) | trait + reference adapter |
+//! | [`storage`] | platform-independent package-object backend (directory adapter with POSIX hardening on unix, reference-matching checks elsewhere) | trait + reference adapter |
 //! | [`validation`] | `verify` semantics: report, budgets, checksums, containment | complete (sonic documents deferred) |
 //! | [`audio`] | PCM contract, decode abstraction (native WAV + `claxon` FLAC), waveform accumulator, BS.1770-5 meter | complete (phases 8–9) |
 //! | [`player`] | platform-independent player core (port of `web/player-core`): queue, engine seam, gain policy, snapshots, events, Sweet-Fades planner, orchestrator | complete (phase 10) |
@@ -59,7 +59,6 @@
 #![warn(missing_docs)]
 
 pub mod audio;
-#[cfg(unix)]
 pub mod authoring;
 pub mod error;
 pub mod format;

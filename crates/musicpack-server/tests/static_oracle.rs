@@ -56,6 +56,9 @@ fn build_static(root: &Path) -> StaticFiles {
 struct Env {
     pair: util::Pair,
     files: StaticFiles,
+    // Only the unix-only symlink test reads this back; other platforms
+    // use it only to build the fixture tree.
+    #[cfg(unix)]
     static_root: PathBuf,
 }
 
@@ -79,6 +82,7 @@ fn setup(name: &str) -> Env {
     Env {
         pair,
         files,
+        #[cfg(unix)]
         static_root: root,
     }
 }

@@ -1,9 +1,9 @@
 //! Opening a package from either storage backend.
 //!
-//! Directory bundles use the core's POSIX adapter; `.mpak` files use the
-//! portable container backend. The core does the parsing, scanning and
-//! verification — this module only chooses the backend and exposes the
-//! common handle.
+//! Directory bundles use the core's reference directory adapter; `.mpak`
+//! files use the portable container backend. The core does the parsing,
+//! scanning and verification — this module only chooses the backend and
+//! exposes the common handle.
 
 use std::path::Path;
 
@@ -15,9 +15,8 @@ use musicpack_core::validation::Report;
 
 /// An opened package (directory bundle or single-file container).
 pub enum Package {
-    /// A directory bundle (POSIX adapter; boxed: the adapter is much
+    /// A directory bundle (boxed: the adapter is much
     /// larger than the container handle).
-    #[cfg(unix)]
     Directory(Box<musicpack_core::storage::directory::DirectoryBackend>),
     /// An MPAK v1 single-file container (boxed: the scanned container
     /// state dwarfs the directory handle).
@@ -43,28 +42,15 @@ impl Package {
         })
     }
 
-    #[cfg(unix)]
     fn open_directory(path: &Path) -> Result<Self, Error> {
         Ok(Package::Directory(Box::new(
             musicpack_core::storage::directory::DirectoryBackend::open(path)?,
         )))
     }
 
-    #[cfg(not(unix))]
-    fn open_directory(path: &Path) -> Result<Self, Error> {
-        Err(Error::Invalid {
-            detail: format!(
-                "directory packages are not supported on this platform yet ('{}'); \
-                 use an .mpak container",
-                path.display()
-            ),
-        })
-    }
-
     /// The storage backend (for the shared verifier).
     pub fn backend(&self) -> &dyn PackageBackend {
         match self {
-            #[cfg(unix)]
             Package::Directory(backend) => backend.as_ref(),
             Package::Container(backend) => backend.as_ref(),
         }
@@ -73,7 +59,6 @@ impl Package {
     /// The exact manifest bytes.
     pub fn manifest_bytes(&self) -> &[u8] {
         match self {
-            #[cfg(unix)]
             Package::Directory(backend) => backend.manifest_bytes(),
             Package::Container(backend) => backend.manifest_bytes(),
         }
@@ -96,7 +81,6 @@ impl Package {
     /// A short storage-kind label for diagnostics.
     pub fn kind(&self) -> &'static str {
         match self {
-            #[cfg(unix)]
             Package::Directory(_) => "directory",
             Package::Container(_) => "container",
         }

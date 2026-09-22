@@ -551,7 +551,7 @@ no tolerance.
 |---|---|---|
 | Unit | `#[cfg(test)]` in-module | established (paths, enums, CRC-16, quantization, limits, checksum form, JSON quirks, %.8g, SHA-256 vectors, verify orchestration with in-memory backends) |
 | Integration | `tests/` | established: `numeric_format` (3394 C vectors), `manifest_write` (byte-identity), `manifest_parse` (budgets/enums/quirks), `verification` (18 checksum/filesystem/containment/budget/report cases) |
-| **Conformance corpus** | `tests/conformance_corpus.rs` + `tests/support` (Rust port byte-compared against the authoritative Python generator) | **regression gate: all 72 cases pass parse + full verification, zero gaps** (verification stage unix-only; parse stage everywhere) |
+| **Conformance corpus** | `tests/conformance_corpus.rs` + `tests/support` (Rust port byte-compared against the authoritative Python generator) | **regression gate: all 72 cases pass parse + full verification, zero gaps** (the `symlink-escape` case stays unix-only; parse stage everywhere) |
 | **Differential (reference CLI)** | `tests/conformance_differential.rs` — corpus through the reference `info` and `verify` and the Rust `verify_directory`, comparing outcomes | **operational: 72 cases × (info, verify) match, zero gaps**; skips with a notice when no reference binary is built |
 | Hostile filesystem | `tests/verification.rs` (final/intermediate symlinks, hard links, FIFOs, directories, sparse oversize) | established, mirrors the reference's `run_mpack_hostile.sh` scenarios |
 | **MPAK container** | `tests/mpak.rs` (37 portable reader/writer/backend/malformed/security cases), `tests/mpak_compat.rs` (committed reference container + **byte-identical packing**), `tests/mpak_differential.rs` (reference CLI pack ⇄ Rust pack, verify/unpack) | established; Rust packs byte-identical to the reference, reference CLI reads Rust containers |
@@ -704,7 +704,7 @@ direction.
 | D5 | Strings with NUL | — | `\u0000` (or a raw NUL) truncates the decoded string at the C-string boundary; duplicate-key detection sees truncated keys | ported (`json` truncates decoded strings/keys at the first U+0000) |
 | D6 | Fixture manifests | — | the *committed* reference `tests/reference/*/manifest.json` files are Python-generated with alphabetically sorted keys, i.e. **not** canonical-writer output; true canonical bytes come from the reference CLI (`update-metadata` rewrites through the writer) | byte-identity fixtures here are CLI-rewritten copies (`fixtures/reference/canonical-*.json`); the original files are kept for semantic tests |
 | D7 | Conformance corpus size | reference README: "3 valid manifests, 49 invalid manifests, 9 invalid asset cases" (also stale: 42/8 elsewhere) | the generator produces **6 / 57 / 9** | trust the generator |
-| D8 | Windows hardening | `musicpack-v1.md` §8 describes the untrusted-input model generally | the reference's Windows path uses `_stat` only: no `O_NOFOLLOW` symlink rejection, no hard-link rejection (`st_nlink`), no inode dedup — and it documents this | the Rust directory adapter implements the **POSIX** semantics and is `#[cfg(unix)]`; a Windows adapter is future work (O12) |
+| D8 | Windows hardening | `musicpack-v1.md` §8 describes the untrusted-input model generally | the reference's Windows path uses `_stat` only: no `O_NOFOLLOW` symlink rejection, no hard-link rejection (`st_nlink`), no inode dedup — and it documents this | the Rust directory adapter implements the **POSIX** semantics on unix and the reference's own relaxed Windows semantics elsewhere (`GetFinalPathNameByHandle`-style containment, following `_stat`, no `nlink` check, no dedup, no unreferenced walk — ADR 0015) |
 | D9 | MPAK `DATA` order | `mpak-v1.md` §7: "audio objects first …, then `representations[]`, `artwork[]`, `booklet[]`, `lyrics[]`, `extras[]`, `analysis[]`" (waveforms omitted) | the writer groups **all** audio, then **all** representations, then **all** waveforms, then artwork/booklet/lyrics/extras/analysis | the writer follows the implementation (required for byte-identity); documented in `canonical_pack_order` |
 | D10 | MPAK `TAIL` optionality | `mpak-v1.md` §6 calls TAIL "optional (RECOMMENDED)" | the reference writer always emits it, and the Rust writer matches | writers always emit TAIL (byte-identity); readers treat absence as the specified warning |
 | D11 | `WAVE_FORMAT_EXTENSIBLE` GUID | the Windows canonical sub-format GUIDs are `KSDATAFORMAT_SUBTYPE_PCM` `00000001-0000-0010-8000-00AA00389B71` / `_IEEE_FLOAT` `00000003-…` | `extensible_subformat()` requires the sub-format tag at `fmt+24..26` to be 1 or 3 and the **12 bytes at `fmt+28..40`** to equal `00 00 00 00 10 80 00 00 AA 00 38 9B`, leaving `fmt+26..28` unchecked and never validating `wValidBitsPerSample`/`dwChannelMask`; the committed `wav24-ext.wav` fixture carries exactly this non-canonical form | the Rust WAV reader ports the reference check byte-for-byte; the canonical Windows GUID is deliberately **rejected** in phase 8 (`audio::wav`; pinned by the `extensible_matrix` test), so `wav24-ext.wav` stays the compatibility fixture |
@@ -885,15 +885,13 @@ Unresolved questions are recorded here instead of being silently decided.
   document only as a generic SHA-256-protected asset. No conformance
   corpus case exercises a sonic document, and the differential run is
   unaffected; implement with the sonic domain in a dedicated phase.
-- **O12 — Windows directory adapter.** The unix adapter cannot be used on
-  Windows, and the reference's Windows checks are genuinely weaker (D8).
-  Either port the weaker Windows behaviour or (preferred) implement the
-  stronger POSIX checks with Windows equivalents
-  (`GetFinalPathNameByHandle`, reparse-point handling, link-count checks
-  where available). Until then the differential verification layer is
-  unix-only. (The MPAK layer itself is portable: `ByteSource`,
-  `FileSource`, `MemorySource` and the writer compile and run on every
-  target.)
+- **O12 — Windows directory adapter.** ✅ **Resolved by ADR 0015:** the
+  "port the weaker Windows behaviour" arm is implemented — the directory
+  adapter and the authoring builder compile and run on Windows with the
+  reference's own relaxed checks (following `_stat`, no `nlink` rejection,
+  no inode dedup, no unreferenced-file walk), verified with a Windows-target
+  check. The stronger-POSIX-via-Windows-APIs alternative was explicitly
+  declined (needs FFI/new deps for zero differential benefit).
 - **O13 — Report message wording levels.** Messages are ported verbatim
   (including `%g` duration formatting at precision 6). If a future CLI
   localizes output, the compatibility surface moves to a structured

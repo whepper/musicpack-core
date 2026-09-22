@@ -19,8 +19,9 @@ turning `musicpack-core` into the Author application.
 ## Decision
 
 1. **Add a package-directory builder to the core**
-   (`src/authoring/`, `unix`-only, mirroring the reference directory
-   adapter). It takes an explicit [`AuthoringDraft`] plus source files and
+   (`src/authoring/`, portable native-target code; the directory adapter
+   applies POSIX hardening on unix and the reference's own relaxed checks
+   elsewhere — see ADR 0015). It takes an explicit [`AuthoringDraft`] plus source files and
    produces a verified `.mpack` directory.
 2. **The draft is authored input only.** It carries metadata, structure and
    source references; it never carries hashes, fingerprints, asset ids,
@@ -53,6 +54,11 @@ turning `musicpack-core` into the Author application.
   protocol remain out of scope here; the builder accepts a pre-computed
   waveform payload and measures loudness itself using the existing
   `audio` primitives.
-- The builder is `unix`-only, consistent with the directory backend; the
-  core's wasm32 requirement is preserved.
+- ~~The builder is `unix`-only, consistent with the directory backend; the
+  core's wasm32 requirement is preserved.~~ **Amended by ADR 0015:** the
+  unix-only scope was overly broad (it conflated "not-wasm" with "unix" and
+  broke the Windows build once `musicpack-author` consumed the module). The
+  builder and directory adapter are portable native-target code with
+  reference-matching per-platform checks; the wasm32 check still passes with
+  no gate at all.
 - The C `build-draft` becomes oracle-only for this slice; it is not removed.

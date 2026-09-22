@@ -1,4 +1,4 @@
-//! Directory-bundle backend: the reference adapter for unix targets.
+//! Directory-bundle backend: the reference adapter for native targets.
 //!
 //! Port of the directory half of `core/libmusicpack/src/package.c`:
 //! containment resolution, hardened regular-file opening, link-count
@@ -11,16 +11,21 @@
 //!    must stay within the canonical root. A prefix that does not exist
 //!    stops the walk (remaining components cannot escape). Resolution is
 //!    pathname-based, exactly like the reference (not `openat`-relative).
-//! 2. **Final-component symlinks are rejected.** The reference opens with
-//!    `O_NOFOLLOW`; a symlink is therefore indistinguishable from a missing
-//!    file. This port rejects a symlink before opening and classifies it as
-//!    [`BackendError::Missing`], matching the observable outcome.
-//! 3. **Regular files only, link count ≤ 1.** Directories, FIFOs,
+//! 2. **Final-component symlinks are rejected on unix.** The reference opens
+//!    with `O_NOFOLLOW`; a symlink is therefore indistinguishable from a
+//!    missing file. This port rejects a symlink before opening and
+//!    classifies it as [`BackendError::Missing`], matching the observable
+//!    outcome. On Windows the reference uses a following `_stat` instead,
+//!    so symlinks that resolve to regular files are accepted there (see
+//!    "Windows semantics" below); containment still rejects escapes.
+//! 3. **Regular files only, link count ≤ 1 on unix.** Directories, FIFOs,
 //!    sockets and device nodes are rejected before opening (a FIFO would
 //!    otherwise block a read open); the opened handle's metadata is then
 //!    checked again so the regular-file/link-count/size facts are bound to
 //!    the object actually being read, as the reference's `fstat` does.
-//!    `nlink > 1` treats any hard-linked object as an outside alias.
+//!    `nlink > 1` treats any hard-linked object as an outside alias. The
+//!    reference disables the link-count check on Windows (no `st_nlink`
+//!    there), so this port does the same.
 //!
 //! # Documented TOCTOU limitation
 //!
@@ -32,17 +37,37 @@
 //! is pathname-based rather than descriptor-relative. This window is
 //! documented rather than hidden (see `docs/architecture.md`).
 //!
-//! Windows semantics genuinely differ (the reference disables hard-link
-//! rejection and inode dedup there); a Windows adapter is future work, so
-//! this module is compiled on `unix` only.
+//! # Windows semantics
+//!
+//! The reference genuinely behaves differently on Windows, and this port
+//! matches it instead of pretending POSIX hardening exists there:
+//!
+//! - type checks use following metadata (`_stat` semantics): symlinks that
+//!   resolve to regular files are accepted; directories, missing objects
+//!   and non-regular files are still rejected;
+//! - no hard-link (`nlink`) rejection;
+//! - no inode dedup (`object_id` returns `None`, which disables
+//!   deduplication exactly like the reference's Windows path);
+//! - no unreferenced-file walk (`list_files` returns no files, so no
+//!   warnings — the reference skips the walk on Windows).
+//!
+//! Rationale and decision record: `docs/adr/0015-windows-directory-adapter.md`.
 
 use std::fs::{self, File};
 use std::io::Read;
-use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 
+// Unix-only hardening primitives (`MetadataExt::nlink/dev/ino`,
+// `FileTypeExt` special-file kinds). Windows follows the reference's
+// relaxed `_stat` path instead (see the module docs).
+#[cfg(unix)]
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
+
 use crate::error::Error;
-use crate::limits::{MANIFEST_MAX_BYTES, PATH_MAX_BYTES};
+use crate::limits::MANIFEST_MAX_BYTES;
+// `PATH_MAX_BYTES` bounds the unix-only file enumeration walk.
+#[cfg(unix)]
+use crate::limits::PATH_MAX_BYTES;
 
 use super::{BackendError, ObjectId, OpenedAsset, PackageBackend};
 
@@ -62,7 +87,14 @@ impl DirectoryBackend {
     /// (regular file, no symlink, link count ≤ 1, ≤ 16 MiB, no NUL byte).
     pub fn open(root: impl AsRef<Path>) -> Result<Self, Error> {
         let root = root.as_ref().to_path_buf();
+        // The reference stats the root with `stat` on Windows (following a
+        // symlinked root) and `lstat` semantics elsewhere; match it.
+        #[cfg(unix)]
         let meta = fs::symlink_metadata(&root).map_err(|_| Error::Missing {
+            path: root.display().to_string(),
+        })?;
+        #[cfg(not(unix))]
+        let meta = fs::metadata(&root).map_err(|_| Error::Missing {
             path: root.display().to_string(),
         })?;
         if !meta.is_dir() {
@@ -122,49 +154,10 @@ impl DirectoryBackend {
         }
         Ok(self.root_real.join(rel))
     }
-}
 
-impl PackageBackend for DirectoryBackend {
-    fn open_asset(&self, path: &str) -> Result<OpenedAsset, BackendError> {
-        let abs = self.resolve(path).map_err(|_| BackendError::UnsafePath)?;
-
-        // Type decision before opening: symlinks are missing (O_NOFOLLOW
-        // semantics) and special files must never be opened (a FIFO read
-        // open would block).
-        let lmeta = fs::symlink_metadata(&abs).map_err(|_| BackendError::Missing)?;
-        let ft = lmeta.file_type();
-        if ft.is_symlink() || !lmeta.is_file() {
-            return Err(BackendError::Missing);
-        }
-        if ft.is_fifo() || ft.is_socket() || ft.is_block_device() || ft.is_char_device() {
-            return Err(BackendError::Missing);
-        }
-
-        let file = File::open(&abs).map_err(|_| BackendError::Missing)?;
-        // Bind the accepted facts to the opened handle (reference `fstat`).
-        let meta = file
-            .metadata()
-            .map_err(|e| BackendError::Io(e.to_string()))?;
-        if !meta.is_file() || meta.nlink() > 1 {
-            return Err(BackendError::Missing);
-        }
-        Ok(OpenedAsset {
-            len: meta.len(),
-            reader: Box::new(file),
-        })
-    }
-
-    fn object_id(&self, path: &str) -> Option<ObjectId> {
-        // lstat on the resolved path (reference `inode_of`).
-        let abs = self.resolve(path).ok()?;
-        let meta = fs::symlink_metadata(abs).ok()?;
-        Some(ObjectId {
-            device: meta.dev(),
-            inode: meta.ino(),
-        })
-    }
-
-    fn list_files(&self) -> Vec<String> {
+    /// Regular-file enumeration (unix only; see [`Self::list_files`]).
+    #[cfg(unix)]
+    fn walk_files(&self) -> Vec<String> {
         let mut files = Vec::new();
         let mut stack = vec![(self.root.clone(), String::new())];
         while let Some((dir, rel_base)) = stack.pop() {
@@ -202,6 +195,82 @@ impl PackageBackend for DirectoryBackend {
         files.sort();
         files
     }
+}
+
+impl PackageBackend for DirectoryBackend {
+    fn open_asset(&self, path: &str) -> Result<OpenedAsset, BackendError> {
+        let abs = self.resolve(path).map_err(|_| BackendError::UnsafePath)?;
+
+        // Type decision before opening. On unix, symlinks are missing
+        // (O_NOFOLLOW semantics) and special files must never be opened (a
+        // FIFO read open would block). On Windows the reference follows
+        // with `_stat`, so only the regular-file test applies there.
+        #[cfg(unix)]
+        let lmeta = fs::symlink_metadata(&abs).map_err(|_| BackendError::Missing)?;
+        #[cfg(not(unix))]
+        let lmeta = fs::metadata(&abs).map_err(|_| BackendError::Missing)?;
+        let ft = lmeta.file_type();
+        if ft.is_symlink() || !lmeta.is_file() {
+            return Err(BackendError::Missing);
+        }
+        #[cfg(unix)]
+        if ft.is_fifo() || ft.is_socket() || ft.is_block_device() || ft.is_char_device() {
+            return Err(BackendError::Missing);
+        }
+
+        let file = File::open(&abs).map_err(|_| BackendError::Missing)?;
+        // Bind the accepted facts to the opened handle (reference `fstat`).
+        let meta = file
+            .metadata()
+            .map_err(|e| BackendError::Io(e.to_string()))?;
+        if !meta.is_file() {
+            return Err(BackendError::Missing);
+        }
+        // The reference disables hard-link rejection on Windows.
+        #[cfg(unix)]
+        if meta.nlink() > 1 {
+            return Err(BackendError::Missing);
+        }
+        Ok(OpenedAsset {
+            len: meta.len(),
+            reader: Box::new(file),
+        })
+    }
+
+    fn object_id(&self, path: &str) -> Option<ObjectId> {
+        // Stable identity for same-pass dedup. Off unix there is none: the
+        // reference disables inode dedup on Windows (`st_ino` is
+        // unreliable there), and returning `None` disables dedup the same
+        // way (see `ObjectId`).
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            None
+        }
+        #[cfg(unix)]
+        {
+            // lstat on the resolved path (reference `inode_of`).
+            let abs = self.resolve(path).ok()?;
+            let meta = fs::symlink_metadata(abs).ok()?;
+            Some(ObjectId {
+                device: meta.dev(),
+                inode: meta.ino(),
+            })
+        }
+    }
+
+    fn list_files(&self) -> Vec<String> {
+        // The reference skips the unreferenced-file walk on Windows, so no
+        // files means no warnings there — exactly its observable behavior.
+        #[cfg(not(unix))]
+        {
+            Vec::new()
+        }
+        #[cfg(unix)]
+        {
+            self.walk_files()
+        }
+    }
 
     fn meta_files(&self) -> &[&str] {
         &[MANIFEST_NAME]
@@ -210,7 +279,14 @@ impl PackageBackend for DirectoryBackend {
 
 /// Reads `manifest.json` with the reference's hardened rules.
 pub(crate) fn read_manifest_hardened(path: &Path) -> Result<Vec<u8>, Error> {
+    // The reference stats with `stat` on Windows (following) and `lstat`
+    // semantics elsewhere; match it.
+    #[cfg(unix)]
     let meta = fs::symlink_metadata(path).map_err(|_| Error::Missing {
+        path: MANIFEST_NAME.to_string(),
+    })?;
+    #[cfg(not(unix))]
+    let meta = fs::metadata(path).map_err(|_| Error::Missing {
         path: MANIFEST_NAME.to_string(),
     })?;
     if meta.file_type().is_symlink() || !meta.is_file() {
@@ -224,6 +300,8 @@ pub(crate) fn read_manifest_hardened(path: &Path) -> Result<Vec<u8>, Error> {
     let meta = file.metadata().map_err(|e| Error::Io {
         detail: e.to_string(),
     })?;
+    // The reference disables hard-link rejection on Windows.
+    #[cfg(unix)]
     if meta.nlink() > 1 {
         return Err(Error::Io {
             detail: format!("'{MANIFEST_NAME}' has more than one hard link"),
@@ -433,7 +511,12 @@ mod tests {
         assert_eq!(opened.len, 3);
         let bytes = read_member(&backend, "audio/01.bin", 1024).unwrap();
         assert_eq!(bytes, b"one");
+        // Stable identity exists on unix; off unix (Windows) the reference
+        // disables inode dedup, so there is none by design.
+        #[cfg(unix)]
         assert!(backend.object_id("audio/01.bin").is_some());
+        #[cfg(not(unix))]
+        assert!(backend.object_id("audio/01.bin").is_none());
         assert_eq!(backend.list_files(), vec!["audio/01.bin", "manifest.json"]);
         assert_eq!(backend.meta_files(), &["manifest.json"]);
     }

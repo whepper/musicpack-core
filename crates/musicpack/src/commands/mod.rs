@@ -112,54 +112,40 @@ pub fn verify(path: &str, quiet: bool, json: bool) -> Result<ExitCode, CliError>
 /// packer, staged and verified before publication (mirroring the reference
 /// CLI's staging discipline).
 pub fn pack(dir: &str, out: &str) -> Result<ExitCode, CliError> {
-    #[cfg(unix)]
-    {
-        let out_path = std::path::Path::new(out);
-        if out_path.exists() {
-            return Err(failure(format!("pack: output '{out}' already exists")));
-        }
-        let staging = staging_path(out_path);
-        let result = (|| -> Result<(), Error> {
-            musicpack_core::storage::directory::pack_directory(
-                std::path::Path::new(dir),
-                &staging,
-            )?;
-            // The packed container must verify before it is published.
-            let report = musicpack_core::storage::mpak::verify_mpak_file(&staging)?;
-            if !report.is_ok() {
-                return Err(Error::Invalid {
-                    detail: format!(
-                        "packed container failed verification ({} error(s))",
-                        report.errors()
-                    ),
-                });
-            }
-            std::fs::rename(&staging, out_path).map_err(|e| Error::Io {
-                detail: e.to_string(),
-            })?;
-            Ok(())
-        })();
-        match result {
-            Ok(()) => {
-                println!("packed '{out}'");
-                Ok(ExitCode::SUCCESS)
-            }
-            Err(e) => {
-                let _ = std::fs::remove_file(&staging);
-                Err(failure(format!("pack: cannot pack '{dir}': {e}")))
-            }
-        }
+    let out_path = std::path::Path::new(out);
+    if out_path.exists() {
+        return Err(failure(format!("pack: output '{out}' already exists")));
     }
-    #[cfg(not(unix))]
-    {
-        let _ = (dir, out);
-        Err(failure(
-            "pack: packing directory bundles is not supported on this platform yet".into(),
-        ))
+    let staging = staging_path(out_path);
+    let result = (|| -> Result<(), Error> {
+        musicpack_core::storage::directory::pack_directory(std::path::Path::new(dir), &staging)?;
+        // The packed container must verify before it is published.
+        let report = musicpack_core::storage::mpak::verify_mpak_file(&staging)?;
+        if !report.is_ok() {
+            return Err(Error::Invalid {
+                detail: format!(
+                    "packed container failed verification ({} error(s))",
+                    report.errors()
+                ),
+            });
+        }
+        std::fs::rename(&staging, out_path).map_err(|e| Error::Io {
+            detail: e.to_string(),
+        })?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => {
+            println!("packed '{out}'");
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&staging);
+            Err(failure(format!("pack: cannot pack '{dir}': {e}")))
+        }
     }
 }
 
-#[cfg(unix)]
 fn staging_path(out: &std::path::Path) -> std::path::PathBuf {
     let mut staging = out.as_os_str().to_os_string();
     staging.push(format!(".staging-{}", std::process::id()));
@@ -167,9 +153,7 @@ fn staging_path(out: &std::path::Path) -> std::path::PathBuf {
 }
 
 /// Parses a package and returns the shared verification report (used by
-/// `unpack`'s post-extraction re-check on platforms with a directory
-/// adapter).
-#[cfg(unix)]
+/// `unpack`'s post-extraction re-check).
 pub(crate) fn verify_directory_report(dir: &std::path::Path) -> Option<Report> {
     musicpack_core::storage::directory::verify_directory(dir).ok()
 }

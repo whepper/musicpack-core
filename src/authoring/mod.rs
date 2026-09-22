@@ -17,9 +17,13 @@
 //! no encoding/orchestration. Those are the R4.2 authoring pipeline's job
 //! (`docs/r3.7-r4-readiness.md` §13, `docs/adr/0010-core-package-builder.md`).
 //!
-//! Platform scope mirrors the reference directory adapter: the module is
-//! `unix`-only (the `.mpak` writer remains portable). This keeps the core's
-//! wasm32 targets clean, exactly like [`crate::storage::directory`].
+//! Platform scope mirrors the reference directory adapter: the builder is
+//! portable std-only code and compiles on every target, including wasm32
+//! (filesystem operations fail closed there at runtime, exactly like the
+//! rest of the core). On unix it applies the reference's POSIX hardening;
+//! elsewhere it applies the reference's own relaxed checks — see
+//! [`crate::storage::directory`]. Decision record:
+//! `docs/adr/0015-windows-directory-adapter.md`.
 
 mod build;
 mod draft;

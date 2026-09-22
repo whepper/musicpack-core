@@ -7,10 +7,10 @@
 //! path safety, atomicity, and compatibility with the legacy C builder /
 //! verifier.
 //!
-//! The builder is `unix`-only (it mirrors the reference directory
-//! adapter), so the whole file is gated.
-
-#![cfg(unix)]
+//! The builder is portable (POSIX hardening on unix, reference-matching
+//! checks elsewhere — see `docs/adr/0015-windows-directory-adapter.md`),
+//! so these tests run on every native target. C-differential cases skip
+//! gracefully when the reference CLI is absent.
 
 mod support;
 
