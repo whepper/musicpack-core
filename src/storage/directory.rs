@@ -517,7 +517,12 @@ mod tests {
         assert!(backend.object_id("audio/01.bin").is_some());
         #[cfg(not(unix))]
         assert!(backend.object_id("audio/01.bin").is_none());
+        // The unreferenced-file walk is unix-only (the reference skips it
+        // on Windows, so the listing is empty there by design).
+        #[cfg(unix)]
         assert_eq!(backend.list_files(), vec!["audio/01.bin", "manifest.json"]);
+        #[cfg(not(unix))]
+        assert!(backend.list_files().is_empty());
         assert_eq!(backend.meta_files(), &["manifest.json"]);
     }
 
