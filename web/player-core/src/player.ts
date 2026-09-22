@@ -786,6 +786,13 @@ export class Player {
     if (
       !this.crossfadeArmed &&
       !this.crossfadeInProgress &&
+      // BUG-1 Fix A: while an eos/boundary handoff is in flight the
+      // transport belongs to that handoff — the cursor may already have
+      // advanced while the successor's standby/profile is still being
+      // prepared, so a fade attempted here races it and the engine
+      // legitimately declines mid-handoff. Mirror the cursor catch-up's
+      // stand-down: the handoff's own EOS path owns this boundary.
+      !this.eosInFlight &&
       !this.pendingEnded &&
       this.crossfadeSeconds > 0 &&
       this.queue.repeat !== 'one' &&

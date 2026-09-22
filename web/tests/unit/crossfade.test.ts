@@ -1099,5 +1099,78 @@ describe('crossfade trigger semantics (M8 Phase A)', () => {
       expect(player.model.get().state).toBe('paused');
       expect(player.model.get().current?.id).toBe(successorId);
     });
+
+    // BUG-1 Fix A (handoff ownership): the positional fade trigger must
+    // stand down while an eos handoff owns the transport — the same
+    // window R3 pins for the cursor catch-up. eosInFlight spans the WHOLE
+    // runEosBoundary (advance -> cursor move -> prepareNext -> play), so
+    // mid-handoff the successor's standby/profile may not be primed yet;
+    // a fade attempted there races the handoff and the engine declines
+    // (the BUG-1 "declined-after-call" / "none" observation).
+    it('R10: a tick inside the eos advance-gap never originates a positional fade (BUG-1 Fix A)', async () => {
+      const { player, h, queue } = makePlayer({
+        crossfadeCapable: true,
+        advanceHold: true,
+        planTransition: (q) =>
+          // The EOS-race query is clamped to the audio actually left
+          // (1.5 s here) and declines as gapless, so the handoff proceeds
+          // into the held advance. The positional query carries the full
+          // 8 s cap and sees a fade-worthy plan — the same split
+          // production reaches when the incoming profile has not been
+          // primed yet (BUG-1).
+          q.maxFadeSeconds < 2 ? { type: 'gapless' } : { type: 'sweet-fade', overlapSeconds: 2 },
+      });
+      player.init();
+      await player.playSequence([mk(1, 30), mk(2, 30), mk(3, 30)], 'AL', 'A');
+      player.setCrossfade(8);
+      await primeAndPlay(h);
+      expect(queue.get().index).toBe(0);
+
+      // Decoder eos with 1.5 s still audible: its own plan declines as
+      // gapless, and onEos parks inside the held `advance(...)` with
+      // eosInFlight true and the cursor not yet advanced.
+      h.rendered = 28.5 * RATE;
+      h.handlers.eos();
+      await flush();
+
+      // A rendered tick lands in the fade window DURING the held handoff.
+      h.handlers.tick();
+      await flush();
+      // The positional trigger stood down: no attempt raced the in-flight
+      // handoff, and the pending handoff itself is undisturbed.
+      expect(h.beginCrossfade).not.toHaveBeenCalled();
+      expect(queue.get().index).toBe(0);
+
+      // Handoff completes normally: exactly one advancement, owned by eos.
+      h.resolveAdvance?.();
+      await flush(6);
+      expect(queue.get().index).toBe(1);
+      expect(player.model.get().current?.id).toBe('t2');
+      expect(player.model.get().state).toBe('playing');
+      expect(h.beginCrossfade).not.toHaveBeenCalled();
+    });
+
+    it('R11: the positional fade trigger fires normally outside a handoff window (BUG-1 Fix A inverse)', async () => {
+      const { player, h, queue } = makePlayer({
+        crossfadeCapable: true,
+        planTransition: (q) =>
+          q.maxFadeSeconds < 2 ? { type: 'gapless' } : { type: 'sweet-fade', overlapSeconds: 2 },
+      });
+      player.init();
+      await player.playSequence([mk(1, 30), mk(2, 30), mk(3, 30)], 'AL', 'A');
+      player.setCrossfade(8);
+      await primeAndPlay(h);
+
+      // Same fade-window position with NO eos handoff in flight: the
+      // trigger must operate exactly as before the guard.
+      h.rendered = 28.5 * RATE;
+      h.handlers.tick();
+      await flush();
+      expect(h.beginCrossfade).toHaveBeenCalledOnce();
+      expect(h.beginCrossfade.mock.calls[0]?.[1]).toBe(2); // planned overlap
+      expect(queue.get().index).toBe(1); // taken -> transition advanced
+      expect(player.model.get().current?.id).toBe('t2');
+      expect(player.model.get().state).not.toBe('error');
+    });
   });
 });
