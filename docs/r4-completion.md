@@ -102,8 +102,11 @@ Offline Rust playback: time-to-playing ≈ 125 ms, seek ≈ 148 ms (R4.4 e2e).
   not done in R4.5 (no web-player changes per scope).
 - **Deployment execution** — requires infrastructure/credentials that do not
   exist in this repository (see `docs/server-production.md` §11).
-- **Encoder frozen-table extension** — q6 @ 48 kHz / q8 coverage (encoder
-  crate), if the product needs full parity (ADR 0012 §7).
+- **Encoder fractional-quality parity (J.2)** — C-compatible `--quality`
+  values such as `4.25`/`5.5` (profile interpolation) and out-of-range
+  clipping need per-value frozen tables or another deterministic scheme
+  (ADR 0012 §7). The full **integer** matrix (`0..=10` × 44.1/48/37.8/32
+  kHz, 44 configurations) is done; mono differential coverage is committed.
 - **Embedded artwork extraction** — FLAC PICTURE / APEv2 (Author pipeline),
   if the product requires in-package embedded covers.
 - **SV7** — permanently out of scope unless SV7 is un-retired (ADR 0014 §5).

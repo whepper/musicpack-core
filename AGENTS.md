@@ -85,6 +85,7 @@ Targeted compatibility corpora (also covered by `cargo test --workspace`):
 
 ```sh
 cargo test -p musicpack-musepack-encoder --test encoder_whole   # 21/21, 140,420 bytes exact
+cargo test -p musicpack-musepack-encoder --test encoder_matrix  # 44-config integer matrix + mono, byte-identical
 cargo test -p musicpack-mpc-tools --test cut_compat             # 12/12 byte-identical
 ```
 

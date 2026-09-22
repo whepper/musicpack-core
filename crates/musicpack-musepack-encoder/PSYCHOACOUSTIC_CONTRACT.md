@@ -157,9 +157,24 @@ called with `MaxBand = 31` regardless of bandwidth; the bandwidth-derived
 `Max_Band` (used by `RaiseSMR` and downstream allocation) is
 `clamp(BandWidth * 64 / SampleFreq, 1, 31)`.
 
-Frozen configurations cover q4–q7 at 44100 Hz and q5 at 48000/37800/32000 Hz.
-`PsychoacousticModel::new` returns `EncoderError::UnsupportedPsyConfig` for any
-other pair; extending coverage means re-running the oracle.
+Frozen tables cover the complete **integer SV8 quality surface**: quality
+`0..=10` (exact integer values) at 44100, 48000, 37800 and 32000 Hz — 44
+configurations, transcribed from the C oracle dumps
+`tests/data/psy/psy_<q>-<rate>.txt` by `tools/gen_psy_tables.py`.
+`frozen_psy_tables` matches the pair by exact `f32` bit equality; any other
+pair returns `None` and `PsychoacousticModel::new` fails with
+`EncoderError::UnsupportedPsyConfig` (no fallback, no remapping).
+
+**Deferred parity (J.2): fractional and out-of-range quality.** The C
+encoder accepts `--quality x` as a continuous value (clipped to `[0, 10]`)
+and interpolates adjacent profile rows for fractional values — so every
+distinct fractional value implies its own frozen `(quality, rate)` tables.
+That surface is deliberately *not* frozen here and is rejected rather than
+approximated. The remaining architectural question, to be resolved by the
+next parity slice:
+
+> How should full C-compatible fractional quality be implemented while
+> preserving deterministic, host-independent SV8 output?
 
 ## 11. Source-derived vs frozen vs Rust decisions
 

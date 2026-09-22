@@ -86,10 +86,13 @@ Settings: quality (default `6.0`, the Author default; the UI offers
 5/6/7/8). No other setting is part of the contract (the reference passes
 only `--quality`).
 
-**Documented gap:** the encoder's frozen psychoacoustic tables exist only
-for `{4,5,6,7} @ 44100` and `q5 @ {48000, 37800, 32000}`. Every other
-`(quality, sample-rate)` pair fails closed with a typed error rather than
-being silently remapped; expanding the tables is encoder-crate work.
+**Documented gap (since closed for integers):** the encoder's frozen
+psychoacoustic tables now cover the complete integer matrix — quality
+`0..=10` at `44100`, `48000`, `37800` and `32000` Hz (44 configurations).
+Every other `(quality, sample-rate)` pair — i.e. **fractional** qualities —
+still fails closed with a typed error rather than being silently remapped;
+that remaining surface is a deferred parity slice (J.2), and extending it
+is encoder-crate work.
 Sources deeper than 16 bits are reduced to the top 16 bits (exact for
 16-bit); the reference passes the source bit depth to `mpcenc`.
 

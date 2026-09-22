@@ -121,19 +121,21 @@ the suite never depends on live MusicBrainz.
 
 ## 8. Encoder limitations
 
-The isolated Rust encoder's frozen psychoacoustic tables cover
-`{4,5,6,7} @ 44100 Hz` and `q5 @ {48000, 37800, 32000} Hz`. Outside that
-matrix the runtime fails closed with `unsupported` — it never silently
-remaps quality or sample rate. Concretely, for the current Author product:
+The isolated Rust encoder's frozen psychoacoustic tables cover the complete
+integer quality matrix: qualities `0..=10` at `44100 Hz`, `48000 Hz`,
+`37800 Hz` and `32000 Hz` (44 configurations). Outside that integer matrix
+— concretely **fractional** qualities — the runtime fails closed with
+`unsupported`; it never silently remaps quality or sample rate. For the
+current Author product:
 
-- the default **q6 works at 44.1 kHz** (the common CD case);
-- **48 kHz (and 37.8/32 kHz) support only q5**;
-- **q8 is unsupported** by the Rust encoder.
+- the UI's **q5/6/7/8 are supported at every source rate**
+  (44.1/48/37.8/32 kHz), matching what the C reference encoder supports —
+  the UI and the encoder no longer disagree anywhere;
+- **fractional qualities** (e.g. `5.5`, which the C encoder interpolates)
+  remain unsupported: a deliberately deferred parity slice (J.2), not a gap
+  in the integer surface the UI exposes.
 
-This is a genuine capability gap of the encoder crate, not of the runtime.
-Extending the frozen tables is encoder-crate work; the legacy escape hatch
-covers those specific configurations in development until then. Sources
-deeper than 16 bits are reduced to the top 16 bits (documented fidelity gap;
+Sources deeper than 16 bits are reduced to the top 16 bits (documented fidelity gap;
 exact for 16-bit sources).
 
 ## 9. Replacement safety

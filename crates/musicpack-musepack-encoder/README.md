@@ -3,15 +3,22 @@
 The safe-Rust **Musepack SV8 encoder** that replaces the legacy C Musepack
 encoder, plus its compatibility oracle.
 
-> **Status: Phase 15L — migration complete.**
+> **Status: Phase 15L — migration complete; integer encoder parity (J.1)
+> landed afterwards.**
 > The crate is the production `PCM → SV8` encoder
 > (`encoder::MusepackEncoder`): it reproduces the reference `mpcenc` stream
-> byte-for-byte for **all 21** committed whole-encoder cases across q4–q7
-> and 44.1/48/37.8/32 kHz (15G.1 resolved the two decoder-delay-frame
-> divergences — byte-swapped frozen CVD tables; see
-> `tests/data/encoder/README.md`). The legacy C repository is retained
-> as-is as the immutable historical reference; the frozen compatibility
-> corpus in this crate is the permanent compatibility boundary.
+> byte-for-byte for the original **21** committed whole-encoder cases across
+> q4–q7 and 44.1/48/37.8/32 kHz **and** for the full **integer quality
+> matrix** — qualities `0..=10` × 44.1/48/37.8/32 kHz (44 configurations,
+> two signal kinds each) plus mono at q5 × 4 rates, all pinned by
+> `tests/data/encoder/matrix_manifest.txt` and the `encoder_matrix` test
+> (15G.1 resolved the two decoder-delay-frame divergences — byte-swapped
+> frozen CVD tables; see `tests/data/encoder/README.md`). Fractional
+> quality (`--quality 5.5`-style interpolation and clipping) remains a
+> deliberately deferred parity slice (J.2). The legacy C repository is
+> retained as-is as the immutable historical reference; the frozen
+> compatibility corpus in this crate is the permanent compatibility
+> boundary.
 
 ## Why this crate exists separately
 
@@ -239,6 +246,12 @@ Component boundaries:
 Whole-encoder corpus:
   21 deterministic PCM cases (q4–q7 at 44.1 kHz; q5 at 48/37.8/32 kHz)
 
+Integer-parity matrix (J.1):
+  97 manifest rows: noise + transient for all 44 integer
+  (quality 0..=10 × 44.1/48/37.8/32 kHz) configurations,
+  mono q5 × 4 rates, and long multi-AP cases
+  (`tests/data/encoder/matrix_manifest.txt`)
+
 Tolerance:
   none
 
@@ -292,6 +305,11 @@ Three tests anchor the oracle:
   against the dedicated MS sub-oracle.
 * `tests/encoder_whole.rs` — always runs, C-free; reproduces the reference
   `mpcenc` streams byte-for-byte for all 21 committed whole-encoder cases.
+* `tests/encoder_matrix.rs` — always runs, C-free; replays
+  `tests/data/encoder/matrix_manifest.txt`: byte-identical output plus
+  structural SV8 validation for every integer `(quality, rate)` pair
+  (`0..=10` × 44.1/48/37.8/32 kHz, two signals each), mono at q5 × 4 rates,
+  and the long multi-`AP` cases.
 * `psy::math`/`psy::fft` unit tests — always run, C-free; verify the
   `FAST_MATH` primitives and the spectrum/FFT kernels against
   `tests/data/psy/math.txt` and `tests/data/psy/fft/`.

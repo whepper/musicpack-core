@@ -7,20 +7,27 @@
 //! Musepack SV8 streams compatible with the established reference output, so
 //! that the C encoder can eventually be deleted.
 //!
-//! # Status (Phase 15B)
+//! # Status
 //!
-//! This phase establishes the **foundation only**:
+//! The crate is the production `PCM → SV8` encoder
+//! (`encoder::MusepackEncoder`) and reproduces the reference `mpcenc` stream
+//! byte-for-byte across the complete **integer** SV8 quality surface:
+//! qualities `0..=10` at 44100/48000/37800/32000 Hz — 44 configurations
+//! (plus mono streams; see `tests/data/encoder/matrix_manifest.txt` and the
+//! `encoder_matrix` test). Fractional qualities (the C encoder's interpolated
+//! `--quality 4.25`-style values and its out-of-range clipping) are a
+//! deliberately deferred, separately tracked parity slice (J.2); see
+//! `PSYCHOACOUSTIC_CONTRACT.md` §10.
+//!
+//! The foundation primitives established in Phase 15B remain in place:
 //!
 //! * [`bitwriter`] — the deterministic, MSB-first bit writer every SV8 field
 //!   is written through;
 //! * [`differential`] — the pure comparison primitives the compatibility
 //!   oracle is built on.
 //!
-//! There is deliberately **no** psychoacoustic model, analysis filterbank,
-//! quantisation, allocation, Huffman coding or frame/stream encoding here yet.
-//! Those land in later phases with explicit numerical-compatibility testing.
-//! See `README.md` for the SV8 primitive terminology they will target, the
-//! frozen reference environment, and the migration/removal strategy.
+//! See `README.md` for the SV8 primitive terminology, the frozen reference
+//! environment, and the migration/removal strategy.
 //!
 //! # Licensing treatment (engineering boundary, not legal advice)
 //!
