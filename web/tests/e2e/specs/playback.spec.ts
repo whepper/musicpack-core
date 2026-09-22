@@ -517,10 +517,21 @@ test('musepack crossfade advances through tracks without error', async ({ page }
 
 // ---- M8 repair: Sweet Fade regression coverage (steps 7.1–7.3) -----------
 
+interface XfAttempt {
+  n: number;
+  /** Explicit per-attempt state: 'pending' until the engine settles. */
+  state: 'pending' | 'taken' | 'declined';
+}
+
 interface XfSpy {
   calls: number;
   started: boolean;
+  /** Legacy aggregate: last SETTLED result (or 'none' before any call).
+   *  Kept for specs that observe after their own synchronization. */
   result: 'none' | 'taken' | 'declined';
+  /** Per-attempt explicit states (BUG-1 hardening): a still-running
+   *  attempt is 'pending', never conflated with a settled outcome. */
+  attempts: XfAttempt[];
 }
 
 /** Wraps the live engine's beginCrossfade to observe attempts from the test. */
@@ -529,13 +540,16 @@ async function installXfadeSpy(page: import('@playwright/test').Page): Promise<v
     const p = window.__musicpack?.player as any;
     const eng = p.core.engine;
     const orig = eng.beginCrossfade.bind(eng);
-    (window as any).__xf = { calls: 0, started: false, result: 'none' };
+    (window as any).__xf = { calls: 0, started: false, result: 'none', attempts: [] };
     eng.beginCrossfade = async (...args: unknown[]) => {
       const w = (window as any).__xf as XfSpy;
       w.calls++;
       w.started = true;
+      const attempt: XfAttempt = { n: w.attempts.length + 1, state: 'pending' };
+      w.attempts.push(attempt);
       const r = await orig(...args);
-      w.result = r ? 'taken' : 'declined';
+      attempt.state = r ? 'taken' : 'declined';
+      w.result = attempt.state;
       return r;
     };
   });
@@ -543,6 +557,56 @@ async function installXfadeSpy(page: import('@playwright/test').Page): Promise<v
 
 async function xfState(page: import('@playwright/test').Page): Promise<XfSpy> {
   return page.evaluate(() => (window as any).__xf as XfSpy);
+}
+
+/**
+ * Test-only waveform-profile gate (BUG-1 hardening). While installed,
+ * every `/waveform` request is HELD at the network layer — started, but
+ * never completed — until the returned release function runs. Release is
+ * an explicit event; there is no sleep anywhere in this mechanism. This
+ * deterministically arranges the condition that exposed BUG-1: transition
+ * planning runs while the incoming profile is unavailable, so the planner
+ * must select the fade-worthy legacy plan (missing profile ⇒ fixed-length
+ * fade). Mirrors the existing route-gate pattern (rust-error-verify,
+ * rust-rate-matrix).
+ */
+async function installProfileGate(
+  page: import('@playwright/test').Page,
+): Promise<() => Promise<void>> {
+  let open = true;
+  const held: Array<() => Promise<void>> = [];
+  await page.route('**/waveform*', async (route) => {
+    if (!open) {
+      await route.continue();
+      return;
+    }
+    held.push(() => route.continue());
+  });
+  return async () => {
+    open = false;
+    await Promise.all(held.splice(0).map((resume) => resume()));
+  };
+}
+
+/**
+ * Event/state wait on the fade spy: 'initiated' resolves as soon as an
+ * attempt exists; 'settled' resolves once the FIRST attempt has left the
+ * 'pending' state. Correctness comes from the explicit spy state — the
+ * timeout is only a safety bound, never the synchronization mechanism.
+ */
+async function xfadeAttempt(
+  page: import('@playwright/test').Page,
+  want: 'initiated' | 'settled',
+): Promise<void> {
+  await page.waitForFunction(
+    (condition: 'initiated' | 'settled') => {
+      const x = (window as any).__xf as XfSpy | undefined;
+      if (!x || x.attempts.length === 0) return false;
+      return condition === 'initiated' ? true : x.attempts[0]!.state !== 'pending';
+    },
+    want,
+    { timeout: 30_000 },
+  );
 }
 
 type PlayerSnapshot = Awaited<ReturnType<typeof playerState>>;
@@ -583,6 +647,16 @@ test('chained musepack fades keep advancing through later boundaries (BUG-1)', {
   // repair, the stale eos-suppression left behind by the first fade
   // swallowed the next track's decode-EOS and playback hung forever right
   // there — this asserts boundaries KEEP advancing after a fade.
+  //
+  // Deterministic observation (BUG-1 hardening, test-only): the profile
+  // gate holds every waveform-profile fetch at the network layer until the
+  // test releases it, so planning at the opener's boundary provably runs
+  // with the incoming profile unavailable and must select the fade-worthy
+  // plan; the fade spy records explicit per-attempt states
+  // (pending/taken/declined) and the test synchronizes on attempt
+  // initiation and settlement as events — never on a sampled instant.
+  // Playback, planning, and the fixture remain entirely real.
+  const releaseProfiles = await installProfileGate(page);
   await page.getByText('Long Player').first().click();
   await page.evaluate(() => (window.__musicpack?.player as any).setCrossfade(4));
   await page.getByRole('button', { name: 'Play album' }).click();
@@ -593,6 +667,13 @@ test('chained musepack fades keep advancing through later boundaries (BUG-1)', {
   await page.evaluate(() => (window.__musicpack?.player as any).seek(45.5));
   const first = await playerState(page);
   const firstTitle = first.currentTitle;
+
+  // Deliberate condition (Invariant D, steps 4–5): wait for the
+  // fade-worthy attempt to be INITIATED — profiles are held, so the plan
+  // can only be the fade — then release the held profile fetches at this
+  // controlled point. Both transitions are explicit state/events.
+  await xfadeAttempt(page, 'initiated');
+  await releaseProfiles();
 
   // Queue-index progression: very short fixture tracks can outrun the poll
   // interval, so count boundaries crossed instead of distinct titles.
@@ -627,19 +708,31 @@ test('chained musepack fades keep advancing through later boundaries (BUG-1)', {
     if (Date.now() - t0 > 60_000) break;
     await page.waitForTimeout(200);
   }
-  monotonic(samples);
+  // Samples span the deliberate fade's swap: this loop started before the
+  // mix finished and keeps recording through it.
+  monotonic(samples); // Invariant B: the Fix B blend-clock never regresses
 
+  // Invariant D, step 6: synchronize on the first attempt's SETTLEMENT
+  // (an explicit state event; normally already settled because boundary 1
+  // is owned by this fade). A sampled instant can no longer decide the
+  // outcome — this wait is what used to read as a spurious "none".
+  await xfadeAttempt(page, 'settled');
   const xf = await xfState(page);
-  // The EOS path is now content-aware (Smart Fades): same-release
-  // constant-amplitude (sine) tracks join gaplessly, so the opener boundary
-  // may correctly decline a fade. The BUG-1 invariant is that boundaries KEEP
-  // advancing (no hang) regardless of whether each boundary fades or goes
-  // gapless — that is what the chained-advancement guard below asserts.
-  if (xf.calls > 0) {
-    // Any fade that did engage must have been taken, never left dangling.
-    expect(xf.result).toBe('taken');
-  }
-  // BUG-1 GUARD: at least one boundary after the opener must advance.
+
+  // Invariant C: per-attempt states are explicit and fully accounted for.
+  // A still-pending LATER attempt (a fast chained boundary racing its
+  // profile fetch) is a recorded state, not a failure — only the settled
+  // states below make claims. 'pending' is never conflated with
+  // 'taken' or 'declined'.
+  expect(xf.calls).toBe(xf.attempts.length);
+  // Invariant D: profiles held → fade-worthy plan → standby settled →
+  // attempt executed → attempt settled → the deliberate attempt is TAKEN.
+  // With the gate armed this is constructionally guaranteed to exist —
+  // unlike the old conditional `if (xf.calls > 0)` observation.
+  expect(xf.calls).toBeGreaterThanOrEqual(1);
+  expect(xf.attempts[0]?.state).toBe('taken');
+  // Invariant A: at least one boundary after the opener must advance
+  // (the original BUG-1 guard — chained handoffs keep progressing).
   expect(lastIndex).toBeGreaterThanOrEqual(2);
   expect(seen.size).toBeGreaterThanOrEqual(2);
   expect(last?.error).toBeUndefined();
