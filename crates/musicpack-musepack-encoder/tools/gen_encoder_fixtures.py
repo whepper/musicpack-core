@@ -1,13 +1,28 @@
 #!/usr/bin/env python3
-"""Generate whole-encoder reference fixtures (Phase 15G).
+"""Generate whole-encoder reference fixtures (Phase 15G, extended J.1).
 
-Writes deterministic integer-only 16-bit stereo WAVs, runs the reference
-`mpcenc` binary on them, and stores the resulting `.mpc` streams plus a
-manifest. The Rust test regenerates the same PCM and must reproduce the bytes.
+Writes deterministic integer-only 16-bit WAVs, runs the reference `mpcenc`
+binary on them, and stores the resulting `.mpc` streams plus manifests. The
+Rust tests regenerate the same PCM and must reproduce the bytes.
 
 Run from the crate root with the reference binary path:
 
     python3 tools/gen_encoder_fixtures.py <mpcenc> <reference-repo>
+
+Two manifests are written:
+
+* `manifest.txt`      — the original Phase 15G corpus (21 stereo cases),
+                        unchanged in composition.
+* `matrix_manifest.txt` — the J.1 integer-parity matrix: every integer
+                        quality `0..=10` x every SV8 rate with `noise` and
+                        `transient` signals, mono at q5 x 4 rates, plus
+                        long multi-`AP`-block cases for the rate dimension
+                        and the quality extremes.
+
+Existing `.mpc` files are **never rewritten**: a fixture that already exists
+is kept as-is and only hashed for the manifest. This keeps the original
+frozen compatibility evidence byte-stable when the tool is re-run to add
+cases.
 
 This is temporary migration tooling; it is not built by Cargo and no Rust test
 invokes the C encoder.
@@ -25,6 +40,8 @@ MPCENC = sys.argv[1]
 OUTDIR = "tests/data/encoder"
 os.makedirs(OUTDIR, exist_ok=True)
 
+RATES = [44100, 48000, 37800, 32000]
+
 
 def lcg(state):
     return (state * 1664525 + 1013904223) & 0xFFFFFFFF
@@ -34,7 +51,7 @@ def signed16(state):
     return ((state >> 16) & 0xFFFF) - 32768
 
 
-def gen(kind, frames, seed_l=0x12345678, seed_r=0x9ABCDEF0):
+def gen(kind, frames, channels=2, seed_l=0x12345678, seed_r=0x9ABCDEF0):
     sl, sr = seed_l, seed_r
     out = bytearray()
     for i in range(frames):
@@ -68,12 +85,17 @@ def gen(kind, frames, seed_l=0x12345678, seed_r=0x9ABCDEF0):
             l = r = v
         else:
             raise SystemExit("unknown kind " + kind)
-        out += struct.pack("<hh", l, r)
+        if channels == 1:
+            # Mono: a single deterministic stream (the left/LCG stream).
+            out += struct.pack("<h", l)
+        else:
+            out += struct.pack("<hh", l, r)
     return bytes(out)
 
 
 CASES = [
-    # (name, quality, rate, kind, frames)
+    # (name, quality, rate, kind, frames) — original Phase 15G corpus,
+    # frozen: these rows and files must not change.
     ("q5-44100-silence", 5, 44100, "silence", 5000),
     ("q5-44100-impulse", 5, 44100, "impulse", 5000),
     ("q5-44100-constant", 5, 44100, "constant", 5000),
@@ -98,35 +120,94 @@ CASES = [
 ]
 
 
-def write_wav(path, rate, pcm):
+def matrix_cases():
+    """J.1 integer-parity matrix rows: (name, quality, rate, kind, frames,
+    channels).
+
+    * `noise` (5000 frames) and `transient` (25000 frames) for every integer
+      quality `0..=10` x every SV8 rate = 44 + 44 stereo rows. Rows whose
+      names already exist in the original corpus reuse those frozen files.
+    * mono `noise` at q5 x four rates (mono differential coverage).
+    * long multi-`AP`-block cases for the non-44.1k rate dimension and the
+      quality extremes (q0/q10 @ 44100).
+    """
+    rows = []
+    for q in range(11):
+        for rate in RATES:
+            rows.append((f"q{q}-{rate}-noise", q, rate, "noise", 5000, 2))
+    for q in range(11):
+        for rate in RATES:
+            rows.append((f"q{q}-{rate}-transient", q, rate, "transient", 25000, 2))
+    for rate in RATES:
+        rows.append((f"mono-q5-{rate}-noise", 5, rate, "noise", 5000, 1))
+    for q, rate in [(0, 44100), (10, 44100), (5, 48000), (5, 37800), (5, 32000)]:
+        rows.append((f"q{q}-{rate}-multiblock", q, rate, "noise", 93728, 2))
+    return rows
+
+
+def write_wav(path, rate, pcm, channels):
     with wave.open(path, "wb") as w:
-        w.setnchannels(2)
+        w.setnchannels(channels)
         w.setsampwidth(2)
         w.setframerate(rate)
         w.writeframes(pcm)
 
 
+def encode(name, qual, rate, kind, frames, channels):
+    mpc = os.path.join(OUTDIR, name + ".mpc")
+    if os.path.exists(mpc):
+        # Frozen-evidence guard: never rewrite an existing fixture; only
+        # hash it for the manifest.
+        data = open(mpc, "rb").read()
+        print(f"{name}: kept existing ({len(data)} bytes)")
+        return data
+    pcm = gen(kind, frames, channels)
+    wav = "/tmp/mp15g.wav"
+    write_wav(wav, rate, pcm, channels)
+    subprocess.run(
+        [MPCENC, "--silent", "--overwrite", *SCALAR_FLAGS, "--quality", str(qual), wav, mpc],
+        check=True,
+    )
+    data = open(mpc, "rb").read()
+    print(f"{name}: {len(data)} bytes {hashlib.sha256(data).hexdigest()[:12]}")
+    return data
+
+
 def main():
-    manifest = ["# name quality rate kind frames bytes sha256"]
     # The strict whole-encoder compatibility target is the scalar-forced C
     # reference (scalar encoder + scalar psychoacoustic kernels). These flags
     # are passed explicitly so fixture generation never depends on the build's
     # default SIMD dispatch. Do not remove them.
-    scalar_flags = ["--impl", "scalar", "--psy-impl", "scalar"]
+    global SCALAR_FLAGS
+    SCALAR_FLAGS = ["--impl", "scalar", "--psy-impl", "scalar"]
+
+    # Generate (or reuse) every unique fixture referenced by either manifest.
+    seen = set()
+    for name, qual, rate, kind, frames, channels in (
+        [(n, q, r, k, f, 2) for (n, q, r, k, f) in CASES] + matrix_cases()
+    ):
+        if name in seen:
+            continue
+        seen.add(name)
+        encode(name, qual, rate, kind, frames, channels)
+
+    # Original corpus manifest (composition unchanged).
+    manifest = ["# name quality rate kind frames bytes sha256"]
     for name, qual, rate, kind, frames in CASES:
-        pcm = gen(kind, frames)
-        wav = "/tmp/mp15g.wav"
-        mpc = os.path.join(OUTDIR, name + ".mpc")
-        write_wav(wav, rate, pcm)
-        subprocess.run(
-            [MPCENC, "--silent", "--overwrite", *scalar_flags, "--quality", str(qual), wav, mpc],
-            check=True,
-        )
-        data = open(mpc, "rb").read()
+        data = open(os.path.join(OUTDIR, name + ".mpc"), "rb").read()
         sha = hashlib.sha256(data).hexdigest()
         manifest.append(f"{name} {qual} {rate} {kind} {frames} {len(data)} {sha}")
-        print(f"{name}: {len(data)} bytes {sha[:12]}")
     open(os.path.join(OUTDIR, "manifest.txt"), "w").write("\n".join(manifest) + "\n")
+
+    # J.1 integer-parity matrix manifest (adds a channels column).
+    matrix = ["# name quality rate kind frames channels bytes sha256"]
+    for name, qual, rate, kind, frames, channels in matrix_cases():
+        data = open(os.path.join(OUTDIR, name + ".mpc"), "rb").read()
+        sha = hashlib.sha256(data).hexdigest()
+        matrix.append(f"{name} {qual} {rate} {kind} {frames} {channels} {len(data)} {sha}")
+    open(os.path.join(OUTDIR, "matrix_manifest.txt"), "w").write("\n".join(matrix) + "\n")
+    print(f"wrote manifest.txt ({len(CASES)} cases) and matrix_manifest.txt "
+          f"({len(matrix_cases())} rows)")
 
 
 main()
