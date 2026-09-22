@@ -12,7 +12,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-#[cfg(unix)]
 use musicpack_core::format::checksum;
 
 // ---------------------------------------------------------------------
@@ -53,7 +52,6 @@ fn cleanup(dir: &Path) {
 }
 
 /// Writes a minimal, fully valid one-track package into `root`.
-#[cfg(unix)]
 fn write_min_package(root: &Path) {
     write_package_with(
         root,
@@ -63,7 +61,6 @@ fn write_min_package(root: &Path) {
 }
 
 /// Writes a valid package with the given primary audio and extras.
-#[cfg(unix)]
 fn write_package_with(root: &Path, audio: &[(&str, &[u8])], extras: &[(&str, &[u8])]) {
     fs::create_dir_all(root).unwrap();
     let mut tracks = Vec::new();
@@ -239,7 +236,6 @@ fn pack_is_deterministic_and_unpack_round_trips() {
     cleanup(&root);
 }
 
-#[cfg(unix)]
 #[test]
 fn pack_refuses_existing_output_and_invalid_bundles() {
     let root = temp_dir("pack-refuse");
@@ -258,17 +254,6 @@ fn pack_refuses_existing_output_and_invalid_bundles() {
     assert_eq!(code(&output), 1);
     assert!(!out2.exists());
     cleanup(&root);
-}
-
-#[cfg(not(unix))]
-#[test]
-fn pack_reports_unsupported_platform() {
-    let dir = temp_dir("pack-unsupported");
-    fs::create_dir_all(&dir).unwrap();
-    let output = run(&["pack", dir.to_str().unwrap(), "out.mpak"]);
-    assert_eq!(code(&output), 1);
-    assert!(text(&output).contains("not supported"));
-    cleanup(&dir);
 }
 
 #[test]
