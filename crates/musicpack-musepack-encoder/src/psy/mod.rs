@@ -22,10 +22,12 @@
 //!   pinned reference build. See `tests/data/psy/README.md`.
 //!
 //! The psychoacoustic model is wired into the production encoder
-//! (`crate::encoder::MusepackEncoder`) and has frozen tables for the
-//! complete **integer** quality matrix: qualities `0..=10` at
-//! 44100/48000/37800/32000 Hz (44 configurations). Fractional-quality
-//! tables are deliberately deferred as a separate parity slice (J.2); see
+//! (`crate::encoder::MusepackEncoder`): the44 integer quality/rate pairs
+//! resolve to frozen C-oracle tables (permanent regression oracles), and
+//! every other finite quality at 44100/48000/37800/32000 Hz is computed
+//! deterministically from frozen ATH bases plus the existing profile
+//! interpolation and `pow10_d` (J.2 fractional parity; non-finite qualities
+//! are rejected — C's `NaN` path is undefined). See
 //! `PSYCHOACOUSTIC_CONTRACT.md` §10.
 
 // The module is a faithful source-derived migration; its float literals are
@@ -33,6 +35,7 @@
 // an `f32` needs.
 #![allow(clippy::excessive_precision)]
 
+mod computed;
 mod cvd;
 mod cvd_tables;
 mod fft;

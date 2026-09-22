@@ -49,8 +49,19 @@ pub enum EncoderError {
     },
     /// `max_band` must be in `0..=31`.
     InvalidMaxBand(usize),
-    /// The psychoacoustic model only has frozen tables for the oracle's
-    /// `(quality, sample rate)` combinations.
+    /// Quality must be a finite `f32`.
+    ///
+    /// This is an **intentional compatibility boundary**: the C encoder's
+    /// `NaN`/`±inf` path invokes undefined, platform-dependent behaviour
+    /// (`(int)NaN` during profile selection), so no parity is claimed —
+    /// Rust rejects non-finite qualities with this typed error instead
+    /// (J.2).
+    NonFiniteQuality(f32),
+    /// No psychoacoustic path exists for this `(quality, sample rate)` pair —
+    /// in practice a sample rate outside the four SV8 rates (finite quality
+    /// at44100/48000/37800/32000 Hz is always handled: integer pairs by the
+    /// frozen oracle tables, everything else by the deterministic computed
+    /// path).
     UnsupportedPsyConfig {
         /// Requested quality.
         qual: f32,
@@ -110,9 +121,16 @@ impl fmt::Display for EncoderError {
             Self::InvalidMaxBand(band) => {
                 write!(f, "max_band {band} is out of range (0..=31)")
             }
+            Self::NonFiniteQuality(q) => write!(
+                f,
+                "quality must be a finite number (got {q}); non-finite \
+                 qualities are rejected because the C encoder's behaviour for \
+                 them is undefined"
+            ),
             Self::UnsupportedPsyConfig { qual, sample_rate } => write!(
                 f,
-                "no frozen psychoacoustic tables for quality {qual} at {sample_rate} Hz"
+                "no psychoacoustic tables for quality {qual} at {sample_rate} Hz \
+                 (supported SV8 rates:32000, 37800, 44100, 48000)"
             ),
         }
     }

@@ -226,6 +226,9 @@ impl MusepackEncoder {
     ///   rather than being written into the four-bit `ST` field truncated or
     ///   panicking on the seek-entry shift.
     pub fn new(config: EncoderConfig) -> Result<Self, EncoderError> {
+        if !config.quality.is_finite() {
+            return Err(EncoderError::NonFiniteQuality(config.quality));
+        }
         if config.frames_per_block_pwr > 14 || config.frames_per_block_pwr % 2 == 1 {
             return Err(EncoderError::InvalidBlockPower(config.frames_per_block_pwr));
         }
@@ -830,13 +833,30 @@ mod tests {
         assert!(!encode(0).is_empty(), "seek_pwr 0 stays valid");
     }
 
-    /// Surfaces deliberately deferred to the fractional/clip parity slice
-    /// (J.2) and non-SV8 rates must keep failing closed.
+    /// Finite fractional quality and C-style clipping are now supported
+    /// (J.2): `5.5` builds, and `11.0`/`-1.0` clip to q10/q0 through
+    /// `PsyParams::from_quality`. What must keep failing closed: non-finite
+    /// qualities (typed rejection; C's `NaN` path is undefined) and
+    /// non-SV8 sample rates.
     #[test]
     fn rejects_unsupported_configuration() {
-        assert!(MusepackEncoder::new(EncoderConfig::new(5.5, 44100, 2)).is_err()); // fractional (J.2)
-        assert!(MusepackEncoder::new(EncoderConfig::new(11.0, 44100, 2)).is_err()); // clip parity (J.2)
-        assert!(MusepackEncoder::new(EncoderConfig::new(-1.0, 44100, 2)).is_err()); // clip parity (J.2)
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            assert!(matches!(
+                MusepackEncoder::new(EncoderConfig::new(bad, 44100, 2)),
+                Err(EncoderError::NonFiniteQuality(q)) if q.is_nan() || q.is_infinite()
+            ));
+        }
         assert!(MusepackEncoder::new(EncoderConfig::new(5.0, 96000, 2)).is_err()); // non-SV8 rate
+    }
+
+    /// The C clip semantics: finite out-of-range qualities are accepted and
+    /// resolve to the endpoint profile rows (byte identity against the q0/
+    /// q10 streams is asserted in `tests/encoder_fractional.rs`).
+    #[test]
+    fn accepts_fractional_and_clipped_finite_qualities() {
+        assert!(MusepackEncoder::new(EncoderConfig::new(5.5, 44100, 2)).is_ok());
+        assert!(MusepackEncoder::new(EncoderConfig::new(4.25, 44100, 2)).is_ok());
+        assert!(MusepackEncoder::new(EncoderConfig::new(11.0, 44100, 2)).is_ok());
+        assert!(MusepackEncoder::new(EncoderConfig::new(-1.0, 44100, 2)).is_ok());
     }
 }

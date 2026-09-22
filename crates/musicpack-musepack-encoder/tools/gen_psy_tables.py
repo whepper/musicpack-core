@@ -5,7 +5,8 @@ Run from the crate root (`crates/musicpack-musepack-encoder`):
 
     python3 tools/gen_psy_tables.py
 
-The dumps are produced by `tools/extract_psy_oracle.c` (`tables` mode); see
+The dumps are produced by `tools/extract_psy_oracle.c` (`tables` and `bases`
+modes); see
 `tests/data/psy/README.md`. Nothing here talks to the reference at run time.
 Run `cargo fmt` after generating.
 """
@@ -99,6 +100,36 @@ def emit_u32_array(out, name, vals, per_line=8, indent="    "):
     out.append("];\n\n")
 
 
+def parse_bases():
+    """Parses `psy_bases.txt` (J.2): `#` comments, `rate <int>` headers and
+    `flag <n>` sections of512 sixteen-hex-digit f64 words. Returns the40
+    `(rate, flag, [u64 words])` entries in file order."""
+    entries = []
+    lines = []
+    with open(f"{DATA}/psy_bases.txt") as fh:
+        for line in fh:
+            s = line.strip()
+            if s and not s.startswith("#"):
+                lines.append(s)
+    i = 0
+    while i < len(lines):
+        head = lines[i].split()
+        if head[0] != "rate":
+            raise SystemExit(f"psy_bases: expected 'rate', got {lines[i]!r}")
+        rate = int(head[1])
+        i += 1
+        while i < len(lines) and lines[i].startswith("flag "):
+            flag = int(lines[i].split()[1])
+            words = [int(w, 16) for w in lines[i + 1:i + 1 + 512]]
+            if len(words) != 512:
+                raise SystemExit(f"psy_bases: short section flag {flag} @ {rate}")
+            entries.append((rate, flag, words))
+            i += 1 + 512
+    if len(entries) != 40:
+        raise SystemExit(f"psy_bases: expected40 entries, got {len(entries)}")
+    return entries
+
+
 def main():
     kernels, _ = parse_sections(f"{DATA}/kernels.txt")
     out = []
@@ -145,6 +176,23 @@ def main():
                 out.append("        " + ", ".join(f"0x{v:08x}" for v in vals[i:i + 8]) + ",\n")
             out.append("    ],\n")
         out.append("};\n\n")
+
+    # J.2: frozen ATH base arrays (f64 words), one per (rate, EarModelFlag),
+    # plus an index table mirroring the MATRIX lookup style.
+    bases = parse_bases()
+    out.append("/// J.2: frozen ATH base arrays — `tmp` (`f64` bits as `u64`) inside the\n")
+    out.append("/// reference `Ruhehoerschwelle` after the flag roll-off subtraction and\n")
+    out.append("/// before the `Ltq_max` clamp; one array per `(sample rate, EarModelFlag)`.\n")
+    for rate, flag, words in bases:
+        out.append(f"pub(crate) const PSY_ATH_BASE_{rate}_{flag}: [u64; 512] = [\n")
+        for i in range(0, 512, 8):
+            out.append("        " + ", ".join(f"0x{w:016x}" for w in words[i:i + 8]) + ",\n")
+        out.append("];\n\n")
+    out.append("/// `(rate f32 bits, EarModelFlag, data)` index of the frozen ATH bases.\n")
+    out.append(f"pub(crate) const PSY_ATH_BASES: [(u32, u32, &[u64; 512]); {len(bases)}] = [\n")
+    for rate, flag, _ in bases:
+        out.append(f"    ({rate}.0f32.to_bits(), {flag}, &PSY_ATH_BASE_{rate}_{flag}),\n")
+    out.append("];\n\n")
 
     with open(OUT, "w") as fh:
         fh.write("".join(out))

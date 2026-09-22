@@ -26,6 +26,9 @@
  *   extract_psy_oracle math   <outdir>   # level-1 FAST_MATH primitives
  *   extract_psy_oracle model  <outdir>   # level-2/3 model boundaries
  *   extract_psy_oracle ms     <outdir>   # MS_LR_Entscheidung sub-oracle
+ *   extract_psy_oracle bases  <outdir>   # J.2: ATH base arrays (psy_bases.txt)
+ *   extract_psy_oracle selfcheck <outdir># J.2: bases reconstruct live fft/part/inv
+ *   extract_psy_oracle frac <q> <rate> <outdir> # J.2: one fractional dump + params
  *
  * All floating-point values are written as little-endian IEEE-754 f32 bit
  * patterns. Integer fields are written as their f32 value where exactly
@@ -43,7 +46,10 @@
 #include "libmpcpsy.h"
 
 #include "mpc/datatypes.h"
+#include "mpc/minimax.h"
 #include "mpc/mpcmath.h"
+
+#include <limits.h>
 
 /* Production psychoacoustic entry points (declared in mpcenc.h). */
 void   Init_Psychoakustik          ( PsyModel* );
@@ -191,6 +197,19 @@ put_hex_n ( FILE* f, const float* v, int n )
     }
 }
 
+/* J.2: base arrays are f64; write each value as16 hex digits (IEEE-754
+ * bit pattern, most-significant byte first for readability). */
+static void
+put_hex64_n ( FILE* f, const double* v, int n )
+{
+    int i;
+    for ( i = 0; i < n; i++ ) {
+        uint64_t u;
+        memcpy ( &u, &v [i], sizeof u );
+        fprintf ( f, "%016llx\n", (unsigned long long) u );
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* configuration                                                       */
 /* ------------------------------------------------------------------ */
@@ -272,6 +291,168 @@ config_init ( PsyModel* m, const config_t* c )
 }
 
 /* ------------------------------------------------------------------ */
+/* J.2: fractional-quality ATH base extraction and self-check.         */
+/*                                                                     */
+/* TheATH base for one (rate, EarModelFlag) pair is the value of       */
+/* `tmp` inside psy_tab.c Ruhehoerschwelle AFTER the per-flag roll-off  */
+/* line and BEFORE `mind(tmp, Ltq_max)` / `+= Ltq_offset - 23` /       */
+/* POW10. Those remaining steps depend only on values derived from     */
+/* the profile row (discrete flag, (int)Ltq_offset, (int)Ltq_max), so   */
+/* freezing the base per (rate, flag) reproduces fftLtq for ANY        */
+/* fractional quality by deterministic arithmetic. Proven by the J.2   */
+/* experiment and enforced below by `selfcheck` (the production        */
+/* equivalent of the experiment's72/72 reconstruction check).          */
+/*                                                                     */
+/* `ATHformula_Frank` and the switch/roll-off are verbatim copies of   */
+/* psy_tab.c (the production functions are `static` and not linkable); */
+/* `selfcheck` re-derives production output from the written dump so   */
+/* any transcription error fails loudly.                               */
+
+extern const int wl [PART_LONG];
+extern const int wh [PART_LONG];
+
+/* The fractional (quality, rate) oracle pairs (J.2 corpus). */
+static const config_t FRACS [] = {
+    /* Interiors x four rates. */
+    { "q4.25-44100", 4.25f,  44100.0 },
+    { "q4.25-48000", 4.25f,  48000.0 },
+    { "q4.25-37800", 4.25f,  37800.0 },
+    { "q4.25-32000", 4.25f,  32000.0 },
+    { "q5.5-44100",  5.5f,   44100.0 },
+    { "q5.5-48000",  5.5f,   48000.0 },
+    { "q5.5-37800",  5.5f,   37800.0 },
+    { "q5.5-32000",  5.5f,   32000.0 },
+    { "q6.5-44100",  6.5f,   44100.0 },
+    { "q6.5-48000",  6.5f,   48000.0 },
+    { "q6.5-37800",  6.5f,   37800.0 },
+    { "q6.5-32000",  6.5f,   32000.0 },
+    { "q8.5-44100",  8.5f,   44100.0 },
+    { "q8.5-48000",  8.5f,   48000.0 },
+    { "q8.5-37800",  8.5f,   37800.0 },
+    { "q8.5-32000",  8.5f,   32000.0 },
+    /* Around integer boundaries (f32 parse-merge checks). */
+    { "q4.9999999-44100", 4.9999999f, 44100.0 },
+    { "q5.0000001-44100", 5.0000001f, 44100.0 },
+    { "q5.9999999-44100", 5.9999999f, 44100.0 },
+    { "q6.0000001-44100", 6.0000001f, 44100.0 },
+    /* Arbitrary precision. */
+    { "q4.2501-44100", 4.2501f,  44100.0 },
+    { "q6.0000005-44100", 6.0000005f, 44100.0 },
+    /* Just below the clip boundary:9.9999 != q10. */
+    { "q9.9999-44100", 9.9999f, 44100.0 },
+};
+#define NFRACS ((int) (sizeof FRACS / sizeof FRACS[0]))
+
+/* Verbatim copy of psy_tab.c ATHformula_Frank (static, not linkable). */
+static float
+ATHformula_Frank ( float freq )
+{
+    static short tab [] = {
+        9669, 9669, 9626, 9512,  9353, 9113, 8882, 8676,
+        8469, 8243, 7997, 7748,  7492, 7239, 7000, 6762,
+        6529, 6302, 6084, 5900,  5717, 5534, 5351, 5167,
+        5004, 4812, 4638, 4466,  4310, 4173, 4050, 3922,
+        3723, 3577, 3451, 3281,  3132, 3036, 2902, 2760,
+        2658, 2591, 2441, 2301,  2212, 2125, 2018, 1900,
+        1770, 1682, 1594, 1512,  1430, 1341, 1260, 1198,
+        1136, 1057,  998,  943,   887,  846,  744,  712,
+         693,  668,  637,  606,   580,  555,  529,  502,
+         475,  448,  422,  398,   375,  351,  327,  322,
+         312,  301,  291,  268,   246,  215,  182,  146,
+         107,   61,   13,  -35,   -96, -156, -179, -235,
+        -295, -350, -401, -421,  -446, -499, -532, -535,
+        -513, -476, -431, -313,  -179,    8,  203,  403,
+         580,  736,  881, 1022,  1154, 1251, 1348, 1421,
+        1479, 1399, 1285, 1193,  1287, 1519, 1914, 2369,
+        3352, 4352, 5352, 6352,  7352, 8352, 9352, 9999,
+        9999, 9999, 9999, 9999,
+    };
+    double    freq_log;
+    unsigned  index;
+
+    if ( freq <    10. ) freq =    10.;
+    if ( freq > 29853. ) freq = 29853.;
+
+    freq_log = 40. * log10 (0.1 * freq);
+    index    = (unsigned) freq_log;
+    return 0.01 * (tab [index] * (1 + index - freq_log) + tab [index+1] * (freq_log - index));
+}
+
+/* Verbatim psy_tab.c Ruhehoerschwelle switch + roll-off, stopping AFTER
+ * `tmp -= f * f * (int)(EarModelFlag % 100 - 50) * 0.0015` and BEFORE
+ * `mind(tmp, Ltq_max)`. `Ltq_max` is only referenced by case2
+ * (flag/100 == 2, unreachable for the profile flags300..599); it is
+ * passed INT_MAX and `selfcheck` would expose any effect. */
+static void
+ruhe_base ( unsigned EarModelFlag, float SampleFreq, int Ltq_max, double out [512] )
+{
+    int     n;
+    float   f;
+    double  tmp;
+
+    for ( n = 0; n < 512; n++ ) {
+        f = (float) ( (n+1) * (float)(SampleFreq / 2000.) / 512 );
+
+        switch ( EarModelFlag / 100 ) {
+        case 0:
+            tmp  = 3.64*pow (f,-0.8) -  6.5*exp (-0.6*(f-3.3)*(f-3.3)) + 0.001*pow (f, 4.0);
+            break;
+        default:
+        case 1:
+            tmp  = 3.00*pow (f,-0.8) -  5.0*exp (-0.1*(f-3.0)*(f-3.0)) + 0.0000015022693846297*pow (f, 6.0) + 10.*exp (-(f-0.1)*(f-0.1));
+            break;
+        case 2:
+            tmp  = 9.00*pow (f,-0.5) - 15.0*exp (-0.1*(f-4.0)*(f-4.0)) + 0.0341796875*pow (f, 2.5)          + 15.*exp (-(f-0.1)*(f-0.1)) - 18;
+            tmp  = mind ( tmp, Ltq_max - 18 );
+            break;
+        case 3:
+            tmp  = ATHformula_Frank ( 1.e3 * f );
+            break;
+        case 4:
+            tmp  = ATHformula_Frank ( 1.e3 * f );
+            if ( f > 4.8 ) {
+                tmp += 3.00*pow (f,-0.8) -  5.0*exp (-0.1*(f-3.0)*(f-3.0)) + 0.0000015022693846297*pow (f, 6.0) + 10.*exp (-(f-0.1)*(f-0.1));
+                tmp *= 0.5 ;
+            }
+            break;
+        case 5:
+            tmp  = ATHformula_Frank ( 1.e3 * f );
+            if ( f > 4.8 ) {
+                tmp = 3.00*pow (f,-0.8) -  5.0*exp (-0.1*(f-3.0)*(f-3.0)) + 0.0000015022693846297*pow (f, 6.0) + 10.*exp (-(f-0.1)*(f-0.1));
+            }
+            break;
+        }
+
+        tmp -= f * f * (int)(EarModelFlag % 100 - 50) * 0.0015;   /* BASE */
+        out [n] = tmp;
+    }
+}
+
+/* Tail of psy_tab.c Ruhehoerschwelle: clamp, offset, POW10, partitions. */
+static void
+ruhe_tail ( const double base [512], int Ltq_offset, int Ltq_max,
+            float fft [512], float part [PART_LONG], float inv [PART_LONG] )
+{
+    int   n, k;
+    float erg;
+    float absLtq [512];
+
+    for ( n = 0; n < 512; n++ ) {
+        double tmp = base [n];
+        tmp        = mind ( tmp, Ltq_max );
+        tmp       += Ltq_offset - 23;
+        fft [n] = absLtq [n] = POW10 ( 0.1 * tmp );
+    }
+    for ( n = 0; n < PART_LONG; n++ ) {
+        erg = 1.e20f;
+        for ( k = wl [n]; k <= wh [n]; k++ )
+            erg = minf ( erg, absLtq [k]);
+        part [n] = erg;
+        inv  [n] = 1.f / part [n];
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* tables mode                                                         */
 /* ------------------------------------------------------------------ */
 
@@ -296,6 +477,28 @@ void   Generate_FFT_Tables ( const int, int*, float* );
 void   rdft                ( const int, float*, int*, float* );
 void   Cepstrum2048        ( float*, const int );
 void   Init_FastMath       ( void );
+
+/* Writes the committed `psy_<name>.txt` dump format for one initialised
+ * model. Shared by `tables` mode and the J.2 `frac` mode so both emit
+ * byte-identical section layouts. */
+static int
+write_psy_dump ( const char* path, const PsyModel* m )
+{
+    float scalars [4];
+    FILE* f = fopen ( path, "w" );
+    if ( !f ) { perror ( path ); return 1; }
+    fprintf ( f, "max_band %d\n", m->Max_Band );
+    fprintf ( f, "fftLtq 512\n" );     put_hex_n ( f, fftLtq, 512 );
+    fprintf ( f, "partLtq 57\n" );     put_hex_n ( f, partLtq, PART_LONG );
+    fprintf ( f, "invLtq 57\n" );      put_hex_n ( f, invLtq, PART_LONG );
+    fprintf ( f, "MinVal 57\n" );      put_hex_n ( f, MinVal, PART_LONG );
+    fprintf ( f, "Loudness 57\n" );    put_hex_n ( f, Loudness, PART_LONG );
+    fprintf ( f, "SPRD 3249\n" );      put_hex_n ( f, (const float*) SPRD, PART_LONG * PART_LONG );
+    scalars [0] = O_MAX; scalars [1] = O_MIN; scalars [2] = FAC1; scalars [3] = FAC2;
+    fprintf ( f, "scalars 4\n" );      put_hex_n ( f, scalars, 4 );
+    fclose ( f );
+    return 0;
+}
 
 static int
 mode_tables ( const char* outdir )
@@ -325,21 +528,9 @@ mode_tables ( const char* outdir )
     /* Per-configuration psychoacoustic tables. */
     for ( c = 0; c < NCONFIGS; c++ ) {
         PsyModel m;
-        float scalars [4];
         config_init ( &m, &CONFIGS [c] );
         snprintf ( path, sizeof path, "%s/psy_%s.txt", outdir, CONFIGS [c].name );
-        f = fopen ( path, "w" );
-        if ( !f ) { perror ( path ); return 1; }
-        fprintf ( f, "max_band %d\n", m.Max_Band );
-        fprintf ( f, "fftLtq 512\n" );     put_hex_n ( f, fftLtq, 512 );
-        fprintf ( f, "partLtq 57\n" );     put_hex_n ( f, partLtq, PART_LONG );
-        fprintf ( f, "invLtq 57\n" );      put_hex_n ( f, invLtq, PART_LONG );
-        fprintf ( f, "MinVal 57\n" );      put_hex_n ( f, MinVal, PART_LONG );
-        fprintf ( f, "Loudness 57\n" );    put_hex_n ( f, Loudness, PART_LONG );
-        fprintf ( f, "SPRD 3249\n" );      put_hex_n ( f, (const float*) SPRD, PART_LONG * PART_LONG );
-        scalars [0] = O_MAX; scalars [1] = O_MIN; scalars [2] = FAC1; scalars [3] = FAC2;
-        fprintf ( f, "scalars 4\n" );      put_hex_n ( f, scalars, 4 );
-        fclose ( f );
+        if ( write_psy_dump ( path, &m ) ) return 1;
     }
     printf ( "tables: %d configs + kernels\n", NCONFIGS );
     return 0;
@@ -727,6 +918,218 @@ mode_ms ( const char* outdir )
 }
 
 /* ------------------------------------------------------------------ */
+/* J.2 modes: bases, selfcheck, frac                                   */
+/* ------------------------------------------------------------------ */
+
+static const double J2_RATES [4] = { 44100.0, 48000.0, 37800.0, 32000.0 };
+
+static uint32_t
+j2_bits ( float x )
+{
+    uint32_t u;
+    memcpy ( &u, &x, sizeof u );
+    return u;
+}
+
+/* bases: the40 f64 ATH base arrays -> outdir/psy_bases.txt. */
+static int
+mode_bases ( const char* outdir )
+{
+    char path [4096];
+    FILE* f;
+    unsigned flags [16];
+    int nf = 0, q, i, r;
+
+    /* Derive the distinct EarModelFlags from the profile rows themselves
+     * (no hand-maintained list): SetQualityParams selects the flag
+     * discretely from the integer quality row. */
+    for ( q = 0; q <= 10; q++ ) {
+        PsyModel m;
+        memset ( &m, 0, sizeof m );
+        Init_Psychoakustik ( &m );
+        SetQualityParams ( &m, (float) q );
+        for ( i = 0; i < nf; i++ )
+            if ( flags [i] == m.EarModelFlag ) break;
+        if ( i == nf ) flags [nf++] = m.EarModelFlag;
+    }
+    if ( nf != 10 ) {
+        fprintf ( stderr, "bases: expected10 profile EarModelFlags, got %d\n", nf );
+        return 1;
+    }
+
+    snprintf ( path, sizeof path, "%s/psy_bases.txt", outdir );
+    f = fopen ( path, "w" );
+    if ( !f ) { perror ( path ); return 1; }
+    fprintf ( f, "# psy_bases.txt - ATH base arrays (J.2); generated by\n" );
+    fprintf ( f, "# `extract_psy_oracle bases <outdir>` from the pinned scalar C reference\n" );
+    fprintf ( f, "# (-O0 -ffp-contract=off -DFAST_MATH -DCVD_FASTLOG, Apple/libm oracle).\n" );
+    fprintf ( f, "# Each value is `tmp` (f64) inside psy_tab.c Ruhehoerschwelle AFTER the\n" );
+    fprintf ( f, "# EarModelFlag roll-off subtraction and BEFORE mind(tmp, Ltq_max), written\n" );
+    fprintf ( f, "# as16-hex-digit IEEE-754 bit patterns.4 rates x %d flags x 512 values.\n", nf );
+    for ( r = 0; r < 4; r++ ) {
+        fprintf ( f, "rate %d\n", (int) J2_RATES [r] );
+        for ( i = 0; i < nf; i++ ) {
+            double base [512];
+            ruhe_base ( flags [i], (float) J2_RATES [r], INT_MAX, base );
+            fprintf ( f, "flag %u\n", flags [i] );
+            put_hex64_n ( f, base, 512 );
+        }
+    }
+    fclose ( f );
+    printf ( "bases:4 rates x %d flags x512 f64 -> %s\n", nf, path );
+    return 0;
+}
+
+#define NBASE_MAX 64
+typedef struct {
+    double   rate;
+    unsigned flag;
+    double   v [512];
+} base_entry;
+
+/* Parses psy_bases.txt back into memory (the exact artifact the Rust
+ * transcription reads, so self-check covers parse + tail + compare). */
+static int
+load_bases ( const char* outdir, base_entry* out, int* n_out )
+{
+    char path [4096], line [128];
+    FILE* f;
+    double cur_rate = -1.0;
+    int have_rate = 0, n = 0;
+
+    snprintf ( path, sizeof path, "%s/psy_bases.txt", outdir );
+    f = fopen ( path, "r" );
+    if ( !f ) { perror ( path ); return -1; }
+    while ( fgets ( line, sizeof line, f ) ) {
+        if ( line [0] == '#' || line [0] == '\n' ) continue;
+        if ( strncmp ( line, "rate ", 5 ) == 0 ) {
+            cur_rate = atof ( line + 5 );
+            have_rate = 1;
+        } else if ( strncmp ( line, "flag ", 5 ) == 0 ) {
+            int k;
+            if ( !have_rate || n >= NBASE_MAX ) { fclose ( f ); return -1; }
+            out [n].rate = cur_rate;
+            out [n].flag = (unsigned) strtoul ( line + 5, NULL, 10 );
+            for ( k = 0; k < 512; k++ ) {
+                uint64_t u;
+                if ( !fgets ( line, sizeof line, f ) ) { fclose ( f ); return -1; }
+                u = strtoull ( line, NULL, 16 );
+                memcpy ( &out [n].v [k], &u, 8 );
+            }
+            n++;
+        } else {
+            fclose ( f );
+            return -1;
+        }
+    }
+    fclose ( f );
+    *n_out = n;
+    return 0;
+}
+
+/* selfcheck: for all44 integer configs plus the23 J.2 fractional oracle
+ * pairs, reconstruct fftLtq/partLtq/invLtq from the WRITTEN base dump and
+ * require bit equality with the live production Init_Psychoakustiktabellen
+ * output (the production equivalent of the experiment's72/72 check; here
+ *67 configs because the committed fractional corpus has23 pairs). */
+static int
+mode_selfcheck ( const char* outdir )
+{
+    base_entry bases [NBASE_MAX];
+    int nb = 0, c, ok = 0, bad = 0;
+
+    if ( load_bases ( outdir, bases, &nb ) != 0 ) {
+        fprintf ( stderr, "selfcheck: cannot load psy_bases.txt (run `bases` first)\n" );
+        return 1;
+    }
+    printf ( "selfcheck: loaded %d base arrays\n", nb );
+
+    for ( c = 0; c < NCONFIGS + NFRACS; c++ ) {
+        config_t cfg;
+        PsyModel m;
+        const double* base = NULL;
+        float fft [512], part [PART_LONG], inv [PART_LONG];
+        int n, diffs = 0;
+
+        if ( c < NCONFIGS ) cfg = CONFIGS [c];
+        else                cfg = FRACS [c - NCONFIGS];
+        config_init ( &m, &cfg );
+
+        for ( n = 0; n < nb; n++ )
+            if ( bases [n].rate == (double) m.SampleFreq
+              && bases [n].flag == m.EarModelFlag ) {
+                base = bases [n].v;
+                break;
+            }
+        if ( !base ) {
+            fprintf ( stderr, "selfcheck FAIL %s: no base for rate %g flag %u\n",
+                      cfg.name, cfg.rate, m.EarModelFlag );
+            bad++;
+            continue;
+        }
+        ruhe_tail ( base, (int) m.Ltq_offset, (int) m.Ltq_max, fft, part, inv );
+
+        for ( n = 0; n < 512; n++ )
+            if ( j2_bits ( fft [n] ) != j2_bits ( fftLtq [n] ) ) {
+                if ( diffs == 0 )
+                    fprintf ( stderr, "selfcheck FAIL %s fftLtq[%d]: prod=%08x mine=%08x\n",
+                              cfg.name, n, j2_bits ( fftLtq [n] ), j2_bits ( fft [n] ) );
+                diffs++;
+            }
+        for ( n = 0; n < PART_LONG; n++ )
+            if ( j2_bits ( part [n] ) != j2_bits ( partLtq [n] ) ) diffs++;
+        for ( n = 0; n < PART_LONG; n++ )
+            if ( j2_bits ( inv [n] ) != j2_bits ( invLtq [n] ) ) diffs++;
+
+        if ( diffs ) bad++;
+        else         ok++;
+    }
+    printf ( "selfcheck: %d/%d configs reconstruct fft/part/inv bit-exactly (%d failed)\n",
+             ok, NCONFIGS + NFRACS, bad );
+    return bad ? 1 : 0;
+}
+
+/* Prints the `params` line (same key layout as the J.2 experiment) so the
+ * committed fractional params oracle can be captured verbatim. */
+static void
+print_params_line ( const char* qin, float qual, const PsyModel* m )
+{
+    float qc = clip ( qual, 0., 10. );
+    printf ( "params qin=%s qf_bits=%08x int_part=%d MainQual=%d FullQual=%.9g "
+             "tmn=%08x nmt=%08x bw=%08x pns=%08x shortthr=%08x transdet=%08x "
+             "varltq=%08x off=%08x off_i=%d lmax=%08x lmax_i=%d ear=%u "
+             "minval_choice=%d minsmr=%08x tmpmask=%d cvd=%d ms=%d ns=%u comb=%d\n",
+             qin, j2_bits ( qual ), (int) qc, m->MainQual, m->FullQual,
+             j2_bits ( m->TMN ), j2_bits ( m->NMT ), j2_bits ( m->BandWidth ),
+             j2_bits ( m->PNS ), j2_bits ( m->ShortThr ), j2_bits ( m->TransDetect ),
+             j2_bits ( m->varLtq ), j2_bits ( m->Ltq_offset ), (int) m->Ltq_offset,
+             j2_bits ( m->Ltq_max ), (int) m->Ltq_max,
+             m->EarModelFlag, m->MinValChoice, j2_bits ( m->minSMR ),
+             (int) m->tmpMask_used, (int) m->CVD_used, (int) m->MS_Channelmode,
+             (unsigned) m->NS_Order, (int) m->CombPenalities );
+}
+
+/* frac: one fractional (quality, rate) dump + params line on stdout. */
+static int
+mode_frac ( const char* qstr, const char* rstr, const char* outdir )
+{
+    config_t c;
+    PsyModel m;
+    char path [4096];
+    float qual = (float) atof ( qstr );
+
+    c.name = "-";
+    c.qual = qual;
+    c.rate = atof ( rstr );
+    config_init ( &m, &c );
+    snprintf ( path, sizeof path, "%s/psy_q%s-%s.txt", outdir, qstr, rstr );
+    if ( write_psy_dump ( path, &m ) ) return 1;
+    print_params_line ( qstr, qual, &m );
+    fprintf ( stderr, "frac: wrote %s\n", path );
+    return 0;
+}
+
+/* ------------------------------------------------------------------ */
 /* main                                                                */
 /* ------------------------------------------------------------------ */
 
@@ -737,7 +1140,8 @@ main ( int argc, char** argv )
     const char* outdir;
 
     if ( argc < 3 ) {
-        fprintf ( stderr, "usage: %s tables|fft|model|ms <outdir>\n", argv [0] );
+        fprintf ( stderr, "usage: %s tables|fft|model|ms|bases|selfcheck <outdir> "
+                          "| frac <qual> <rate> <outdir>\n", argv [0] );
         return 2;
     }
     mode = argv [1];
@@ -748,6 +1152,15 @@ main ( int argc, char** argv )
     if ( strcmp ( mode, "math" ) == 0 )   return mode_math ( outdir );
     if ( strcmp ( mode, "model" ) == 0 )  return mode_model ( outdir );
     if ( strcmp ( mode, "ms" ) == 0 )     return mode_ms ( outdir );
+    if ( strcmp ( mode, "bases" ) == 0 )     return mode_bases ( outdir );
+    if ( strcmp ( mode, "selfcheck" ) == 0 ) return mode_selfcheck ( outdir );
+    if ( strcmp ( mode, "frac" ) == 0 ) {
+        if ( argc != 5 ) {
+            fprintf ( stderr, "usage: %s frac <qual> <rate> <outdir>\n", argv [0] );
+            return 2;
+        }
+        return mode_frac ( argv [2], argv [3], argv [4] );
+    }
 
     fprintf ( stderr, "unknown mode '%s'\n", mode );
     return 2;

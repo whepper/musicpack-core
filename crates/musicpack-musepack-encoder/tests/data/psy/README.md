@@ -23,7 +23,8 @@ cc -O0 -ffp-contract=off -std=gnu11 -DFAST_MATH -DCVD_FASTLOG \
    -I <reference>/codec/include -I <reference>/codec/libmpcpsy \
    extract_psy_oracle.c \
    <reference>/build/codec/libmpcpsy/libmpcpsy.a -lm -o /tmp/extract_psy_oracle
-/tmp/extract_psy_oracle tables|fft|math|model|ms .
+/tmp/extract_psy_oracle tables|fft|math|model|ms|bases|selfcheck .
+/tmp/extract_psy_oracle frac <qual> <rate> .
 ```
 
 ## Files
@@ -37,6 +38,43 @@ cc -O0 -ffp-contract=off -std=gnu11 -DFAST_MATH -DCVD_FASTLOG \
 | `rdft2048.txt`, `cepstrum2048.txt` | FFT primitives |
 | `powspec{256,1024,2048}_k<n>.txt`, `polar1024_k<n>.txt` | windowed spectra |
 | `kernels.txt`, `psy_<config>.txt` | frozen numerical tables (hex bit patterns) |
+| `psy_bases.txt` | J.2 ATH base arrays: `4 rates x 10 EarModelFlags x 512` `f64` words (16 hex digits each) |
+| `psy_q<qual>-<rate>.txt` (fractional `<qual>`) | J.2 fractional table oracles, same layout as the integer dumps |
+| `fractional_params.txt` | J.2 `params` oracle: one C-generated line per fractional quality (hex bit patterns) |
+
+## J.2: ATH bases and fractional oracles
+
+`psy_bases.txt` freezes the only libm-heavy, quality-dependent part of the
+reference psychoacoustic path: for each `(sample rate, EarModelFlag)` pair it
+stores `512` `f64` values of `tmp` **inside** `psy_tab.c`'s
+`Ruhehoerschwelle`, captured after the `EarModelFlag` roll-off subtraction and
+**before** `mind(tmp, Ltq_max)` / `+= Ltq_offset - 23` / `POW10`. The flag set
+(`300,400,430,440,550,560,570,580,590,599`) is derived by the extractor from
+the profile rows themselves. The remaining tail steps depend only on values
+derived from the discrete profile row (`(int)Ltq_offset`, `(int)Ltq_max`), so
+the deterministic Rust path in `src/psy/computed.rs` reconstructs `fftLtq`,
+`partLtq` and `invLtq` for **any** finite `f32` quality from these bases.
+
+Regeneration (same pinned environment and build line as above):
+
+```sh
+/tmp/extract_psy_oracle bases .       # rewrites psy_bases.txt
+/tmp/extract_psy_oracle selfcheck .   # must report67/67 (44 integer +23 fractional)
+python3 tools/gen_psy_tables.py       # transcribes bases into src/psy/frozen.rs (append-only)
+cargo fmt
+```
+
+`selfcheck` re-reads the **written** `psy_bases.txt`, applies the tail, and
+requires bit equality with the live production
+`Init_Psychoakustiktabellen` output for all `44` integer configs plus the `23`
+fractional oracle pairs — the production equivalent of the J.2 experiment's
+reconstruction check.
+
+The `psy_q<qual>-<rate>.txt` fractional dumps (produced by `frac` mode; never
+inputs to `gen_psy_tables.py`, whose `CONFIGS` list stays the44 integers) are
+committed test oracles: `psy::computed`'s unit tests require the computed
+tables to match them bit-for-bit, and `fractional_params.txt` pins the C
+profile-selection/interpolation bits consumed by `tests/encoder_fractional.rs`.
 
 ### Model record layout (per frame, all `f32le`)
 

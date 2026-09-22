@@ -165,10 +165,27 @@ pub struct PsychoacousticModel {
 impl PsychoacousticModel {
     /// Builds the model for a `(quality, sample rate)` pair.
     ///
-    /// Only the frozen configurations are supported; an unsupported pair is an
+    /// Integer quality pairs resolve to their frozen C-oracle tables
+    /// (unchanged J.1 behaviour); every other finite quality at an SV8 rate
+    /// is computed deterministically by [`super::computed`] (J.2).
+    /// Non-finite qualities are [`EncoderError::NonFiniteQuality`]; rates
+    /// outside the four SV8 rates remain
     /// [`EncoderError::UnsupportedPsyConfig`].
     pub fn new(qual: f32, sample_rate: f32) -> Result<Self, EncoderError> {
-        let bits = frozen_psy_tables(qual, sample_rate)
+        if !qual.is_finite() {
+            return Err(EncoderError::NonFiniteQuality(qual));
+        }
+        // Frozen oracle first (the44 integer configs keep their frozen
+        // tables as permanent regression oracles), computed path only when
+        // the lookup misses.
+        let frozen_bits = frozen_psy_tables(qual, sample_rate);
+        let computed_bits = if frozen_bits.is_none() {
+            super::computed::psy_tables(qual, sample_rate)
+        } else {
+            None
+        };
+        let bits = frozen_bits
+            .or(computed_bits.as_ref())
             .ok_or(EncoderError::UnsupportedPsyConfig { qual, sample_rate })?;
         Ok(Self {
             params: PsyParams::from_quality(qual),

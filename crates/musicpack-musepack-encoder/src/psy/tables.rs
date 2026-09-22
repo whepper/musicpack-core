@@ -463,15 +463,16 @@ const MATRIX: [(u32, u32, &frozen::PsyTablesBits); 44] = [
 /// The frozen set covers the complete **integer SV8 quality matrix** of the
 /// reference `mpcenc`: integer qualities `0..=10` at 44100, 48000, 37800 and
 /// 32000 Hz — 44 configurations total. Quality and rate are matched by exact
-/// `f32` bit equality, so anything else (fractional qualities such as `5.5`,
-/// out-of-range qualities, other rates) returns `None` and the caller fails
-/// closed with [`crate::error::EncoderError::UnsupportedPsyConfig`].
+/// `f32` bit equality, so any other pair returns `None`; the caller then
+/// falls back to the deterministic computed path
+/// ([`super::computed`], J.2) for finite qualities at an SV8 rate, or fails
+/// closed with [`crate::error::EncoderError::UnsupportedPsyConfig`] for
+/// non-SV8 rates.
 ///
-/// Fractional-quality parity (the C encoder interpolates the profile and
-/// clips out-of-range qualities) is a **separately deferred parity slice
-/// (J.2)**; see `PSYCHOACOUSTIC_CONTRACT.md` §10. Nothing here reinterprets
-/// quality: each pair maps to the tables the C oracle produced for exactly
-/// that pair.
+/// The lookup itself must stay exact-bit: these frozen tables are the
+/// permanent C-oracle regression oracles the computed path is checked
+/// against (see `psy::computed`'s `computed_tables_match_the44_frozen_...`),
+/// and there is no quantization, rounding or fractional grid anywhere.
 #[must_use]
 pub fn frozen_psy_tables(qual: f32, sample_rate: f32) -> Option<&'static frozen::PsyTablesBits> {
     let q = qual.to_bits();
@@ -594,19 +595,20 @@ mod tests {
         );
     }
 
-    /// Anything outside the integer matrix must keep failing closed — in
-    /// particular the deliberately deferred J.2 surfaces: fractional quality,
-    /// out-of-range quality (C would clip; Rust rejects before clipping), and
-    /// non-SV8 rates. This pins the J.1/J.2 boundary.
+    /// Anything outside the integer matrix keeps missing the *frozen*
+    /// lookup — exact `f32` bit equality, no quantization, no fractional
+    /// grid (J.1/J.2 boundary pin): fractional/out-of-range qualities take
+    /// the computed path (`psy::computed`) instead, and non-SV8 rates stay
+    /// rejected end to end.
     #[test]
-    fn out_of_matrix_pairs_fail_closed() {
+    fn frozen_lookup_requires_exact_integer_matrix_pairs() {
         let rejected: &[(f32, f32)] = &[
-            (5.5, 44100.0),       // fractional (J.2)
-            (4.25, 44100.0),      // fractional, the C "centesimal" example (J.2)
-            (6.0000005, 44100.0), // not the exact integer bit pattern (J.2)
-            (11.0, 44100.0),      // C clips to q10 (J.2 clip parity)
-            (-1.0, 44100.0),      // C clips to q0 (J.2 clip parity)
-            (5.0, 96000.0),       // not an SV8 rate
+            (5.5, 44100.0),       // fractional -> computed path
+            (4.25, 44100.0),      // the C "centesimal" example -> computed path
+            (6.0000005, 44100.0), // not the exact integer bit pattern
+            (11.0, 44100.0),      // C clips to q10 -> computed path
+            (-1.0, 44100.0),      // C clips to q0 -> computed path
+            (5.0, 96000.0),       // not an SV8 rate (fails closed everywhere)
             (5.0, 22050.0),       // not an SV8 rate
             (8.0, 44101.0),       // near-miss rate
         ];
