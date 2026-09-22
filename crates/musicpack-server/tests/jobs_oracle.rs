@@ -5,7 +5,8 @@
 //! identical database effects (verify verdicts persisted per package).
 //!
 //! Fixture: one healthy package, one with an unreferenced extra file
-//! (verify → warning), one with a missing audio file (verify →
+//! (verify → warning on unix; clean on Windows, where the reference skips
+//! the unreferenced-file walk), one with a missing audio file (verify →
 //! checksum-failed), one malformed (invalid — excluded from jobs).
 //! The setup scan is lightweight (statuses `unverified`), so the verify
 //! job observably upgrades every verdict. Requires
@@ -45,8 +46,9 @@ fn real_mpc() -> Vec<u8> {
     .unwrap()
 }
 
-/// good (verify→valid) + warn (unreferenced extra → warning) + thin
-/// (missing audio → checksum-failed) + broken (invalid, excluded).
+/// good (verify→valid) + warn (unreferenced extra → warning on unix,
+/// valid on Windows) + thin (missing audio → checksum-failed) + broken
+/// (invalid, excluded).
 fn build_library(lib: &std::path::Path) {
     let good = lib.join("good.mpack");
     let mpc = write_file(&good, "audio/01.mpc", &real_mpc());
@@ -294,10 +296,20 @@ fn verify_job_updates_statuses_identically() {
     }
     let final_r = wait_done(&env, false, "verify");
     // Rust pins: 3 candidates (broken is invalid and excluded), one each
-    // passed / warnings / failed, and the job itself succeeded.
+    // passed / warnings / failed, and the job itself succeeded. On Windows
+    // the unreferenced-file walk is skipped (reference-matching), so the
+    // warn fixture verifies clean there: 2 passed, 0 warnings.
     assert_eq!(util::json_int(&final_r, "packagesVerified"), 3);
-    assert_eq!(util::json_int(&final_r, "passed"), 1);
-    assert_eq!(util::json_int(&final_r, "warnings"), 1);
+    #[cfg(unix)]
+    {
+        assert_eq!(util::json_int(&final_r, "passed"), 1);
+        assert_eq!(util::json_int(&final_r, "warnings"), 1);
+    }
+    #[cfg(not(unix))]
+    {
+        assert_eq!(util::json_int(&final_r, "passed"), 2);
+        assert_eq!(util::json_int(&final_r, "warnings"), 0);
+    }
     let (scan_block, verify_block) = split_blocks(&final_r);
     assert_eq!(util::json_int(verify_block, "failed"), 1);
     assert_eq!(util::json_int(verify_block, "jobFailed"), 0);
@@ -338,17 +350,30 @@ fn verify_job_updates_statuses_identically() {
         assert_eq!(rows_r, rows_c, "verify verdicts differ between databases");
     }
     // Independent Rust pins (order by id == fixture creation order is not
-    // guaranteed; assert the multiset of verdicts instead).
+    // guaranteed; assert the multiset of verdicts instead). On Windows the
+    // warn fixture verifies clean (no unreferenced-file walk), so its
+    // verdict is valid there instead of warning.
     let mut verdicts: Vec<(String, String)> = rows_r
         .iter()
         .map(|(_, s, v)| (s.clone(), v.clone()))
         .collect();
     verdicts.sort();
+    #[cfg(unix)]
     let expected: Vec<(String, String)> = [
         ("checksum-failed", "checksum-failed"),
         ("invalid", "unverified"),
         ("valid", "valid"),
         ("warning", "warning"),
+    ]
+    .iter()
+    .map(|(a, b)| (a.to_string(), b.to_string()))
+    .collect();
+    #[cfg(not(unix))]
+    let expected: Vec<(String, String)> = [
+        ("checksum-failed", "checksum-failed"),
+        ("invalid", "unverified"),
+        ("valid", "valid"),
+        ("valid", "valid"),
     ]
     .iter()
     .map(|(a, b)| (a.to_string(), b.to_string()))
