@@ -30,6 +30,16 @@
 //!   `cover|front|folder` × `jpg|jpeg|png` (root before disc dirs, then
 //!   name order, then extension order), `booklet.pdf`, `*.lrc` sidecars,
 //!   and `*.txt`/`*.md` extras.
+//! * Embedded artwork (FLAC `PICTURE` blocks, the APEv2 front cover) is
+//!   *discovered*, not extracted: an external cover claims the `front`
+//!   role first; embedded pictures then fill the roles still free
+//!   (reference semantics: first per role, tracks in final order, blocks
+//!   in file order), emitted front-role first. Only signature-valid
+//!   JPEG/PNG payloads qualify, and reads are best-effort — malformed
+//!   embedded metadata contributes no artwork instead of failing the
+//!   scan. The bytes are extracted at staging by the existing pipeline
+//!   (`crate::pipeline::stage_artwork` via `crate::artwork`), so the
+//!   downstream builder never learns where artwork came from.
 //! * Tags: FLAC → Vorbis comments, `.mpc` → trailing APEv2 text items,
 //!   WAV → none (the reference scan reads none either). Tag reads are
 //!   **best-effort**: a tag failure leaves the file untagged rather than
@@ -58,9 +68,9 @@
 //! * No stream probing: per-track `codec`/`sampleRate`/`duration` are
 //!   derived facts the pipeline re-derives at build; sample-rate and
 //!   channel support is enforced fail-closed by the encode stage.
-//! * No embedded-artwork extraction (FLAC `PICTURE`, APEv2 cover art) —
-//!   external cover files only; embedded extraction is a separate slice
-//!   (`docs/author-pipeline.md` §9 lists it as fail-closed today).
+//! * No embedded-artwork *byte extraction*: discovery only reports
+//!   embedded entries (`embedded`/`sourceAudio`); staging extracts them
+//!   (`docs/author-pipeline.md` §3), keeping one artwork path.
 //! * No resampling, downmixing, transcoding, hashing or MusicBrainz
 //!   lookup (identify stays an explicit user action).
 //! * No `waveformAnalysis`/`identity`/`openedFrom` blocks: absent means
@@ -73,6 +83,7 @@ use musicpack_core::audio::{flac, musepack};
 use musicpack_core::format::manifest::ReleaseType;
 use musicpack_core::json::{self, Value};
 
+use crate::artwork;
 use crate::error::{AuthorError, Result};
 use crate::inspect::{object, object_all, s};
 
@@ -103,6 +114,8 @@ struct Found {
 struct ScannedTrack {
     /// Relative path (the draft's `audioPath`).
     rel: String,
+    /// Absolute path (embedded-artwork extraction).
+    abs: PathBuf,
     /// Parent directory relative path (lyric sidecar matching).
     parent: String,
     /// Original-case file stem (lyric sidecar matching).
@@ -392,7 +405,17 @@ fn members_empty(value: &Value) -> bool {
 }
 
 /// Builds the draft JSON value for a scanned album.
-fn draft_from_tracks(root: &Path, tracks: &[ScannedTrack], found: &[Found]) -> Value {
+///
+/// `cover` is the already-selected external front cover (its entry comes
+/// first); `embedded` carries the embedded-artwork entries in claim
+/// order (front-role first — see [`embedded_artwork`]).
+fn draft_from_tracks(
+    root: &Path,
+    tracks: &[ScannedTrack],
+    found: &[Found],
+    cover: Option<&Found>,
+    embedded: &[Value],
+) -> Value {
     let root_str = root.to_string_lossy().into_owned();
     let dir_name = root
         .file_name()
@@ -481,16 +504,15 @@ fn draft_from_tracks(root: &Path, tracks: &[ScannedTrack], found: &[Found]) -> V
     );
 
     // ---- assets ------------------------------------------------------
-    let cover = found
-        .iter()
-        .filter(|f| matches!(asset_kind(&f.name), Some(Asset::Cover)))
-        .min_by(|a, b| cover_rank(a).cmp(&cover_rank(b)));
-    let artwork = Value::Array(
-        cover
-            .map(|f| object_all(vec![("role", s("front")), ("path", s(&f.rel))]))
-            .into_iter()
-            .collect(),
-    );
+    // Artwork: the external front cover first (unchanged selection
+    // rules), then the embedded entries — front-role first, then the
+    // other claimed roles in (track, block) order.
+    let mut artwork_items: Vec<Value> = cover
+        .map(|f| object_all(vec![("role", s("front")), ("path", s(&f.rel))]))
+        .into_iter()
+        .collect();
+    artwork_items.extend(embedded.iter().cloned());
+    let artwork = Value::Array(artwork_items);
 
     let paths_of = |kind: Asset| -> Vec<&Found> {
         found
@@ -555,6 +577,57 @@ fn sort_key(track: &ScannedTrack) -> (i32, i32, &str) {
     (track.disc, number, &track.rel)
 }
 
+/// Embedded-artwork draft entries for the album — the reference's
+/// selection semantics (`import`/`inspect`: *local cover files win;
+/// otherwise FLAC pictures and APEv2 cover art fill missing roles, first
+/// per role*):
+///
+/// * the external cover, when present, has already claimed `front`
+///   (`front_claimed`), so embedded artwork never overrides it;
+/// * remaining roles are claimed walking the tracks in final order and
+///   each file's pictures in block/item order — deterministic, never a
+///   function of filesystem traversal order;
+/// * front-role entries are emitted before other roles so every consumer
+///   (previews included) sees the front cover first;
+/// * only signature-valid JPEG/PNG payloads of non-zero length qualify,
+///   and a structurally malformed read contributes nothing instead of
+///   failing the scan (best-effort, like tag reads).
+fn embedded_artwork(tracks: &[ScannedTrack], front_claimed: bool) -> Vec<Value> {
+    const ROLES: [&str; 5] = ["front", "back", "booklet-page", "medium", "other"];
+    let mut claimed: Vec<&str> = Vec::new();
+    if front_claimed {
+        claimed.push("front");
+    }
+    let (mut front, mut others) = (Vec::new(), Vec::new());
+    for track in tracks {
+        if ROLES.iter().all(|role| claimed.contains(role)) {
+            break; // every artwork role already claimed
+        }
+        let Ok(images) = artwork::read_embedded(&track.abs) else {
+            continue; // malformed embedded metadata: best-effort skip
+        };
+        for image in images {
+            if claimed.contains(&image.role) {
+                continue; // first claim per role wins
+            }
+            let entry = object(vec![
+                ("role", Some(s(image.role))),
+                ("embedded", Some(Value::Bool(true))),
+                ("sourceAudio", Some(s(&track.rel))),
+                ("mime", image.mime.as_deref().map(s)),
+            ]);
+            claimed.push(image.role);
+            if image.role == "front" {
+                front.push(entry);
+            } else {
+                others.push(entry);
+            }
+        }
+    }
+    front.append(&mut others);
+    front
+}
+
 /// Scans a fresh album source directory and returns authoring draft JSON.
 ///
 /// Fails closed with [`AuthorError::Io`] when `dir` cannot be resolved,
@@ -613,6 +686,7 @@ pub fn source_to_draft(dir: &Path) -> Result<String> {
             };
             ScannedTrack {
                 rel: f.rel.clone(),
+                abs: f.abs.clone(),
                 parent: f.parent.clone(),
                 stem,
                 disc,
@@ -667,6 +741,14 @@ pub fn source_to_draft(dir: &Path) -> Result<String> {
         }
     }
 
-    let value = draft_from_tracks(&root, &tracks, &found);
+    // ---- artwork: the external cover claims `front` first, then the
+    // embedded-artwork claims fill the remaining roles ----------------
+    let cover = found
+        .iter()
+        .filter(|f| matches!(asset_kind(&f.name), Some(Asset::Cover)))
+        .min_by(|a, b| cover_rank(a).cmp(&cover_rank(b)));
+    let embedded = embedded_artwork(&tracks, cover.is_some());
+
+    let value = draft_from_tracks(&root, &tracks, &found, cover, &embedded);
     Ok(json::print_canonical(&value))
 }

@@ -689,12 +689,15 @@ pub fn validate(draft: &Draft) -> ValidationReport {
                 report.errors.push(format!("artwork file not found: {p}"));
             }
         } else if entry.embedded || entry.source_audio.is_some() {
-            if let Some(src) = &entry.source_audio
-                && !source_exists(draft, src)
-            {
-                report
+            match &entry.source_audio {
+                None => report.errors.push(format!(
+                    "embedded artwork for role '{}' has no sourceAudio",
+                    entry.role
+                )),
+                Some(src) if !source_exists(draft, src) => report
                     .errors
-                    .push(format!("embedded artwork source not found: {src}"));
+                    .push(format!("embedded artwork source not found: {src}")),
+                Some(_) => {}
             }
         } else {
             report
