@@ -792,7 +792,7 @@ fn apev2_absent_binary_non_utf8_and_malformed() {
 }
 
 // ---------------------------------------------------------------------
-// Embedded artwork reader: FLAC PICTURE blocks.
+// Embedded artwork readers: FLAC PICTURE blocks and the APEv2 front cover.
 // ---------------------------------------------------------------------
 
 /// A minimal metadata-only FLAC stream: `fLaC` + the given blocks with
@@ -956,4 +956,148 @@ fn flac_metadata_block_count_is_bounded() {
         blocks.push((1, Vec::new()));
     }
     assert!(audio::flac::read_pictures(Box::new(Cursor::new(flac_metadata(&blocks)))).is_err());
+}
+
+#[test]
+fn apev2_front_cover_strips_the_prefix_and_preserves_bytes() {
+    let mut data = b"fake mpc stream bytes".to_vec();
+    data.extend(apev2_bytes(&[
+        ("Title", b"Covered".as_slice(), 0),
+        (
+            "Cover Art (Front)",
+            b"folder.jpg\0\xff\xd8\xff\xe0rest".as_slice(),
+            0x8000_0000, // binary
+        ),
+    ]));
+    let mut cur = Cursor::new(data);
+    let image = audio::musepack::apev2::read_cover_art(&mut cur)
+        .unwrap()
+        .expect("front cover present");
+    assert_eq!(
+        image, b"\xff\xd8\xff\xe0rest",
+        "prefix stripped, bytes exact"
+    );
+
+    // PNG artwork, with the reference's case-insensitive key match.
+    let mut data = b"fake mpc stream bytes".to_vec();
+    data.extend(apev2_bytes(&[(
+        "cover art (front)",
+        b"cover.png\0\x89PNG\r\n\x1a\ntrailing".as_slice(),
+        0x8000_0000,
+    )]));
+    let mut cur = Cursor::new(data);
+    let image = audio::musepack::apev2::read_cover_art(&mut cur)
+        .unwrap()
+        .expect("front cover present");
+    assert_eq!(image, b"\x89PNG\r\n\x1a\ntrailing");
+}
+
+#[test]
+fn apev2_front_cover_selection_and_prefix_variants() {
+    // No tag at all → None, not an error.
+    let mut plain = Cursor::new(b"plain bytes".to_vec());
+    assert!(
+        audio::musepack::apev2::read_cover_art(&mut plain)
+            .unwrap()
+            .is_none()
+    );
+
+    // Legacy value without any NUL: the whole value is the image.
+    let mut data = b"stream".to_vec();
+    data.extend(apev2_bytes(&[(
+        "Cover Art (Front)",
+        b"\xff\xd8\xff-no-prefix".as_slice(),
+        0x8000_0000,
+    )]));
+    let mut cur = Cursor::new(data);
+    assert_eq!(
+        audio::musepack::apev2::read_cover_art(&mut cur).unwrap(),
+        Some(b"\xff\xd8\xff-no-prefix".to_vec())
+    );
+
+    // Only a back cover → None (the reference reads the front item).
+    let mut data = b"stream".to_vec();
+    data.extend(apev2_bytes(&[(
+        "Cover Art (Back)",
+        b"back.png\0\x89PNG\r\n\x1a\n".as_slice(),
+        0x8000_0000,
+    )]));
+    let mut cur = Cursor::new(data);
+    assert!(
+        audio::musepack::apev2::read_cover_art(&mut cur)
+            .unwrap()
+            .is_none()
+    );
+
+    // A text item wearing the front-cover key is not artwork.
+    let mut data = b"stream".to_vec();
+    data.extend(apev2_bytes(&[("Cover Art (Front)", b"\xff\xd8\xff", 0)]));
+    let mut cur = Cursor::new(data);
+    assert!(
+        audio::musepack::apev2::read_cover_art(&mut cur)
+            .unwrap()
+            .is_none()
+    );
+
+    // Several front-cover items: the first in tag order wins.
+    let mut data = b"stream".to_vec();
+    data.extend(apev2_bytes(&[
+        (
+            "Cover Art (Front)",
+            b"first.jpg\0\xff\xd8\xfffirst".as_slice(),
+            0x8000_0000,
+        ),
+        (
+            "Cover Art (Front)",
+            b"second.jpg\0\xff\xd8\xffsecond".as_slice(),
+            0x8000_0000,
+        ),
+    ]));
+    let mut cur = Cursor::new(data);
+    assert_eq!(
+        audio::musepack::apev2::read_cover_art(&mut cur).unwrap(),
+        Some(b"\xff\xd8\xfffirst".to_vec())
+    );
+}
+
+#[test]
+fn apev2_front_cover_fails_closed_on_malformed_tags() {
+    // A footer claiming more items than the tag holds → truncated → Err.
+    let mut item = Vec::new();
+    item.extend_from_slice(&1u32.to_be_bytes()); // value size
+    item.extend_from_slice(&0u32.to_be_bytes()); // flags (text)
+    item.extend_from_slice(b"Title\0");
+    item.extend_from_slice(b"x");
+    let tag_size = (64 + item.len()) as u32; // header + one item + footer
+    let mut f = b"APETAGEX".to_vec();
+    f.extend_from_slice(&2000u32.to_le_bytes());
+    f.extend_from_slice(&tag_size.to_le_bytes());
+    f.extend_from_slice(&5u32.to_le_bytes()); // claims 5 items, holds 1
+    f.extend_from_slice(&0x4000_0000u32.to_le_bytes()); // has-footer, no header
+    f.extend_from_slice(&[0u8; 8]);
+    let mut truncated = b"payload".to_vec();
+    truncated.extend_from_slice(&f);
+    truncated.extend_from_slice(&item);
+    truncated.extend_from_slice(&f);
+    assert!(audio::musepack::apev2::read_cover_art(&mut Cursor::new(truncated)).is_err());
+
+    // An unsupported footer version → Err.
+    let mut bad_version = b"payload".to_vec();
+    let mut f = b"APETAGEX".to_vec();
+    f.extend_from_slice(&4242u32.to_le_bytes());
+    f.extend_from_slice(&32u32.to_le_bytes());
+    f.extend_from_slice(&0u32.to_le_bytes());
+    f.extend_from_slice(&0u32.to_le_bytes());
+    f.extend_from_slice(&[0u8; 8]);
+    bad_version.extend_from_slice(&f);
+    assert!(audio::musepack::apev2::read_cover_art(&mut Cursor::new(bad_version)).is_err());
+
+    // A "file name" prefix beyond the bound is malformed, not an image:
+    // 4097 bytes then the NUL.
+    let mut prefix = vec![b'a'; 4097];
+    prefix.push(0);
+    prefix.extend_from_slice(JPEG_IMAGE);
+    let mut data = b"stream".to_vec();
+    data.extend(apev2_bytes(&[("Cover Art (Front)", &prefix, 0x8000_0000)]));
+    assert!(audio::musepack::apev2::read_cover_art(&mut Cursor::new(data)).is_err());
 }

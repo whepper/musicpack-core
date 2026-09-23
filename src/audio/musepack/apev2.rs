@@ -6,15 +6,19 @@
 //! `flac2mpc` projects an album's tags into a trailing APEv2 tag on the
 //! Musepack stream. The Musepack decoder stops at the stream's end blocks
 //! and never reads that tail, so fresh-album discovery reads it here
-//! directly from the file footer. The reader is deliberately **text-only**:
-//! binary items (embedded cover art) are skipped without buffering, keeping
-//! embedded-artwork extraction a separate, later concern.
+//! directly from the file footer. The reader stays deliberately narrow —
+//! exactly two consumers, no general-purpose APEv2 framework:
 //!
-//! Reading is best-effort for callers: a file without an `APETAGEX` footer
-//! yields an empty list, while a footer that *claims* to be an APEv2 tag
-//! but is structurally inconsistent (bad size, truncation, non-ASCII key)
-//! fails with [`Error::Invalid`](crate::Error::Invalid) so malformed tags
-//! never silently masquerade as untagged.
+//! * [`read_tags`] — the trailing **text** items for discovery;
+//! * [`read_cover_art`] — the single **binary** item embedded-artwork
+//!   extraction needs (`Cover Art (Front)`, the reference's convention).
+//!
+//! Every other binary item is seeked past without buffering. Reading is
+//! best-effort for callers: a file without an `APETAGEX` footer yields an
+//! empty list (resp. `None`), while a footer that *claims* to be an APEv2
+//! tag but is structurally inconsistent (bad size, truncation, non-ASCII
+//! key) fails with [`Error::Invalid`](crate::Error::Invalid) so malformed
+//! tags never silently masquerade as untagged.
 
 use std::io::{Read, Seek, SeekFrom};
 
@@ -32,10 +36,18 @@ const MAX_TAG_BYTES: u64 = 16 * 1024 * 1024;
 /// Item-count bound (APEv2 keys are small; this is three orders of
 /// magnitude above any real tag).
 const MAX_ITEMS: u32 = 4096;
-/// Item flag: the value is binary (cover art, binary data) — skipped.
+/// Item flag: the value is binary (cover art, binary data).
 const ITEM_FLAG_BINARY: u32 = 0x8000_0000;
 /// Footer flag: the tag is preceded by a 32-byte header.
 const FLAG_HAS_HEADER: u32 = 0x8000_0000;
+/// The APEv2 front-cover key (case-insensitive; the reference reads only
+/// this item for embedded artwork).
+const COVER_ART_FRONT: &[u8] = b"cover art (front)";
+/// Bound on the file-name prefix of a cover-art item value. APEv2 stores
+/// a short NUL-terminated file name before the image bytes; anything
+/// longer than this is not a file name, so the item is rejected instead
+/// of guessing where the image starts.
+const COVER_PREFIX_MAX: usize = 4096;
 
 fn io_err(e: std::io::Error) -> Error {
     Error::Io {
@@ -47,19 +59,29 @@ fn u32le(bytes: &[u8]) -> u32 {
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
 }
 
-/// Reads the trailing APEv2 tag of `source` as `(key, value)` text items,
-/// in tag order.
+/// The located item region of a trailing tag.
+struct TagLayout {
+    items_start: u64,
+    items_end: u64,
+    item_count: u32,
+}
+
+/// An item selected by [`collect`]: its key and buffered value.
+struct Item {
+    key: Vec<u8>,
+    value: Vec<u8>,
+}
+
+/// Locates the trailing APEv2 tag of `source`.
 ///
-/// Returns an empty list when the file ends without an `APETAGEX` footer
-/// (the overwhelmingly common case) or ends within one. Keys keep their
-/// original casing; values must be valid UTF-8 (non-UTF-8 text items are
-/// skipped). Binary items are never materialised. A footer that is present
-/// but malformed (unsupported version, out-of-bounds size, truncation,
-/// non-printable key) is an error.
-pub fn read_tags<S: Read + Seek>(source: &mut S) -> Result<Vec<(String, String)>> {
+/// `Ok(None)` when the file ends without an `APETAGEX` footer (the
+/// overwhelmingly common case) or ends within one; `Err` when a footer is
+/// present but structurally inconsistent (unsupported version,
+/// out-of-bounds size).
+fn probe<S: Read + Seek>(source: &mut S) -> Result<Option<TagLayout>> {
     let len = source.seek(SeekFrom::End(0)).map_err(io_err)?;
     if len < FOOTER_LEN {
-        return Ok(Vec::new());
+        return Ok(None);
     }
 
     // The footer is the last 32 bytes.
@@ -69,7 +91,7 @@ pub fn read_tags<S: Read + Seek>(source: &mut S) -> Result<Vec<(String, String)>
     let mut footer = [0u8; FOOTER_LEN as usize];
     source.read_exact(&mut footer).map_err(io_err)?;
     if &footer[0..8] != MAGIC {
-        return Ok(Vec::new()); // no tag
+        return Ok(None); // no tag
     }
 
     let version = u32le(&footer[8..12]);
@@ -98,12 +120,29 @@ pub fn read_tags<S: Read + Seek>(source: &mut S) -> Result<Vec<(String, String)>
     if items_start > items_end {
         return Err(invalid("APEv2 header/items region is inconsistent"));
     }
+    Ok(Some(TagLayout {
+        items_start,
+        items_end,
+        item_count,
+    }))
+}
 
-    source.seek(SeekFrom::Start(items_start)).map_err(io_err)?;
-    let mut pos = items_start;
+/// Walks the tag's items once with the structural bounds enforced for
+/// every item. `want(key, flags)` selects which values are buffered;
+/// unselected values are seeked past untouched. The returned items keep
+/// tag order.
+fn collect<S: Read + Seek>(
+    source: &mut S,
+    layout: &TagLayout,
+    want: impl Fn(&[u8], u32) -> bool,
+) -> Result<Vec<Item>> {
+    source
+        .seek(SeekFrom::Start(layout.items_start))
+        .map_err(io_err)?;
+    let mut pos = layout.items_start;
     let mut out = Vec::new();
-    for _ in 0..item_count {
-        if pos + 8 > items_end {
+    for _ in 0..layout.item_count {
+        if pos + 8 > layout.items_end {
             return Err(invalid("APEv2 item header is truncated"));
         }
         let mut head = [0u8; 8];
@@ -115,7 +154,7 @@ pub fn read_tags<S: Read + Seek>(source: &mut S) -> Result<Vec<(String, String)>
         // Key: printable ASCII, NUL-terminated, 2..=255 bytes.
         let mut key = Vec::new();
         loop {
-            if pos >= items_end || key.len() >= 255 {
+            if pos >= layout.items_end || key.len() >= 255 {
                 return Err(invalid("APEv2 item key is malformed"));
             }
             let mut byte = [0u8; 1];
@@ -134,24 +173,82 @@ pub fn read_tags<S: Read + Seek>(source: &mut S) -> Result<Vec<(String, String)>
         }
 
         let value_end = pos + value_size;
-        if value_end > items_end {
+        if value_end > layout.items_end {
             return Err(invalid("APEv2 item value is truncated"));
         }
-        if item_flags & ITEM_FLAG_BINARY == 0 {
-            let mut buf = vec![0u8; value_size as usize];
-            source.read_exact(&mut buf).map_err(io_err)?;
-            pos = value_end;
-            // Text items are UTF-8 by spec; anything else is skipped.
-            if let Ok(value) = String::from_utf8(buf) {
-                out.push((String::from_utf8_lossy(&key).into_owned(), value));
-            }
+        if want(&key, item_flags) {
+            let mut value = vec![0u8; value_size as usize];
+            source.read_exact(&mut value).map_err(io_err)?;
+            out.push(Item { key, value });
         } else {
-            // Binary item (e.g. cover art): skip its bytes untouched.
+            // Unselected item (e.g. a binary item for the text reader):
+            // skip its bytes untouched.
             source
                 .seek(SeekFrom::Current(value_size as i64))
                 .map_err(io_err)?;
-            pos = value_end;
+        }
+        pos = value_end;
+    }
+    Ok(out)
+}
+
+/// Reads the trailing APEv2 tag of `source` as `(key, value)` text items,
+/// in tag order.
+///
+/// Returns an empty list when the file ends without an `APETAGEX` footer
+/// (the overwhelmingly common case) or ends within one. Keys keep their
+/// original casing; values must be valid UTF-8 (non-UTF-8 text items are
+/// skipped). Binary items are never materialised. A footer that is present
+/// but malformed (unsupported version, out-of-bounds size, truncation,
+/// non-printable key) is an error.
+pub fn read_tags<S: Read + Seek>(source: &mut S) -> Result<Vec<(String, String)>> {
+    let Some(layout) = probe(source)? else {
+        return Ok(Vec::new());
+    };
+    let items = collect(source, &layout, |_, flags| flags & ITEM_FLAG_BINARY == 0)?;
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        // Text items are UTF-8 by spec; anything else is skipped.
+        if let Ok(text) = String::from_utf8(item.value) {
+            out.push((String::from_utf8_lossy(&item.key).into_owned(), text));
         }
     }
     Ok(out)
+}
+
+/// Reads the trailing APEv2 tag's **front-cover** binary item
+/// (`Cover Art (Front)` — the reference's embedded-artwork convention)
+/// and returns the image bytes with the APEv2 file-name prefix stripped.
+///
+/// Returns `Ok(None)` when the tag carries no front-cover binary item (or
+/// there is no tag at all); a present-but-malformed tag fails exactly
+/// like [`read_tags`]. The value layout follows APEv2: a NUL-terminated
+/// file name followed by the image bytes; a legacy value without any NUL
+/// is taken as the image whole (the reference does the same). The payload
+/// is returned verbatim — callers validate image signatures; nothing is
+/// decoded or transcoded.
+pub fn read_cover_art<S: Read + Seek>(source: &mut S) -> Result<Option<Vec<u8>>> {
+    let Some(layout) = probe(source)? else {
+        return Ok(None);
+    };
+    let items = collect(source, &layout, |key, flags| {
+        flags & ITEM_FLAG_BINARY != 0 && key.eq_ignore_ascii_case(COVER_ART_FRONT)
+    })?;
+    let Some(item) = items.into_iter().next() else {
+        return Ok(None); // first front-cover item wins; none present
+    };
+    split_cover_prefix(&item.value).map(Some)
+}
+
+/// Splits an APEv2 cover-art value into its image payload: everything
+/// after the first NUL (the file name), or the whole value when the
+/// prefix is absent.
+fn split_cover_prefix(value: &[u8]) -> Result<Vec<u8>> {
+    match value.iter().position(|&b| b == 0) {
+        None => Ok(value.to_vec()),
+        Some(at) if at > COVER_PREFIX_MAX => {
+            Err(invalid("APEv2 cover-art file name prefix is too long"))
+        }
+        Some(at) => Ok(value[at + 1..].to_vec()),
+    }
 }
