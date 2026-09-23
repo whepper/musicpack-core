@@ -37,7 +37,7 @@ command surface the frontend already used:
 | Command | Rust behaviour |
 |---|---|
 | `backend_info` | reports `authorApi = 9`, location `rust` |
-| `inspect_album` | `musicpack_author::inspect::package_to_draft` (`.mpack` dir → draft JSON) |
+| `inspect_album` | `musicpack_author::inspect::open_to_draft` (`.mpack` dir **or fresh album dir** → draft JSON; a regular `manifest.json` picks the branch, as in the reference `inspect`) |
 | `validate_draft` | `pipeline::validate_json` + R3.5 lyric findings |
 | `identify_draft` | host transport + `identify_apply_json` / `identify_candidates_json` |
 | `create_package` | `pipeline::run` (encode + waveform + loudness + build + verify), optional atomic replace; build-time encoding uses the selected `quality` |

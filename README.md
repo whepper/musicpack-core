@@ -251,7 +251,7 @@ crates/musicpack-wasm/    # thin wasm-bindgen binding foundation
 crates/musicpack-musepack-encoder/  # Rust Musepack SV8 encoder (LGPL-2.1-or-later; see its README)
 crates/musicpack-server/  # self-hosted library server (native-only; see docs/server-production.md)
 crates/musicpack-mpc-tools/ # mpc-tools compatibility layer (LGPL-2.1-or-later)
-crates/musicpack-author/ # Rust authoring pipeline (draft -> .mpack/.mpak; see docs/author-pipeline.md)
+crates/musicpack-author/ # Rust authoring pipeline (album scan/draft -> .mpack/.mpak; see docs/author-pipeline.md)
 web/                  # the web player (Svelte 5 + Vite + Playwright; see web/README.md)
 author/               # the Tauri 2 authoring app (Rust pipeline default; see docs/author-runtime.md)
 fuzz/                 # cargo-fuzz targets (excluded from the workspace; nightly)

@@ -60,7 +60,7 @@
 //!   channel support is enforced fail-closed by the encode stage.
 //! * No embedded-artwork extraction (FLAC `PICTURE`, APEv2 cover art) —
 //!   external cover files only; embedded extraction is a separate slice
-//!   (`docs/author-pipeline.md` §8 lists it as fail-closed today).
+//!   (`docs/author-pipeline.md` §9 lists it as fail-closed today).
 //! * No resampling, downmixing, transcoding, hashing or MusicBrainz
 //!   lookup (identify stays an explicit user action).
 //! * No `waveformAnalysis`/`identity`/`openedFrom` blocks: absent means

@@ -74,7 +74,76 @@ musicpack-author build    <draft.json> -o DIR [--mpak FILE] [--quality Q]
                                        [--replace] [--mb-json FILE] [--json]
 ```
 
-## 3. Encoding
+## 3. Source discovery (album directory → draft)
+
+`musicpack-author` turns a conventional album directory into a draft
+(`scan::source_to_draft`). `inspect::open_to_draft` dispatches exactly
+like the reference `inspect`: a regular `manifest.json` means an
+existing package (§ package → draft), anything else is a fresh source
+directory. Discovery reports *what files exist, what their tags say, in
+what order* — validation, encoding, waveform, build, identity and
+verification are the existing, unchanged stages:
+
+```text
+album directory ──scan──► draft JSON ──► §2 boundary ──► existing pipeline
+```
+
+**Walk.** Files at the root and files directly inside disc-named
+subdirectories (`CD1`, `Disc-2`, … — the directory name wins over a
+`DISCNUMBER` tag, as in the reference); other subdirectories and deeper
+nesting are ignored; symlinks are skipped (`lstat` semantics). Audio
+extensions, case-insensitive: `.flac`, `.wav`, `.mpc`. Formats the
+pipeline cannot build (`.ogg`) are *not* discovered — a
+discovered-but-unbuildable draft would only fail later. Assets: one
+deterministic `front` cover from `cover|front|folder` × `jpg|jpeg|png`
+(root before disc dirs, then name, then extension order),
+`booklet.pdf`, `*.lrc`, `*.txt`/`*.md`.
+
+**Tags.** FLAC → Vorbis comments (the core's claxon metadata walk, no
+audio decode; malformed blocks fail closed), `.mpc` → trailing APEv2
+text items (binary items such as cover art are skipped — embedded
+artwork is not extracted here), WAV → none (the reference scan reads
+none either). Tag reads are best-effort: a malformed tag leaves the
+file untagged — filename inference still applies — rather than failing
+discovery. The surface is the MVP mapping the draft model and identify
+consume: album `ALBUM`, `ALBUMARTIST`, `DATE|YEAR`, `GENRE`,
+`RELEASETYPE`/`MUSICBRAINZ_ALBUMTYPE`, label/catalogue, `BARCODE`,
+MusicBrainz release/release-group ids; per track `TITLE`,
+`TRACKNUMBER`, `ARTIST`, `COMPOSER`, `ISRC`, MusicBrainz
+recording/track ids. Album metadata is a first-wins union across the
+tracks in final order (a richer tag on a later file is never shadowed
+by an absent one).
+
+**Numbering and order.** `TRACKNUMBER` (APEv2 `Track`) wins, else the
+filename's leading digits, else the track is unnumbered. A disc with
+any unnumbered **or duplicate** track is renumbered `1..n` in sorted
+order — the reference `import` behaviour; the reference `inspect`
+preserved duplicates for its GUI to surface, but the Rust draft
+validator has no duplicate check (the builder fails closed), so
+discovery normalises instead of deferring a late failure. Sort: disc,
+then track number (unnumbered last), then relative path. Output is
+deterministic: repeated scans of the same tree are byte-identical.
+
+**Not done here** — derived facts and fail-closed concerns stay where
+they were: no stream probing (per-track `codec`/`sampleRate`/
+`duration` hints are re-derived at build; rate/channel support fails
+closed in the encode stage), no embedded-artwork extraction (§9), no
+resampling, downmixing, hashing or MusicBrainz lookup (identify stays
+an explicit user action), and no `waveformAnalysis`/`identity`/
+`openedFrom` blocks (absent means "new draft"; the runtime defaults
+waveforms on).
+
+Intentional divergences from the legacy C scan:
+
+| Area | Difference | Reason |
+|---|---|---|
+| Album artists | fall back to the tracks' `ARTIST` union when no `ALBUMARTIST` exists | the reference produced an invalid `no artist` draft for ordinary rips (its own harness patched albums manually); MusicPack discovers a valid, still-editable draft |
+| Filename titles | never empty (`"01.flac"` → title `"01"`) | the reference yielded an empty-title validation error; discovery stays fail-valid |
+| Extensions | accepted case-insensitively; `.ogg` not discovered | `.FLAC` is common on case-insensitive filesystems; the Rust pipeline cannot build `.ogg` |
+| Walk depth | files directly under disc dirs only | conventional album layouts; the reference's arbitrary depth accepted `CD1/sub/…` edge cases |
+| Duplicates | renumbered at discovery | see numbering above |
+
+## 4. Encoding
 
 Sources: FLAC and integer-PCM WAV (the reference's `encode-draft`
 contract). The source is decoded with the core's native decoders into
@@ -112,7 +181,7 @@ the reference build and its external `flac` decoder; skipped otherwise),
 and for a 24-bit WAV through the wide-PCM differential; the encoder's
 committed corpus remains the authoritative bitstream evidence.
 
-## 4. Waveform and analysis
+## 5. Waveform and analysis
 
 Waveforms are generated from the packaged audio with the core
 `WaveformAccumulator`: `analysis/waveform/<DD>-<TT>.wfm`, `peak-rms-u8`,
@@ -123,7 +192,7 @@ Loudness is **not** re-implemented: the core builder measures per-track and
 album loudness (one concatenated program, `ITU-R BS.1770-5`) from the
 staged audio. `--no-loudness` maps to `LoudnessMode::Omit`.
 
-## 5. MusicBrainz
+## 6. MusicBrainz
 
 Transport is the host's concern; matching is this crate's:
 
@@ -144,7 +213,7 @@ release id or an offline document, and `none` applies nothing.
 The provider is a trait, so tests use a deterministic static provider; the
 Tauri host supplies the live `ureq` transport at R4.3.
 
-## 6. Package creation and `.mpak`
+## 7. Package creation and `.mpak`
 
 The pipeline assembles a
 `musicpack_core::authoring::AuthoringDraft` and calls
@@ -160,7 +229,7 @@ asset (lyrics included) before packing.
 built in a staging directory and swapped in atomically (with rollback); the
 core builder remains a pure constructor, never an in-place editor.
 
-## 7. Legacy runtime boundary
+## 8. Legacy runtime boundary
 
 The Rust pipeline does **not** invoke the C `musicpack` CLI, `mpcenc` or
 `musicpack-sonic`, does not spawn any subprocess, and adds no HTTP client,
@@ -170,7 +239,7 @@ CLI survives only as a non-default development escape hatch
 (`MUSICPACK_AUTHOR_LEGACY=1`) and as a test oracle. See
 `docs/author-runtime.md` and `docs/adr/0012-author-runtime-cutover.md`.
 
-## 8. Intentional differences from the C path
+## 9. Intentional differences from the C path
 
 | Area | Difference | Reason |
 |---|---|---|
