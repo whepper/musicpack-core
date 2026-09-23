@@ -57,6 +57,71 @@ const SUBBANDS: usize = 32;
 /// Samples per subband.
 const SAMPLES: usize = 36;
 
+/// Full-scale divisor for wide PCM: `2^16`.
+///
+/// A left-aligned `i32` sample divided by this lands on the encoder's
+/// ±32768 sample scale (the scale 16-bit input already has natively), so
+/// 16-, 24- and 32-bit sources share one conversion. The division is
+/// evaluated in `f64` — where the exact quotient of a 32-bit integer and
+/// `65536.0` is representable — and then rounded to `f32` exactly once,
+/// which is the reference conversion's rounding point (`f24`/`f32` return
+/// `float` from an exact `double` expression).
+const FULL_SCALE_DIVISOR: f64 = 65536.0;
+
+/// The interleaved PCM slice of one `encode*` call, in either supported
+/// input representation.
+///
+/// Both variants convert per sample to the same reference `f32` value on
+/// the ±32768 scale; the codec pipeline downstream is representation-
+/// agnostic.
+#[derive(Clone, Copy)]
+enum PcmSource<'a> {
+    /// Native interleaved 16-bit samples ([`MusepackEncoder::encode`]).
+    Bits16(&'a [i16]),
+    /// Full-scale left-aligned 32-bit samples
+    /// ([`MusepackEncoder::encode_s32`]).
+    FullScale32(&'a [i32]),
+}
+
+impl PcmSource<'_> {
+    /// Total number of interleaved samples (frames × channels).
+    fn len(&self) -> usize {
+        match self {
+            Self::Bits16(pcm) => pcm.len(),
+            Self::FullScale32(pcm) => pcm.len(),
+        }
+    }
+
+    /// One interleaved sample as `(value, nonzero)`.
+    ///
+    /// `value` is the sample on the encoder's ±32768 scale **before** the
+    /// denormal-fix constant is added; `nonzero` is the raw-value test the
+    /// reference's `DigitalSilence` performs on the sample bytes (a sample
+    /// value is zero if and only if its little-endian bytes are zero for
+    /// every supported integer width).
+    ///
+    /// * `Bits16`: the 16-bit value is exact in `f32`, so no rounding can
+    ///   occur here — identical to the reference `b[0] * scalel` with the
+    ///   default `scalel = 1.0f`.
+    /// * `FullScale32`: `v / 65536.0` in `f64` (exact — see
+    ///   [`FULL_SCALE_DIVISOR`]) rounded once to `f32`. For a 16-bit source
+    ///   left-aligned as `v = s16 << 16` this equals `s16` exactly; for
+    ///   24-bit (`v = s24 << 8`) it equals the reference `f24`
+    ///   conversion; for 32-bit it equals the reference `f32` conversion.
+    fn sample(&self, index: usize) -> (f32, bool) {
+        match self {
+            Self::Bits16(pcm) => {
+                let s = pcm[index];
+                (f32::from(s), s != 0)
+            }
+            Self::FullScale32(pcm) => {
+                let v = pcm[index];
+                (((v as f64) / FULL_SCALE_DIVISOR) as f32, v != 0)
+            }
+        }
+    }
+}
+
 /// One frame of the diagnostic trace (see [`MusepackEncoder::encode_traced`]).
 #[derive(Clone, Debug)]
 pub struct FrameTrace {
@@ -284,10 +349,13 @@ impl MusepackEncoder {
     /// input: `L = sample * 1.0 + fix_left`, `R = sample * 1.0 + fix_right`,
     /// `M = (L+R)*0.5`, `S = (L-R)*0.5`.
     ///
+    /// For 24- and 32-bit sources use [`encode_s32`](Self::encode_s32),
+    /// which accepts the same content without truncating it to 16 bits.
+    ///
     /// This path never constructs diagnostic trace state; see
     /// [`encode_traced`](Self::encode_traced) for the debugging variant.
     pub fn encode(&mut self, pcm: &[i16]) -> Result<Vec<u8>, EncoderError> {
-        self.encode_inner(pcm, None)
+        self.encode_inner(PcmSource::Bits16(pcm), None)
     }
 
     /// Encodes and also returns the per-frame diagnostic trace.
@@ -300,13 +368,57 @@ impl MusepackEncoder {
         pcm: &[i16],
     ) -> Result<(Vec<u8>, Vec<FrameTrace>), EncoderError> {
         let mut trace = Vec::new();
-        let bytes = self.encode_inner(pcm, Some(&mut trace))?;
+        let bytes = self.encode_inner(PcmSource::Bits16(pcm), Some(&mut trace))?;
+        Ok((bytes, trace))
+    }
+
+    /// Encodes interleaved **full-scale left-aligned 32-bit** PCM into a
+    /// complete SV8 stream — the wide-input sibling of
+    /// [`encode`](Self::encode).
+    ///
+    /// Samples are sign-extended source values left-aligned to full scale:
+    /// `i32::MIN..=i32::MAX` spans the same ±full-scale range that
+    /// `i16::MIN..=i16::MAX` spans for `encode`. This is the format
+    /// `musicpack_core::audio`'s `read_s32` produces (16-bit content in
+    /// bits 31..16, 24-bit in bits 31..8, 32-bit verbatim), so a decoded
+    /// buffer feeds this method directly:
+    ///
+    /// * **16-bit source:** `s16 as i32 << 16` — conversion is exact and
+    ///   produces byte-identical output to `encode`;
+    /// * **24-bit source:** `s24 as i32 << 8` — all 24 bits survive: the
+    ///   low 8 bits become fractional bits on the ±32768 scale and the
+    ///   value is exactly representable in `f32`, so nothing below the
+    ///   reference's own `float` precision is lost;
+    /// * **32-bit source:** passed verbatim — rounded once to `f32`
+    ///   exactly as the reference conversion rounds it.
+    ///
+    /// Conversion (`v / 65536.0` rounded once to `f32`, then the reference
+    /// denormal-fix constant added in `f64` and rounded back to `f32`)
+    /// happens here at input time; psychoacoustic and coding stages are
+    /// untouched and receive the same `f32` analysis buffers as before.
+    ///
+    /// This path never constructs diagnostic trace state; see
+    /// [`encode_s32_traced`](Self::encode_s32_traced) for the debugging
+    /// variant.
+    pub fn encode_s32(&mut self, pcm: &[i32]) -> Result<Vec<u8>, EncoderError> {
+        self.encode_inner(PcmSource::FullScale32(pcm), None)
+    }
+
+    /// Wide-input variant of [`encode_traced`](Self::encode_traced):
+    /// byte-identical to [`encode_s32`](Self::encode_s32), with the
+    /// per-frame diagnostic trace collected.
+    pub fn encode_s32_traced(
+        &mut self,
+        pcm: &[i32],
+    ) -> Result<(Vec<u8>, Vec<FrameTrace>), EncoderError> {
+        let mut trace = Vec::new();
+        let bytes = self.encode_inner(PcmSource::FullScale32(pcm), Some(&mut trace))?;
         Ok((bytes, trace))
     }
 
     fn encode_inner(
         &mut self,
-        pcm: &[i16],
+        pcm: PcmSource<'_>,
         mut trace: Option<&mut Vec<FrameTrace>>,
     ) -> Result<Vec<u8>, EncoderError> {
         let channels = self.config.channels as usize;
@@ -685,9 +797,19 @@ impl MusepackEncoder {
     }
 
     /// Reads one block of interleaved PCM into the analysis buffers at
-    /// `CENTER`, reproducing `Read_WAV_Samples` for 16-bit input. Returns the
-    /// number of frames actually read and the digital-silence flag.
-    fn read_block(&mut self, pcm: &[i16], all_read: u64) -> (usize, bool) {
+    /// `CENTER`, reproducing `Read_WAV_Samples` for every supported integer
+    /// width. Returns the number of frames actually read and the
+    /// digital-silence flag.
+    ///
+    /// Per sample: the pre-scale `f32` value comes from
+    /// [`PcmSource::sample`] (the reference `f16`/`f24`/`f32` conversion
+    /// point), the denormal-fix constant is added in `f64` and rounded
+    /// back to `f32` (the reference stores `float l[i] = f(c) * scalel +
+    /// MPPENC_DENORMAL_FIX_*`), and `M`/`S` are computed from the stored
+    /// `f32` pair exactly as the reference does. The default input scale
+    /// is `1.0`, so the reference's `* scalel` multiply is an identity and
+    /// is not written out.
+    fn read_block(&mut self, pcm: PcmSource<'_>, all_read: u64) -> (usize, bool) {
         let channels = self.config.channels as usize;
         let remaining = self.samples_in_wave.saturating_sub(all_read);
         let requested = remaining.min(FRAME_LENGTH as u64) as usize;
@@ -696,20 +818,19 @@ impl MusepackEncoder {
         for i in 0..requested {
             let base = (all_read as usize + i) * channels;
             let (l, r) = if channels == 2 {
-                let sl = pcm[base];
-                let sr = pcm[base + 1];
-                if sl != 0 || sr != 0 {
+                let (fl, nonzero_l) = pcm.sample(base);
+                let (fr, nonzero_r) = pcm.sample(base + 1);
+                if nonzero_l || nonzero_r {
                     silence = false;
                 }
-                let l = (f32::from(sl) * 1.0) as f64 + DENORMAL_FIX_LEFT;
-                let r = (f32::from(sr) * 1.0) as f64 + DENORMAL_FIX_RIGHT;
+                let l = f64::from(fl) + DENORMAL_FIX_LEFT;
+                let r = f64::from(fr) + DENORMAL_FIX_RIGHT;
                 (l as f32, r as f32)
             } else {
-                let s = pcm[base];
-                if s != 0 {
+                let (temp, nonzero) = pcm.sample(base);
+                if nonzero {
                     silence = false;
                 }
-                let temp = f32::from(s) * 1.0;
                 (
                     (f64::from(temp) + DENORMAL_FIX_LEFT) as f32,
                     (f64::from(temp) + DENORMAL_FIX_RIGHT) as f32,
@@ -858,5 +979,313 @@ mod tests {
         assert!(MusepackEncoder::new(EncoderConfig::new(4.25, 44100, 2)).is_ok());
         assert!(MusepackEncoder::new(EncoderConfig::new(11.0, 44100, 2)).is_ok());
         assert!(MusepackEncoder::new(EncoderConfig::new(-1.0, 44100, 2)).is_ok());
+    }
+
+    // -----------------------------------------------------------------
+    // J.6 wide-PCM input conversion
+    // -----------------------------------------------------------------
+
+    /// Converts one left-aligned sample through the wide input path.
+    fn wide(value: i32) -> (f32, bool) {
+        let samples = [value];
+        PcmSource::FullScale32(&samples).sample(0)
+    }
+
+    /// Converts one native 16-bit sample through the classic input path.
+    fn narrow(value: i16) -> (f32, bool) {
+        let samples = [value];
+        PcmSource::Bits16(&samples).sample(0)
+    }
+
+    /// The wide-input conversion reproduces the reference `f24`/`f32`
+    /// scaling at every boundary the J.6 slice must pin: minimum, maximum,
+    /// zero, ±1, values around zero, representative full-scale values, and
+    /// the low-order bits that conversion to `i16` would lose.
+    ///
+    /// All expected literals are exact binary fractions (or the documented
+    /// single round-to-`f32` result), i.e. bit patterns, not approximations.
+    #[allow(clippy::excessive_precision)] // exact f32 literals kept verbatim
+    #[test]
+    fn wide_conversion_matches_reference_boundary_values() {
+        // --- 16-bit content left-aligned (`s16 << 16`): scale 1.0 ---
+        assert_eq!(wide((-32768i16 as i32) << 16).0, -32768.0); // minimum
+        assert_eq!(wide((32767i16 as i32) << 16).0, 32767.0); // maximum
+        assert_eq!(wide(0).0, 0.0); // zero
+        assert_eq!(wide((1i32) << 16).0, 1.0); // +1
+        assert_eq!(wide((-1i32) << 16).0, -1.0); // -1
+        // Around zero: the largest value whose `>> 16` truncation is 0.
+        assert_eq!(wide(0x0000_FFFF).0, 0.9999847412109375);
+        // The most negative value whose `>> 16` truncation is -1.
+        assert_eq!(wide(-65535).0, -0.9999847412109375);
+
+        // --- 24-bit content left-aligned (`s24 << 8`): scale 1/256 ---
+        // The 24-bit minimum coincides with the full-scale minimum.
+        assert_eq!(wide((-8_388_608i32) << 8).0, -32768.0);
+        assert_eq!(wide((8_388_607i32) << 8).0, 32767.99609375); // maximum
+        assert_eq!(wide(0).0, 0.0);
+        assert_eq!(wide(1i32 << 8).0, 0.00390625); // +1 LSB of 24-bit
+        assert_eq!(wide((-1i32) << 8).0, -0.00390625); // -1 LSB of 24-bit
+        // Around zero: 0x00FF is exactly the amplitude class whose 16-bit
+        // truncation (`s24 >> 8`) is zero — the precision J.6 must keep.
+        assert_eq!(wide(0x0000_FF00).0, 0.99609375);
+        assert_eq!(wide(-0x0000_FF00).0, -0.99609375);
+        // Odd low-order content keeps every significant 24-bit bit: the
+        // exact quotient `0x00FEFD / 256` is representable in `f32`.
+        assert_eq!(wide(0x00FE_FD00).0, 0x00_FE_FDu32 as f32 / 256.0);
+        assert_eq!(wide(0x00FE_FD00).0, 254.98828125);
+
+        // --- 32-bit content (verbatim): scale 1/65536 ---
+        // i32::MAX is a plain nearest-round up to full scale (the exact
+        // quotient sits 2^-16 below 32768, far inside half an `f32` ULP).
+        assert_eq!(wide(i32::MAX).0, 32768.0);
+        assert_eq!(wide(i32::MIN).0, -32768.0); // minimum, exact
+        assert_eq!(wide(0).0, 0.0);
+        assert_eq!(wide(1).0, 0.0000152587890625); // +1 LSB of 32-bit
+        assert_eq!(wide(-1).0, -0.0000152587890625); // -1 LSB of 32-bit
+        assert_eq!(wide(65535).0, 0.9999847412109375); // around zero
+        assert_eq!(wide(-65535).0, -0.9999847412109375);
+        assert_eq!(wide(65536).0, 1.0); // +1 at the 16-bit scale
+        assert_eq!(wide(-65536).0, -1.0);
+        // Double-rounding probe: the exact value is 256 + 2^-16, exactly
+        // halfway between two `f32` neighbours — round-to-nearest-even
+        // keeps the even mantissa (256.0), matching the reference's single
+        // round of the exact `f32()` double expression.
+        assert_eq!(wide(0x0100_0001).0, 256.0);
+
+        // --- the classic 16-bit path is unchanged at its boundaries ---
+        assert_eq!(narrow(i16::MIN).0, -32768.0);
+        assert_eq!(narrow(i16::MAX).0, 32767.0);
+        assert_eq!(narrow(0).0, 0.0);
+        assert_eq!(narrow(1).0, 1.0);
+        assert_eq!(narrow(-1).0, -1.0);
+
+        // The nonzero flag is the reference raw-byte silence test: a value
+        // is silent iff it is exactly zero, at either representation.
+        for v in [i32::MIN, i32::MAX, 0, 1, -1, 0x100, -0x100] {
+            assert_eq!(wide(v).1, v != 0, "wide nonzero flag for {v}");
+        }
+        for v in [i16::MIN, i16::MAX, 0, 1, -1] {
+            assert_eq!(narrow(v).1, v != 0, "narrow nonzero flag for {v}");
+        }
+    }
+
+    /// `read_block` composes the analysis buffers exactly like the
+    /// reference's stereo and mono branches: `value + fix` evaluated in
+    /// `f64` and stored to `f32`, then `M = (L+R)*0.5` / `S = (L-R)*0.5`
+    /// from the stored pair (so `L`/`R` here carry the denormal fix).
+    #[allow(clippy::excessive_precision)] // exact f32 literals kept verbatim
+    #[test]
+    fn read_block_composes_l_r_m_s_like_the_reference() {
+        // Stereo: one zero frame and one near-full-scale 24-bit frame.
+        let mut enc = MusepackEncoder::new(EncoderConfig::new(5.0, 44100, 2)).unwrap();
+        enc.samples_in_wave = 2;
+        let pcm = [0i32, 0, 0x00FF_FF00, -0x00FF_FF00];
+        let (read, silence) = enc.read_block(PcmSource::FullScale32(&pcm), 0);
+        assert_eq!(read, 2);
+        assert!(!silence, "nonzero samples must clear the silence flag");
+
+        // Frame 0: only the denormal-fix constants are added.
+        let fix_l = 0.001953125f32; // 2^-9, exact
+        let fix_r = 0.0009765625f32; // 2^-10, exact
+        assert_eq!(enc.main_l[CENTER], fix_l);
+        assert_eq!(enc.main_r[CENTER], fix_r);
+        assert_eq!(enc.main_m[CENTER], (fix_l + fix_r) * 0.5);
+        assert_eq!(enc.main_s[CENTER], (fix_l - fix_r) * 0.5);
+
+        // Frame 1: L = +0x00FFFF00, R = -0x00FFFF00 (mirrored pair, s24 =
+        // ±65535, value ±255.99609375), each channel with its own fix,
+        // composed in `f64` and stored to `f32`.
+        let v = 255.99609375f32; // 65535/256, exact in f32
+        let l = (f64::from(v) + DENORMAL_FIX_LEFT) as f32;
+        let r = (f64::from(-v) + DENORMAL_FIX_RIGHT) as f32;
+        assert_eq!(l, 255.998046875); // exact sum, no rounding
+        assert_eq!(r, -255.9951171875);
+        assert_eq!(enc.main_l[CENTER + 1], l);
+        assert_eq!(enc.main_r[CENTER + 1], r);
+        // M reduces to (fixL + fixR)/2 for the mirrored pair; S carries
+        // the signal.
+        assert_eq!(enc.main_m[CENTER + 1], 0.00146484375); // literal
+        assert_eq!(enc.main_s[CENTER + 1], 255.99658203125); // literal
+        assert_eq!(enc.main_m[CENTER + 1], (l + r) * 0.5);
+        assert_eq!(enc.main_s[CENTER + 1], (l - r) * 0.5);
+
+        // Mono: one shared value feeds both channels through their own fix.
+        let mut mono = MusepackEncoder::new(EncoderConfig::new(5.0, 44100, 1)).unwrap();
+        mono.samples_in_wave = 2;
+        let (read, silence) = mono.read_block(PcmSource::FullScale32(&[-0x0000_0100, 0]), 0);
+        assert_eq!(read, 2);
+        assert!(!silence);
+        let v = -0.00390625f32; // -1 LSB of 24-bit, exact
+        let l = (f64::from(v) + DENORMAL_FIX_LEFT) as f32;
+        let r = (f64::from(v) + DENORMAL_FIX_RIGHT) as f32;
+        assert_eq!(mono.main_l[CENTER], l);
+        assert_eq!(mono.main_r[CENTER], r);
+        assert_eq!(mono.main_m[CENTER], (l + r) * 0.5);
+        assert_eq!(mono.main_s[CENTER], (l - r) * 0.5);
+
+        // An all-zero block is digital silence; a block containing any
+        // nonzero sample (however small) is not.
+        let mut quiet = MusepackEncoder::new(EncoderConfig::new(5.0, 44100, 1)).unwrap();
+        quiet.samples_in_wave = 2;
+        let (_, silence) = quiet.read_block(PcmSource::FullScale32(&[0, 0]), 0);
+        assert!(silence, "an all-zero block is digital silence");
+        let mut loud = MusepackEncoder::new(EncoderConfig::new(5.0, 44100, 1)).unwrap();
+        loud.samples_in_wave = 2;
+        let (_, silence) = loud.read_block(PcmSource::FullScale32(&[0, 1]), 0);
+        assert!(!silence, "a 1-LSB 32-bit sample is not silence");
+    }
+
+    /// LCG noise matching `tools/gen_encoder_fixtures.py`.
+    fn lcg_pcm(kind: &str, frames: usize, channels: u32) -> Vec<i16> {
+        fn lcg(state: &mut u32) -> u32 {
+            *state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            *state
+        }
+        let mut sl = 0x1234_5678u32;
+        let mut sr = 0x9ABC_DEF0u32;
+        let mut out = Vec::with_capacity(frames * channels as usize);
+        for i in 0..frames {
+            let (l, r): (i16, i16) = match kind {
+                "noise" => (
+                    ((lcg(&mut sl) >> 16) as i32 - 32768) as i16,
+                    ((lcg(&mut sr) >> 16) as i32 - 32768) as i16,
+                ),
+                "silence" => (0, 0),
+                "constant" => (12000, 12000),
+                "ramp" => {
+                    let v = (((i % 512) as i32 - 256) * 60) as i16;
+                    (v, v)
+                }
+                other => panic!("unknown kind {other}"),
+            };
+            out.push(l);
+            if channels == 2 {
+                out.push(r);
+            }
+        }
+        out
+    }
+
+    /// The wide input path is a pure representation change: 16-bit content
+    /// left-aligned to `i32` must encode **byte-identically** to the
+    /// classic `i16` path (this is the J.6 proof that existing 16-bit
+    /// behaviour survives the refactor unchanged).
+    #[test]
+    fn left_aligned_s32_reproduces_the_i16_path_byte_for_byte() {
+        for (kind, frames, channels) in [
+            ("noise", 5000, 2),
+            ("silence", 5000, 2),
+            ("constant", 5000, 2),
+            ("ramp", 5000, 2),
+            ("noise", 5000, 1),
+            ("noise", 1152, 2),
+            ("noise", 93728, 2),
+        ] {
+            let pcm = lcg_pcm(kind, frames, channels);
+            let aligned: Vec<i32> = pcm.iter().map(|&s| i32::from(s) << 16).collect();
+            let config = EncoderConfig::new(5.0, 44100, channels);
+            let narrow_bytes = MusepackEncoder::new(config).unwrap().encode(&pcm).unwrap();
+            let wide_bytes = MusepackEncoder::new(config)
+                .unwrap()
+                .encode_s32(&aligned)
+                .unwrap();
+            assert_eq!(
+                narrow_bytes, wide_bytes,
+                "{kind}/{frames}/{channels}ch: wide path must reproduce the i16 stream"
+            );
+        }
+    }
+
+    /// `encode_s32` and `encode_s32_traced` must share one implementation,
+    /// exactly like `encode`/`encode_traced`.
+    #[test]
+    fn encode_s32_matches_encode_s32_traced() {
+        let mut state = 0x1234_5678u32;
+        let pcm: Vec<i32> = (0..2000)
+            .map(|_| {
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                state as i32
+            })
+            .collect();
+        let config = EncoderConfig::new(5.0, 44100, 2);
+        let plain = MusepackEncoder::new(config)
+            .unwrap()
+            .encode_s32(&pcm)
+            .unwrap();
+        let (traced_bytes, trace) = MusepackEncoder::new(config)
+            .unwrap()
+            .encode_s32_traced(&pcm)
+            .unwrap();
+        assert_eq!(plain, traced_bytes, "traced bytes must match plain encode");
+        assert!(!trace.is_empty());
+    }
+
+    /// Phase 5 discrimination: where the source carries low-order
+    /// information, the wide stream must **differ** from what 16-bit
+    /// truncation would have encoded — proving wide input is not
+    /// accidentally reduced to `i16` anywhere in the new path.
+    #[test]
+    fn wide_pcm_differs_from_i16_truncated_encoding() {
+        // A 24-bit signal living entirely below the 16-bit truncation
+        // threshold: every sample's `s24 >> 8` is zero, so the truncated
+        // encoding is the digital-silence stream while the wide encoding
+        // carries real (albeit quiet) content.
+        let low_order: Vec<i32> = (0..4096u32)
+            .map(|i| {
+                let state = i.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                ((state & 0xFF) << 8) as i32 // s24 in [0, 255], left-aligned
+            })
+            .collect();
+        assert!(
+            low_order.iter().all(|&v| (v >> 16) == 0),
+            "the fixture must be invisible to 16-bit truncation"
+        );
+        assert!(low_order.iter().any(|&v| v != 0), "…but not to us");
+
+        let wide_stream = MusepackEncoder::new(EncoderConfig::new(5.0, 44100, 2))
+            .unwrap()
+            .encode_s32(&low_order)
+            .unwrap();
+        let truncated: Vec<i16> = low_order.iter().map(|&v| (v >> 16) as i16).collect();
+        assert!(truncated.iter().all(|&s| s == 0));
+        let zeros = MusepackEncoder::new(EncoderConfig::new(5.0, 44100, 2))
+            .unwrap()
+            .encode(&vec![0i16; low_order.len()])
+            .unwrap();
+        assert_ne!(
+            wide_stream, zeros,
+            "24-bit low-order content must not encode as its i16 truncation"
+        );
+        let truncated_stream = MusepackEncoder::new(EncoderConfig::new(5.0, 44100, 2))
+            .unwrap()
+            .encode(&truncated)
+            .unwrap();
+        assert_eq!(
+            truncated_stream, zeros,
+            "an all-zero truncation must be the digital-silence stream"
+        );
+
+        // Loud 32-bit content whose difference from its truncation lives
+        // only in the low 16 bits: the streams must still diverge.
+        let mut state = 0x1234_5678u32;
+        let fullscale: Vec<i32> = (0..4096)
+            .map(|_| {
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                state as i32
+            })
+            .collect();
+        let wide32 = MusepackEncoder::new(EncoderConfig::new(5.0, 44100, 2))
+            .unwrap()
+            .encode_s32(&fullscale)
+            .unwrap();
+        let truncated32: Vec<i16> = fullscale.iter().map(|&v| (v >> 16) as i16).collect();
+        let truncated32_stream = MusepackEncoder::new(EncoderConfig::new(5.0, 44100, 2))
+            .unwrap()
+            .encode(&truncated32)
+            .unwrap();
+        assert_ne!(
+            wide32, truncated32_stream,
+            "32-bit low-order information must reach the stream"
+        );
     }
 }
