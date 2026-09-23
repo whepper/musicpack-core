@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
-"""Generate whole-encoder reference fixtures (Phase 15G, extended J.1).
+"""Generate whole-encoder reference fixtures (Phase 15G, extended J.1/J.2/J.6).
 
-Writes deterministic integer-only 16-bit WAVs, runs the reference `mpcenc`
-binary on them, and stores the resulting `.mpc` streams plus manifests. The
-Rust tests regenerate the same PCM and must reproduce the bytes.
+Writes deterministic integer-only WAVs, runs the reference `mpcenc` binary on
+them, and stores the resulting `.mpc` streams plus manifests. The Rust tests
+regenerate the same PCM and must reproduce the bytes.
 
 Run from the crate root with the reference binary path:
 
     python3 tools/gen_encoder_fixtures.py <mpcenc> <reference-repo>
 
-Two manifests are written:
+Manifests written:
 
-* `manifest.txt`      — the original Phase 15G corpus (21 stereo cases),
-                        unchanged in composition.
+* `manifest.txt`       — the original Phase 15G corpus (21 stereo cases),
+                         unchanged in composition.
 * `matrix_manifest.txt` — the J.1 integer-parity matrix: every integer
-                        quality `0..=10` x every SV8 rate with `noise` and
-                        `transient` signals, mono at q5 x 4 rates, plus
-                        long multi-`AP`-block cases for the rate dimension
-                        and the quality extremes.
+                         quality `0..=10` x every SV8 rate with `noise` and
+                         `transient` signals, mono at q5 x 4 rates, plus
+                         long multi-`AP`-block cases for the rate dimension
+                         and the quality extremes.
+* `fractional_manifest.txt` — the J.2 fractional-quality corpus (27 rows).
+* `wide_manifest.txt`  — the J.6 wide-PCM corpus: 24- and 32-bit WAVs
+                         (`ramp`, `lowamp`, `fullrange`, `noise`, incl. a
+                         mono row) whose streams must match `encode_s32`
+                         byte-for-byte. Its WAVs are kept in
+                         `/tmp/mpj6-wav/` as the input to the intermediate
+                         conversion oracle tool
+                         (`tools/extract_pcm_oracle.c`).
 
 Existing `.mpc` files are **never rewritten**: a fixture that already exists
 is kept as-is and only hashed for the manifest. This keeps the original
@@ -39,6 +47,9 @@ if len(sys.argv) != 3:
 MPCENC = sys.argv[1]
 OUTDIR = "tests/data/encoder"
 os.makedirs(OUTDIR, exist_ok=True)
+# J.6: wide WAVs are kept so tools/extract_pcm_oracle.c can dump the
+# reference's intermediate conversion values for them.
+WIDE_WAV_DIR = "/tmp/mpj6-wav"
 
 RATES = [44100, 48000, 37800, 32000]
 
@@ -172,12 +183,115 @@ def fractional_cases():
     return rows
 
 
+def wide_cases():
+    """J.6 wide-PCM rows: (name, quality, rate, kind, depth, frames,
+    channels).
+
+    Additive like every earlier corpus:24-bit `noise` at all four SV8
+    rates, the required deterministic `ramp` / `lowamp` / `fullrange`
+    signals (24- and 32-bit) plus the representative `noise` signal at the
+    default configuration, and a mono 24-bit row so the C mono conversion
+    branch is oracle-covered too. Quality5 (default profile), 5000 frames.
+    """
+    rows = []
+    for rate in RATES:
+        rows.append((f"i24-{rate}-noise", 5, rate, "noise", 24, 5000, 2))
+    rows += [
+        ("i24-44100-ramp", 5, 44100, "ramp", 24, 5000, 2),
+        ("i24-44100-lowamp", 5, 44100, "lowamp", 24, 5000, 2),
+        ("i24-44100-fullrange", 5, 44100, "fullrange", 24, 5000, 2),
+        ("mono-i24-44100-noise", 5, 44100, "noise", 24, 5000, 1),
+        ("i32-44100-ramp", 5, 44100, "ramp", 32, 5000, 2),
+        ("i32-44100-lowamp", 5, 44100, "lowamp", 32, 5000, 2),
+        ("i32-44100-fullrange", 5, 44100, "fullrange", 32, 5000, 2),
+    ]
+    return rows
+
+
 def write_wav(path, rate, pcm, channels):
     with wave.open(path, "wb") as w:
         w.setnchannels(channels)
         w.setsampwidth(2)
         w.setframerate(rate)
         w.writeframes(pcm)
+
+
+# --- J.6 wide-PCM helpers (24- and 32-bit; integer-only like `gen`) ---
+
+
+def write_wav_wide(path, rate, pcm, channels, depth):
+    with wave.open(path, "wb") as w:
+        w.setnchannels(channels)
+        w.setsampwidth(depth // 8)
+        w.setframerate(rate)
+        w.writeframes(pcm)
+
+
+def signed_bits(state, depth):
+    """LCG output as a signed `depth`-bit value (two's complement)."""
+    if depth == 24:
+        v = state & 0xFFFFFF
+        return v - 0x1000000 if v >= 0x800000 else v
+    if depth == 32:
+        v = state & 0xFFFFFFFF
+        return v - 0x100000000 if v >= 0x80000000 else v
+    raise SystemExit("unsupported depth %d" % depth)
+
+
+def pack_bits(value, depth):
+    raw = struct.pack("<i", value)
+    return raw if depth == 32 else raw[0:3]
+
+
+def gen_wide(kind, frames, depth, channels=2):
+    """Deterministic wide-PCM samples (native-width signed integers).
+
+    Kinds:
+    * `ramp`      — odd-step sawtooth spanning (almost) the full scale of
+                    `depth`; odd steps keep the low-order bits busy.
+    * `lowamp`    — LCG noise confined below the 16-bit truncation
+                    threshold (s24 in [0,255] / s32 in [0,65535]), so a
+                    `>> 16` reduction to `i16` erases it entirely.
+    * `fullrange` — the exact minimum/maximum in the first two frames,
+                    then full-range LCG noise.
+    * `noise`     — full-range LCG noise (the representative test signal).
+    Mono emits only the left/LCG stream, like `gen`.
+    """
+    sl, sr = 0x12345678, 0x9ABCDEF0
+    out = bytearray()
+    for i in range(frames):
+        if kind == "ramp":
+            step = 32767 if depth == 24 else 8388607
+            l = r = ((i % 512) - 256) * step
+        elif kind == "lowamp":
+            mask = 0xFF if depth == 24 else 0xFFFF
+            sl = lcg(sl)
+            l = sl & mask
+            sr = lcg(sr)
+            r = sr & mask
+        elif kind == "fullrange":
+            lo = -(1 << (depth - 1))
+            hi = (1 << (depth - 1)) - 1
+            if i == 0:
+                l, r = hi, lo
+            elif i == 1:
+                l, r = lo, hi
+            else:
+                sl = lcg(sl)
+                l = signed_bits(sl, depth)
+                sr = lcg(sr)
+                r = signed_bits(sr, depth)
+        elif kind == "noise":
+            sl = lcg(sl)
+            l = signed_bits(sl, depth)
+            sr = lcg(sr)
+            r = signed_bits(sr, depth)
+        else:
+            raise SystemExit("unknown wide kind " + kind)
+        out += pack_bits(l, depth)
+        if channels == 2:
+            out += pack_bits(r, depth)
+    return bytes(out)
 
 
 def encode(name, qual, rate, kind, frames, channels):
@@ -191,6 +305,27 @@ def encode(name, qual, rate, kind, frames, channels):
     pcm = gen(kind, frames, channels)
     wav = "/tmp/mp15g.wav"
     write_wav(wav, rate, pcm, channels)
+    subprocess.run(
+        [MPCENC, "--silent", "--overwrite", *SCALAR_FLAGS, "--quality", str(qual), wav, mpc],
+        check=True,
+    )
+    data = open(mpc, "rb").read()
+    print(f"{name}: {len(data)} bytes {hashlib.sha256(data).hexdigest()[:12]}")
+    return data
+
+
+def encode_wide(name, qual, rate, kind, depth, frames, channels):
+    """Like `encode`, for the J.6 24/32-bit rows; keeps the WAV in
+    `WIDE_WAV_DIR` for `tools/extract_pcm_oracle.c`."""
+    mpc = os.path.join(OUTDIR, name + ".mpc")
+    if os.path.exists(mpc):
+        data = open(mpc, "rb").read()
+        print(f"{name}: kept existing ({len(data)} bytes)")
+        return data
+    os.makedirs(WIDE_WAV_DIR, exist_ok=True)
+    pcm = gen_wide(kind, frames, depth, channels)
+    wav = os.path.join(WIDE_WAV_DIR, name + ".wav")
+    write_wav_wide(wav, rate, pcm, channels, depth)
     subprocess.run(
         [MPCENC, "--silent", "--overwrite", *SCALAR_FLAGS, "--quality", str(qual), wav, mpc],
         check=True,
@@ -243,9 +378,23 @@ def main():
         sha = hashlib.sha256(data).hexdigest()
         frac.append(f"{name} {qual} {rate} {kind} {frames} {channels} {len(data)} {sha}")
     open(os.path.join(OUTDIR, "fractional_manifest.txt"), "w").write("\n".join(frac) + "\n")
+
+    # J.6 wide-PCM manifest (additive; every earlier manifest untouched).
+    for row in wide_cases():
+        encode_wide(*row)
+    wide = ["# name quality rate kind depth frames channels bytes sha256"]
+    for name, qual, rate, kind, depth, frames, channels in wide_cases():
+        data = open(os.path.join(OUTDIR, name + ".mpc"), "rb").read()
+        sha = hashlib.sha256(data).hexdigest()
+        wide.append(
+            f"{name} {qual} {rate} {kind} {depth} {frames} {channels} {len(data)} {sha}"
+        )
+    open(os.path.join(OUTDIR, "wide_manifest.txt"), "w").write("\n".join(wide) + "\n")
+
     print(f"wrote manifest.txt ({len(CASES)} cases), matrix_manifest.txt "
-          f"({len(matrix_cases())} rows) and fractional_manifest.txt "
-          f"({len(fractional_cases())} rows)")
+          f"({len(matrix_cases())} rows), fractional_manifest.txt "
+          f"({len(fractional_cases())} rows) and wide_manifest.txt "
+          f"({len(wide_cases())} rows)")
 
 
 main()

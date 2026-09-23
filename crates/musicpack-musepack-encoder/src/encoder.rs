@@ -1288,4 +1288,124 @@ mod tests {
             "32-bit low-order information must reach the stream"
         );
     }
+
+    /// Replays the committed C-generated conversion oracle
+    /// (`tests/data/encoder/pcm_conversion_oracle.txt`, produced by
+    /// `tools/extract_pcm_oracle.c` from the reference
+    /// `Read_WAV_Samples`) so a passing whole-stream differential cannot
+    /// conceal a conversion coincidence: for the recorded left-aligned
+    /// inputs the Rust input path must reproduce the reference **pre-fix
+    /// value** and the stored `L`/`R`/`M`/`S` analysis buffers
+    /// **bit-for-bit** — 24-bit stereo, 32-bit stereo and 24-bit mono.
+    #[test]
+    fn read_block_matches_the_c_pcm_conversion_oracle() {
+        fn replay(channels: usize, pcm: &[i32], expected: &[[u32; 6]], section: &str) {
+            let mut enc =
+                MusepackEncoder::new(EncoderConfig::new(5.0, 44100, channels as u32)).unwrap();
+            enc.samples_in_wave = expected.len() as u64;
+            let src = PcmSource::FullScale32(pcm);
+            let (read, silence) = enc.read_block(src, 0);
+            assert_eq!(read, expected.len(), "{section}: read all oracle rows");
+            assert!(!silence, "{section}: oracle input is not silence");
+            for (i, want) in expected.iter().enumerate() {
+                let (fl, fr) = if channels == 2 {
+                    (src.sample(2 * i).0, src.sample(2 * i + 1).0)
+                } else {
+                    let v = src.sample(i).0;
+                    (v, v)
+                };
+                assert_eq!(
+                    fl.to_bits(),
+                    want[0],
+                    "{section} row {i}: pre-fix L value diverges from the C oracle"
+                );
+                assert_eq!(
+                    fr.to_bits(),
+                    want[1],
+                    "{section} row {i}: pre-fix R value diverges from the C oracle"
+                );
+                for (slot, offset, label) in [
+                    (&enc.main_l, 2usize, "L"),
+                    (&enc.main_r, 3, "R"),
+                    (&enc.main_m, 4, "M"),
+                    (&enc.main_s, 5, "S"),
+                ] {
+                    assert_eq!(
+                        slot[CENTER + i].to_bits(),
+                        want[offset],
+                        "{section} row {i}: analysis buffer {label} diverges from the C oracle"
+                    );
+                }
+            }
+        }
+
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/data/encoder/pcm_conversion_oracle.txt");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+
+        let mut channels = 0usize;
+        let mut section = String::new();
+        let mut inputs: Vec<i32> = Vec::new();
+        let mut expected: Vec<[u32; 6]> = Vec::new();
+        let mut sections = 0usize;
+        let mut rows = 0usize;
+
+        for line in text.lines() {
+            let line = line.trim();
+            if line.starts_with("# file ") {
+                if !expected.is_empty() {
+                    replay(channels, &inputs, &expected, &section);
+                    sections += 1;
+                    rows += expected.len();
+                }
+                inputs.clear();
+                expected.clear();
+                let name = line
+                    .split_whitespace()
+                    .nth(2)
+                    .expect("file name")
+                    .to_string();
+                channels = line
+                    .split("channels=")
+                    .nth(1)
+                    .expect("channels=")
+                    .split_whitespace()
+                    .next()
+                    .expect("channels value")
+                    .parse()
+                    .expect("channels integer");
+                section = name;
+                continue;
+            }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let f: Vec<&str> = line.split_whitespace().collect();
+            let hex: Vec<u32> = f[1..]
+                .iter()
+                .map(|v| u32::from_str_radix(v, 16).expect("hex32"))
+                .collect();
+            let want = if channels == 2 {
+                assert_eq!(hex.len(), 8, "{section}: stereo row width");
+                inputs.push(hex[0] as i32);
+                inputs.push(hex[1] as i32);
+                [hex[2], hex[3], hex[4], hex[5], hex[6], hex[7]]
+            } else {
+                assert_eq!(hex.len(), 6, "{section}: mono row width");
+                inputs.push(hex[0] as i32);
+                // Mono: one pre-fix value feeds both channels.
+                [hex[1], hex[1], hex[2], hex[3], hex[4], hex[5]]
+            };
+            expected.push(want);
+        }
+        if !expected.is_empty() {
+            replay(channels, &inputs, &expected, &section);
+            sections += 1;
+            rows += expected.len();
+        }
+
+        assert_eq!(sections, 3, "the oracle has three sections (24/32/mono)");
+        assert_eq!(rows, 1800, "the oracle has 1800 recorded rows");
+    }
 }
