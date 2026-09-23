@@ -25,6 +25,7 @@ use musicpack_core::authoring::LoudnessMode;
 use musicpack_core::format::checksum;
 use musicpack_core::format::manifest::ParsedManifest;
 use musicpack_core::storage::directory;
+use musicpack_musepack_encoder::encoder::{EncoderConfig, MusepackEncoder};
 
 // ---------------------------------------------------------------------
 // harness
@@ -587,6 +588,155 @@ fn rust_encoder_matches_mpcenc_on_a_real_flac() {
         std::fs::read(&c_out).unwrap(),
         "Rust encoder must be byte-identical to mpcenc for q6 @ 44100"
     );
+}
+
+// ---------------------------------------------------------------------
+// J.6: wide-PCM (24-bit) end-to-end through the Author pipeline
+// ---------------------------------------------------------------------
+
+/// A deterministic 24-bit stereo WAV: exact full-scale minimum/maximum in
+/// the first two frames (the low-order-erasing worst case), then LCG noise
+/// across the full 24-bit range. Integer-only, little-endian.
+fn write_wav24(path: &Path, frames: usize) {
+    fn s24(state: u32) -> i32 {
+        let v = (state & 0x00FF_FFFF) as i32;
+        if v >= 0x0080_0000 { v - 0x0100_0000 } else { v }
+    }
+    let mut data = Vec::with_capacity(frames * 6);
+    let mut state = 0x1234_5678u32;
+    for i in 0..frames {
+        let (l, r): (i32, i32) = match i {
+            0 => (0x007F_FFFF, -0x0080_0000),
+            1 => (-0x0080_0000, 0x007F_FFFF),
+            _ => {
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                let l = s24(state);
+                state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+                (l, s24(state))
+            }
+        };
+        data.extend_from_slice(&l.to_le_bytes()[..3]);
+        data.extend_from_slice(&r.to_le_bytes()[..3]);
+    }
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36u32 + data.len() as u32).to_le_bytes());
+    wav.extend_from_slice(b"WAVE");
+    wav.extend_from_slice(b"fmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    wav.extend_from_slice(&2u16.to_le_bytes()); // channels
+    wav.extend_from_slice(&44100u32.to_le_bytes());
+    wav.extend_from_slice(&(44100u32 * 6).to_le_bytes()); // byte rate
+    wav.extend_from_slice(&6u16.to_le_bytes()); // block align
+    wav.extend_from_slice(&24u16.to_le_bytes()); // bits per sample
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    wav.extend_from_slice(&data);
+    std::fs::write(path, wav).expect("write 24-bit WAV");
+}
+
+/// J.6 end-to-end: a 24-bit source survives the Author encode stage —
+/// `encode_to` must equal the encoder fed the full-precision
+/// left-aligned samples (no reduction to `i16` anywhere) and must differ
+/// from what the old `>> 16` reduction would have produced.
+#[test]
+fn author_preserves_24bit_precision_end_to_end() {
+    let temp = TempDir::new("wide24");
+    let wav = temp.path().join("wide24.wav");
+    write_wav24(&wav, 5000);
+    let out = temp.path().join("wide24.mpc");
+    encode::encode_to(&wav, &out, 6.0).expect("24-bit encode");
+    let author_bytes = std::fs::read(&out).expect("author output");
+
+    // Replay the same source at full precision: decode with the core
+    // `read_s32` (left-aligned i32) and feed `encode_s32` directly. The
+    // Author's bytes must be identical — i.e. the stage neither truncated
+    // nor otherwise altered the samples.
+    let mut decoder =
+        musicpack_core::audio::open(Box::new(std::fs::File::open(&wav).unwrap())).unwrap();
+    let info = decoder.info().clone();
+    assert_eq!(
+        (info.bits_per_sample, info.channels, info.is_float),
+        (24, 2, false)
+    );
+    let mut pcm = vec![0i32; 5000 * 2];
+    let frames = decoder.read_s32(&mut pcm).unwrap();
+    assert_eq!(frames, 5000);
+    let config = EncoderConfig::new(6.0, 44100, 2);
+    let wide = MusepackEncoder::new(config)
+        .unwrap()
+        .encode_s32(&pcm)
+        .unwrap();
+    assert_eq!(
+        author_bytes, wide,
+        "the Author output must equal the full-precision encode_s32 stream"
+    );
+
+    // The low-order bits are load-bearing: the old 16-bit reduction of the
+    // very same samples must produce a different stream.
+    let truncated: Vec<i16> = pcm.iter().map(|&v| (v >> 16) as i16).collect();
+    let narrow = MusepackEncoder::new(config)
+        .unwrap()
+        .encode(&truncated)
+        .unwrap();
+    assert_ne!(
+        author_bytes, narrow,
+        "the Author path must not reduce 24-bit sources to i16"
+    );
+}
+
+/// J.6 differential: the Author's wide path must be byte-identical to the
+/// scalar C `mpcenc` 1.32.0 oracle on a 24-bit source (skipped when the
+/// reference binary is absent; the committed encoder corpus pins the same
+/// property hermetically).
+#[test]
+fn author_matches_mpcenc_on_a_wide_wav() {
+    let Some(mpcenc) = mpcenc() else {
+        eprintln!("note: mpcenc not built; wide-PCM differential skipped");
+        return;
+    };
+    let temp = TempDir::new("wide-diff");
+    let wav = temp.path().join("wide.wav");
+    write_wav24(&wav, 5000);
+
+    let c_out = temp.path().join("c.mpc");
+    // Scalar-forced: the strict compatibility target, same flags as the
+    // committed fixture corpus.
+    let status = Command::new(&mpcenc)
+        .args([
+            "--quality",
+            "6.0",
+            "--overwrite",
+            "--silent",
+            "--impl",
+            "scalar",
+            "--psy-impl",
+            "scalar",
+        ])
+        .arg(&wav)
+        .arg(&c_out)
+        .status()
+        .unwrap();
+    assert!(status.success(), "mpcenc failed on the 24-bit WAV");
+
+    let rust_out = temp.path().join("rust.mpc");
+    encode::encode_to(&wav, &rust_out, 6.0).unwrap();
+
+    let c_bytes = std::fs::read(&c_out).unwrap();
+    let rust_bytes = std::fs::read(&rust_out).unwrap();
+    if c_bytes != rust_bytes {
+        let first = c_bytes
+            .iter()
+            .zip(&rust_bytes)
+            .position(|(a, b)| a != b)
+            .unwrap_or(c_bytes.len().min(rust_bytes.len()));
+        panic!(
+            "wide-PCM divergence at byte {first} (C {} bytes, Rust {} bytes)",
+            c_bytes.len(),
+            rust_bytes.len()
+        );
+    }
 }
 
 #[test]

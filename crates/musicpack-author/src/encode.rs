@@ -1,10 +1,15 @@
 //! Encoding stage: supported source audio → Musepack SV8.
 //!
 //! Sources are decoded with the core's native decoders (`musicpack-core`
-//! `audio`), converted to interleaved 16-bit PCM and encoded by the isolated
-//! [`musicpack_musepack_encoder`] crate, which reproduces the reference
-//! `mpcenc` stream **byte-for-byte** for its frozen compatibility corpus.
-//! No external process, no FFmpeg, no second codec.
+//! `audio`) into interleaved **full-scale left-aligned 32-bit PCM** (the
+//! decoder's `read_s32` contract: 16-bit content in bits 31..16, 24-bit in
+//! bits 31..8, 32-bit verbatim) and encoded by the isolated
+//! [`musicpack_musepack_encoder`] crate through `encode_s32`, which
+//! reproduces the reference `mpcenc` stream **byte-for-byte** for its
+//! frozen compatibility corpus. Integer sources of **8/16/24/32 bits**
+//! keep their full source precision end-to-end — there is no reduction to
+//! 16 bits anywhere in this pipeline. No external process, no FFmpeg, no
+//! second codec.
 //!
 //! # Settings contract
 //!
@@ -14,22 +19,27 @@
 //! semantic contract: quality is a numeric value, sample rate and channels
 //! come from the decoded source, output is `.mpc`.
 //!
-//! # Known compatibility gap (documented, not silent)
+//! # Quality surface (J.1 + J.2, closed)
 //!
-//! The Rust encoder's frozen psychoacoustic tables cover the complete
-//! **integer** quality matrix of the reference `mpcenc`: qualities `0..=10`
-//! at `44100`, `48000`, `37800` and `32000` Hz (44 configurations; see
+//! The Rust encoder's frozen psychoacoustic tables cover every finite
+//! `f32` quality (clipped to `[0,10]`) at the SV8 sample rates `44100`,
+//! `48000`, `37800` and `32000` Hz (44 integer configurations; see
 //! `musicpack-musepack-encoder/tests/data/encoder/matrix_manifest.txt`).
-//! Fractional qualities (e.g. `5.5`, which the C encoder interpolates) and
-//! out-of-range qualities (which the C encoder clips) are deliberately
-//! deferred to a separate parity slice and are rejected with a typed
+//! Fractional qualities follow the C interpolation path since J.2;
+//! non-finite qualities are rejected with a typed
 //! [`AuthorError::Unsupported`] rather than being silently mapped to a
 //! different profile.
 //!
-//! Sources deeper than 16 bits are reduced to 16 bits for the encoder
-//! (the top 16 bits of the sample, which is exact for 16-bit sources). The
-//! reference passes the source bit depth to `mpcenc`; this is a documented
-//! fidelity gap of the current Rust encoder API, not a format change.
+//! # Precision (J.6, closed)
+//!
+//! The encoder consumes left-aligned `i32` (`encode_s32`), the same
+//! representation the core decoders produce, so 24- and 32-bit sources
+//! reach the psychoacoustic/encoding calculations at full source
+//! precision (converted once, with the reference conversion's rounding,
+//! to the encoder's internal `f32` analysis buffers). Byte parity
+//! against scalar C `mpcenc` 1.32.0 for 24/32-bit inputs is pinned by
+//! the encoder crate's `wide_manifest.txt` corpus; the test below
+//! additionally checks the Author path end-to-end.
 
 use std::fs::File;
 use std::io::Write;
@@ -134,7 +144,10 @@ pub fn encode_to(source: &Path, dest: &Path, quality: f32) -> Result<EncodeInfo>
     })?;
 
     let channels = info.channels as usize;
-    let mut pcm: Vec<i16> = Vec::new();
+    // Full-precision left-aligned s32 (the decoder's `read_s32` contract);
+    // `encode_s32` normalizes it to the encoder's sample scale without any
+    // prior 16-bit reduction (J.6).
+    let mut pcm: Vec<i32> = Vec::new();
     let mut block = vec![0i32; 8192 * channels];
     let mut frames: u64 = 0;
     loop {
@@ -149,11 +162,11 @@ pub fn encode_to(source: &Path, dest: &Path, quality: f32) -> Result<EncodeInfo>
             break;
         }
         let samples = read * channels;
-        pcm.extend(block[..samples].iter().map(|s| (s >> 16) as i16));
+        pcm.extend_from_slice(&block[..samples]);
         frames += read as u64;
     }
 
-    let bytes = encoder.encode(&pcm).map_err(|e| AuthorError::Encode {
+    let bytes = encoder.encode_s32(&pcm).map_err(|e| AuthorError::Encode {
         disc: 0,
         track: 0,
         detail: format!("cannot encode '{}': {e}", source.display()),
