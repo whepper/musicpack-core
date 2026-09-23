@@ -24,6 +24,16 @@
 //! compatibility boundary, since C's `NaN` path is undefined behaviour. See
 //! `PSYCHOACOUSTIC_CONTRACT.md` §10.
 //!
+//! **Wide-PCM input (J.6):** `encoder::MusepackEncoder` accepts interleaved
+//! `i16` (`encode`) *or* full-scale left-aligned `i32` (`encode_s32`) — the
+//! format `musicpack_core::audio`'s `read_s32` produces — so 24- and 32-bit
+//! integer PCM reaches the encoder without prior 16-bit truncation. The
+//! input conversion is pinned both at the intermediate level (bit-equal
+//! against the C-generated `pcm_conversion_oracle.txt`) and as whole
+//! streams (11 rows of `wide_manifest.txt`, byte-identical to scalar C
+//! `mpcenc` 1.32.0); 16-bit output through either entry point is
+//! byte-identical and the frozen J.1/J.2 corpora are unchanged.
+//!
 //! The foundation primitives established in Phase 15B remain in place:
 //!
 //! * [`bitwriter`] — the deterministic, MSB-first bit writer every SV8 field

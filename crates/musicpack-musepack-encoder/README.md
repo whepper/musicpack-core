@@ -4,7 +4,8 @@ The safe-Rust **Musepack SV8 encoder** that replaces the legacy C Musepack
 encoder, plus its compatibility oracle.
 
 > **Status: Phase 15L — migration complete; integer encoder parity (J.1)
-> and fractional-quality parity (J.2) landed afterwards.**
+> and fractional-quality parity (J.2) landed afterwards, then wide-PCM
+> input support (J.6).**
 > The crate is the production `PCM → SV8` encoder
 > (`encoder::MusepackEncoder`): it reproduces the reference `mpcenc` stream
 > byte-for-byte for the original **21** committed whole-encoder cases across
@@ -20,8 +21,14 @@ encoder, plus its compatibility oracle.
 > while the44 integer configurations remain frozen regression oracles and
 > the sparse fractional corpus (`tests/data/encoder/fractional_manifest.txt`,
 > `encoder_fractional` test) is byte-matched to the scalar C reference.
-> Non-finite qualities are rejected (C's `NaN` path is undefined). The
-> legacy C repository is
+> Non-finite qualities are rejected (C's `NaN` path is undefined). **Input
+> precision since J.6:** `encode` takes interleaved `i16` unchanged, and
+> `encode_s32` takes full-scale left-aligned `i32` so 24- and 32-bit
+> sources reach the encoder without 16-bit truncation — byte-matched to
+> scalar C `mpcenc` 1.32.0 on the 11-row
+> `tests/data/encoder/wide_manifest.txt` corpus, with the intermediate
+> conversion pinned separately by the C-generated
+> `pcm_conversion_oracle.txt`. The legacy C repository is
 > retained as-is as the immutable historical reference; the frozen
 > compatibility corpus in this crate is the permanent compatibility
 > boundary.
@@ -128,13 +135,26 @@ Explicitly **not** implemented (do not "prepare" these by copying C):
 ## Architecture
 
 ```text
-                     PCM (f32, planar/interleaved host input)
+        interleaved PCM input (J.6)
+          ├── &[i16]  — native 16-bit        (encode / encode_traced)
+          └── &[i32]  — full-scale left-aligned
+                        (encode_s32 / encode_s32_traced;
+                         16-bit in bits 31..16, 24-bit in 31..8,
+                         32-bit verbatim — the core `read_s32` format)
+                              │
+                     input conversion (once, here):
+                       v / 65536.0 in f64 → round to f32
+                       + denormal fix in f64 → f32, then M/S
+                              │
+                              ▼
+                     f32 analysis buffers
                               │
         ┌─────────────────────┴─────────────────────┐
         ▼                                           ▼
   C reference encoder                       Rust encoder (this crate)
-  (immutable historical reference)          analysis → psy → coding → SV8
-        │                                           │
+  (immutable historical                     analysis → psy → coding → SV8
+   differential oracle)                              │
+        │                                    (bit-identical bytes)
         └──────────────► differential ◄─────────────┘
                      (see below)
 ```
@@ -148,6 +168,60 @@ Design rules for all of this crate:
   encoder's file-scope tables/state are a deliberate deviation that the Rust
   encoder removes while preserving output).
 * Deterministic: identical input + configuration ⇒ identical bytes.
+
+## Wide-PCM input (J.6)
+
+`MusepackEncoder` accepts two interleaved integer input representations:
+
+* `encode(&[i16])` / `encode_traced(&[i16])` — native 16-bit input,
+  unchanged since 15G;
+* `encode_s32(&[i32])` / `encode_s32_traced(&[i32])` — **full-scale
+  left-aligned 32-bit** input: `i32::MIN..=i32::MAX` spans the same
+  ±full-scale range that `i16::MIN..=i16::MAX` spans for `encode`. This
+  is exactly the format `musicpack_core::audio`'s `read_s32` produces
+  (16-bit content in bits 31..16, 24-bit in bits 31..8, 32-bit
+  verbatim), so a decoded WAV/FLAC buffer feeds it directly — 24- and
+  32-bit sources reach the encoder without any prior 16-bit truncation.
+
+Supported integer source widths are **8/16/24/32** — the reference's
+supported linear-PCM widths; J.6 adds the 24/32-bit differential corpus
+on top of the 16-bit one (8-bit converts value-correctly but has no
+committed corpus row).
+Conversion happens **once, at input time**, in `encoder.rs`
+(`PcmSource` + `read_block`) — psychoacoustic and coding stages receive
+the same `f32` analysis buffers as before and are untouched:
+
+* `v / 65536.0` evaluated in `f64` (exact for any `i32`) and rounded
+  **once** to `f32` — the single rounding point of the reference
+  `f16`/`f24`/`f32` input conversions (for 24-bit content the value is
+  exactly representable, so **all 24 bits survive**; 32-bit content is
+  rounded exactly as the reference rounds it, including
+  round-to-nearest-even at ties);
+* the denormal-fix constant is added in `f64` and stored to `f32`,
+  then `M = (L+R)*0.5` / `S = (L-R)*0.5` are composed from the stored
+  pair — the reference `Read_WAV_Samples` operation order;
+* the digital-silence flag is “all sample values zero”, which equals
+  the reference raw-byte `DigitalSilence` test for 16/24/32-bit
+  content (a value is zero iff its little-endian bytes are).
+
+Verification against the scalar C `mpcenc` 1.32.0 **differential
+compatibility oracle** (fixtures are committed C output; Rust tests
+never invoke C):
+
+* `tests/encoder_wide.rs` replays the 11-row
+  `tests/data/encoder/wide_manifest.txt` corpus (24-bit ramp /
+  low-amplitude / full-range / noise at all four rates + mono; 32-bit
+  ramp / low-amplitude / full-range) byte-for-byte through
+  `encode_s32`, with first-divergence diagnostics, and proves each wide
+  row **differs** from its `>> 16` truncation;
+* the `read_block_matches_the_c_pcm_conversion_oracle` unit test pins
+  the **intermediate** converted values (pre-fix `f32`, stored
+  `L`/`R`/`M`/`S`) against the C-generated
+  `tests/data/encoder/pcm_conversion_oracle.txt` (1800 rows: 24-bit
+  stereo, 32-bit stereo, 24-bit mono);
+* `left_aligned_s32_reproduces_the_i16_path_byte_for_byte` proves
+  16-bit input is bit-identical through either entry point, and the
+  frozen J.1/J.2 corpora keep pinning `encode(&[i16])` itself.
 
 ## SV8 primitives (target vocabulary for later phases)
 
@@ -316,6 +390,12 @@ Three tests anchor the oracle:
   structural SV8 validation for every integer `(quality, rate)` pair
   (`0..=10` × 44.1/48/37.8/32 kHz, two signals each), mono at q5 × 4 rates,
   and the long multi-`AP` cases.
+* `tests/encoder_wide.rs` — always runs, C-free; replays
+  `tests/data/encoder/wide_manifest.txt`: byte-identical `encode_s32`
+  output for the 24/32-bit corpus (J.6), each row also proven to differ
+  from its `i16` truncation; the intermediate conversion is pinned by
+  the `read_block_matches_the_c_pcm_conversion_oracle` unit test
+  against `tests/data/encoder/pcm_conversion_oracle.txt`.
 * `psy::math`/`psy::fft` unit tests — always run, C-free; verify the
   `FAST_MATH` primitives and the spectrum/FFT kernels against
   `tests/data/psy/math.txt` and `tests/data/psy/fft/`.

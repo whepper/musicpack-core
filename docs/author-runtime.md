@@ -143,8 +143,10 @@ For the current Author product:
   **not offered as UI options** — no new codec semantics reach users
   through the product surface.
 
-Sources deeper than 16 bits are reduced to the top 16 bits (documented fidelity gap;
-exact for 16-bit sources).
+Source precision: integer sources keep their full bit depth end-to-end
+(8/16/24/32-bit → left-aligned `i32` → `encode_s32`), since J.6; the
+byte-level conversion semantics are differential-tested against scalar C
+`mpcenc` 1.32.0.
 
 ## 9. Replacement safety
 

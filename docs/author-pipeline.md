@@ -77,8 +77,9 @@ musicpack-author build    <draft.json> -o DIR [--mpak FILE] [--quality Q]
 ## 3. Encoding
 
 Sources: FLAC and integer-PCM WAV (the reference's `encode-draft`
-contract). The source is decoded with the core's native decoders, reduced to
-interleaved 16-bit PCM, and encoded by `MusepackEncoder`; the result is a
+contract). The source is decoded with the core's native decoders into
+interleaved **full-scale left-aligned 32-bit PCM** (the decoder's `read_s32`
+contract) and encoded by `MusepackEncoder::encode_s32`; the result is a
 complete SV8 stream. `AudioInfo::is_float` is rejected, channels are limited
 to 1–2, and sample rates to 32/37.8/44.1/48 kHz.
 
@@ -96,13 +97,20 @@ qualities (`NaN`, `±inf`) and non-SV8 sample rates still fail closed with a
 typed `unsupported` error — non-finite rejection is intentional (C's `NaN`
 behaviour is undefined), never a silent remap. The Author UI continues to
 offer only integer q5/6/7/8.
-Sources deeper than 16 bits are reduced to the top 16 bits (exact for
-16-bit); the reference passes the source bit depth to `mpcenc`.
+**Source precision (J.6, closed):** no reduction to 16 bits remains —
+the stage keeps the decoder's left-aligned `i32` samples and encodes
+through `encode_s32`, so 8/16/24/32-bit integer sources keep their full
+source precision end-to-end (converted once, with the reference
+conversion's rounding, into the encoder's `f32` analysis buffers). Byte
+parity against scalar C `mpcenc` 1.32.0 for 24/32-bit inputs is pinned
+hermetically by the encoder's `wide_manifest.txt` corpus and
+end-to-end by the Author's wide-PCM differential (below).
 
 Compatibility: `tests/pipeline.rs` proves the Rust encoder is
-**byte-identical** to `mpcenc` for a real 16-bit FLAC at q6/44100 (skipped
-if `mpcenc` is absent), and the encoder's committed corpus remains the
-authoritative bitstream evidence.
+**byte-identical** to `mpcenc` for a real 16-bit FLAC at q6/44100 (needs
+the reference build and its external `flac` decoder; skipped otherwise),
+and for a 24-bit WAV through the wide-PCM differential; the encoder's
+committed corpus remains the authoritative bitstream evidence.
 
 ## 4. Waveform and analysis
 
@@ -167,7 +175,6 @@ CLI survives only as a non-default development escape hatch
 | Area | Difference | Reason |
 |---|---|---|
 | Encoder quality/rate matrix | unsupported pairs error instead of encoding | the Rust encoder has no frozen tables for them; documented gap, not a silent remap |
-| Source bit depth | >16-bit reduced to top 16 bits | current encoder API consumes `i16`; documented fidelity gap |
 | Album loudness with mixed rate/channels | typed error | R4.1 robustness decision (the C mismeasures silently) |
 | Embedded artwork | typed error; extract to a file first | not yet ported; fail-closed |
 | `--sync-tags` (APEv2) | not implemented | optional tooling; not required for package correctness |
