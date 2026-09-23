@@ -43,6 +43,7 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod artwork;
 pub mod cli;
 pub mod draft;
 pub mod encode;
