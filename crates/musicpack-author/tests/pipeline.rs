@@ -20,7 +20,7 @@ use musicpack_author::pipeline::{
     AuthorRequest, IdentifyRequest, PipelineOptions, encode_stage, run, validate_json,
     waveform_stage,
 };
-use musicpack_author::{encode, waveform};
+use musicpack_author::{AuthorError, encode, waveform};
 use musicpack_core::authoring::LoudnessMode;
 use musicpack_core::format::checksum;
 use musicpack_core::format::manifest::ParsedManifest;
@@ -737,6 +737,190 @@ fn author_matches_mpcenc_on_a_wide_wav() {
             rust_bytes.len()
         );
     }
+}
+
+// ---------------------------------------------------------------------
+// Author-level coverage across the full SV8 rate/channel surface
+// (evidence-only hardening from the encoder capability audit; no
+// production changes — the encoder crate's frozen corpora already pin
+// these rates/channels differentially, these tests pin that the Author
+// stage threads them through)
+// ---------------------------------------------------------------------
+
+/// A minimal deterministic integer-PCM WAV at an arbitrary rate, channel
+/// count and width (8-bit unsigned, 16/24/32-bit signed, little-endian).
+fn write_pcm_wav(path: &Path, sample_rate: u32, channels: u16, bits: u16, frames: usize) {
+    let bytes_per_sample = (bits / 8) as usize;
+    let block_align = (channels as usize * bytes_per_sample) as u32;
+    let mut data = Vec::with_capacity(frames * block_align as usize);
+    let mut state = 0x1234_5678u32;
+    for _ in 0..frames {
+        for _ in 0..channels {
+            state = state.wrapping_mul(1664525).wrapping_add(1013904223);
+            let v = state as i32;
+            match bits {
+                // WAV 8-bit PCM is unsigned with 128 as silence.
+                8 => data.push(((v >> 24) as u8) ^ 0x80),
+                16 => data.extend_from_slice(&(v as i16).to_le_bytes()),
+                24 => data.extend_from_slice(&v.to_le_bytes()[..3]),
+                _ => data.extend_from_slice(&v.to_le_bytes()),
+            }
+        }
+    }
+    let mut wav = Vec::new();
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36u32 + data.len() as u32).to_le_bytes());
+    wav.extend_from_slice(b"WAVE");
+    wav.extend_from_slice(b"fmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&channels.to_le_bytes());
+    wav.extend_from_slice(&sample_rate.to_le_bytes());
+    wav.extend_from_slice(&(sample_rate * block_align).to_le_bytes());
+    wav.extend_from_slice(&(block_align as u16).to_le_bytes());
+    wav.extend_from_slice(&bits.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    wav.extend_from_slice(&data);
+    std::fs::write(path, wav).expect("write WAV");
+}
+
+/// Decodes a source to the full left-aligned `i32` PCM the Author feeds
+/// the encoder, returning `(info, pcm)` — the same read loop `encode_to`
+/// performs internally.
+fn decode_all_s32(path: &Path) -> (musicpack_core::audio::AudioInfo, Vec<i32>) {
+    let mut decoder =
+        musicpack_core::audio::open(Box::new(std::fs::File::open(path).unwrap())).unwrap();
+    let info = decoder.info().clone();
+    let channels = info.channels as usize;
+    let mut pcm = Vec::new();
+    let mut block = vec![0i32; 8192 * channels];
+    loop {
+        let read = decoder.read_s32(&mut block).unwrap();
+        if read == 0 {
+            break;
+        }
+        pcm.extend_from_slice(&block[..read * channels]);
+    }
+    (info, pcm)
+}
+
+/// `encode_to` must thread the *source's* sample rate into the encoder at
+/// every SV8 rate: the Author output has to equal a direct `encode_s32`
+/// replay at `EncoderConfig::new(q, rate, channels)` derived from the
+/// decoder's own `AudioInfo`. An encode that silently used a fixed rate
+/// would fail this equality (different `SH` field → different bytes).
+#[test]
+fn author_encodes_every_sv8_sample_rate() {
+    for rate in [32000u32, 37800, 44100, 48000] {
+        let temp = TempDir::new(&format!("rate-{rate}"));
+        let wav = temp.path().join("src.wav");
+        write_pcm_wav(&wav, rate, 2, 16, 1500);
+        let out = temp.path().join("src.mpc");
+        encode::encode_to(&wav, &out, 6.0).unwrap_or_else(|e| panic!("{rate} Hz must encode: {e}"));
+        let author_bytes = std::fs::read(&out).expect("author output");
+
+        let (info, pcm) = decode_all_s32(&wav);
+        assert_eq!(
+            (info.sample_rate, info.channels),
+            (rate, 2),
+            "the decoder must report the generated rate"
+        );
+        let config = EncoderConfig::new(6.0, info.sample_rate, info.channels as u32);
+        let direct = MusepackEncoder::new(config)
+            .unwrap()
+            .encode_s32(&pcm)
+            .unwrap();
+        assert_eq!(
+            author_bytes, direct,
+            "{rate} Hz: encode_to must use the source's sample rate"
+        );
+    }
+}
+
+/// A real 24-bit FLAC at a non-44.1 kHz rate through the same path.
+#[test]
+fn author_encodes_a_48k_flac_source() {
+    let temp = TempDir::new("flac-48k");
+    let source = fixture("flac24-48k.flac");
+    let out = temp.path().join("48k.mpc");
+    encode::encode_to(&source, &out, 6.0).expect("48 kHz FLAC encode");
+    let author_bytes = std::fs::read(&out).expect("author output");
+
+    let (info, pcm) = decode_all_s32(&source);
+    assert_eq!(
+        (info.sample_rate, info.channels, info.bits_per_sample),
+        (48000, 2, 24)
+    );
+    let config = EncoderConfig::new(6.0, info.sample_rate, info.channels as u32);
+    let direct = MusepackEncoder::new(config)
+        .unwrap()
+        .encode_s32(&pcm)
+        .unwrap();
+    assert_eq!(
+        author_bytes, direct,
+        "a 48 kHz FLAC must encode at its own rate with full 24-bit precision"
+    );
+}
+
+/// Mono sources take the encoder's 1-channel path: the Author output must
+/// equal the direct `encode_s32` replay at `channels = 1` (a stage that
+/// hard-coded stereo would produce a different stream).
+#[test]
+fn author_encodes_mono_sources() {
+    let temp = TempDir::new("mono");
+    let source = fixture("flac-mono-44k.flac");
+    let out = temp.path().join("mono.mpc");
+    encode::encode_to(&source, &out, 6.0).expect("mono encode");
+    let author_bytes = std::fs::read(&out).expect("author output");
+
+    let (info, pcm) = decode_all_s32(&source);
+    assert_eq!(info.channels, 1, "the fixture must be mono");
+    let config = EncoderConfig::new(6.0, info.sample_rate, 1);
+    let direct = MusepackEncoder::new(config)
+        .unwrap()
+        .encode_s32(&pcm)
+        .unwrap();
+    assert_eq!(
+        author_bytes, direct,
+        "a mono source must encode as channels = 1"
+    );
+}
+
+/// A non-SV8 sample rate fails closed at the Author level with the typed
+/// `unsupported` error (never a silent remap) and writes nothing.
+#[test]
+fn author_rejects_unsupported_sample_rate() {
+    let temp = TempDir::new("bad-rate");
+    let out = temp.path().join("x.mpc");
+    let err = encode::encode_to(&fixture("flac24-96k.flac"), &out, 6.0).unwrap_err();
+    match err {
+        AuthorError::Unsupported { detail } => {
+            assert!(detail.contains("96000"), "detail: {detail}");
+            assert!(detail.contains("not supported"), "detail: {detail}");
+        }
+        other => panic!("expected Unsupported, got {other:?}"),
+    }
+    assert!(!out.exists(), "a rejected encode must write nothing");
+}
+
+/// Sources with more than two channels are rejected fail-closed at the
+/// Author level (no downmix) and nothing is written.
+#[test]
+fn author_rejects_more_than_two_channels() {
+    let temp = TempDir::new("three-channel");
+    let wav = temp.path().join("surround.wav");
+    write_pcm_wav(&wav, 44100, 3, 16, 100);
+    let out = temp.path().join("surround.mpc");
+    let err = encode::encode_to(&wav, &out, 6.0).unwrap_err();
+    match err {
+        AuthorError::Unsupported { detail } => {
+            assert!(detail.contains("channels"), "detail: {detail}");
+            assert!(detail.contains("1 or 2"), "detail: {detail}");
+        }
+        other => panic!("expected Unsupported, got {other:?}"),
+    }
+    assert!(!out.exists(), "a rejected encode must write nothing");
 }
 
 #[test]
