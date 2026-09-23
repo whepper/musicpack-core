@@ -50,6 +50,7 @@ pub mod error;
 pub mod identify;
 pub mod inspect;
 pub mod pipeline;
+pub mod scan;
 pub mod waveform;
 
 pub use draft::{Draft, ValidationReport};

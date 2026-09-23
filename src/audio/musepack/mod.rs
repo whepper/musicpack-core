@@ -26,6 +26,7 @@
 //! reference demux bound) plus a tiny read scratch, independent of the member
 //! size. PCM memory is bounded by the caller's read buffer.
 
+pub mod apev2;
 pub mod decoder;
 pub mod sv8;
 pub(crate) mod tables;

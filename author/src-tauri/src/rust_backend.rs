@@ -215,9 +215,10 @@ impl RustBackend {
 
     // ---- package operations -------------------------------------------
 
-    /// Opens an existing `.mpack` directory as an authoring draft.
+    /// Opens an existing `.mpack` directory or a fresh album source
+    /// directory as an authoring draft (the reference `inspect` dispatch).
     pub fn inspect_album(&mut self, path: &str) -> Result<Value, HostError> {
-        let draft = author::inspect::package_to_draft(Path::new(path))?;
+        let draft = author::inspect::open_to_draft(Path::new(path))?;
         serde_json::from_str(&draft)
             .map_err(|e| HostError::new("inspect_failed", format!("invalid draft JSON: {e}")))
     }

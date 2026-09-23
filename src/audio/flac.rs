@@ -235,3 +235,31 @@ fn map_claxon(error: claxon::Error) -> Error {
         other => invalid(&format!("FLAC stream error: {other}")),
     }
 }
+
+/// Reads a FLAC stream's Vorbis comments **without decoding any audio**.
+///
+/// This is the tag seam for fresh-album discovery (`musicpack-author`): the
+/// stream is opened, every metadata block is walked exactly like
+/// [`FlacDecoder::new`] does (so a malformed comment/application block
+/// fails here the same way it would at decode time), and the comments are
+/// returned as `(key, value)` pairs in file order with the keys' original
+/// casing. An empty `Vec` means the stream carried no `VORBIS_COMMENT`
+/// block. No panic may escape — the same `catch_unwind` contract as
+/// [`FlacDecoder::new`] holds for untrusted input.
+pub fn read_vorbis_comments(source: Box<dyn Read>) -> Result<Vec<(String, String)>> {
+    // `read_vorbis_comment: true` retains the parsed comments; decoding
+    // stays lazy, so no frame data is read.
+    let options = claxon::FlacReaderOptions {
+        metadata_only: false,
+        read_vorbis_comment: true,
+    };
+    let reader = catch_unwind(AssertUnwindSafe(|| {
+        claxon::FlacReader::new_ext(source, options)
+    }))
+    .map_err(|_| invalid("FLAC decoder panicked while reading the stream header"))?
+    .map_err(map_claxon)?;
+    Ok(reader
+        .tags()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect())
+}

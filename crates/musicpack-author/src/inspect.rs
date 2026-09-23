@@ -1,4 +1,9 @@
-//! `inspect`: an existing `.mpack` package → authoring draft JSON.
+//! `inspect`: source → authoring draft JSON.
+//!
+//! [`open_to_draft`] dispatches exactly like the reference `inspect`
+//! command: a directory carrying a regular `manifest.json` is an existing
+//! `.mpack` package (see [`package_to_draft`]); anything else is a fresh
+//! album source directory handled by [`crate::scan::source_to_draft`].
 //!
 //! The authoring counterpart of `build_directory`. It reads a package
 //! directory through the core [`DirectoryBackend`] (the same backend the
@@ -29,7 +34,7 @@ use musicpack_core::storage::directory::DirectoryBackend;
 
 use crate::error::{AuthorError, Result};
 
-fn s(value: &str) -> Value {
+pub(crate) fn s(value: &str) -> Value {
     Value::String(value.to_string())
 }
 
@@ -38,7 +43,7 @@ fn opt(value: &Option<String>) -> Option<Value> {
 }
 
 /// Builds an object from `(key, value)` pairs, skipping `None`.
-fn object(members: Vec<(&str, Option<Value>)>) -> Value {
+pub(crate) fn object(members: Vec<(&str, Option<Value>)>) -> Value {
     Value::Object(
         members
             .into_iter()
@@ -48,7 +53,7 @@ fn object(members: Vec<(&str, Option<Value>)>) -> Value {
 }
 
 /// Builds an object from `(key, value)` pairs (all present).
-fn object_all(members: Vec<(&str, Value)>) -> Value {
+pub(crate) fn object_all(members: Vec<(&str, Value)>) -> Value {
     Value::Object(
         members
             .into_iter()
@@ -422,6 +427,20 @@ pub fn package_to_draft(package: &Path) -> Result<String> {
         parsed.manifest(),
         &root_str,
     )))
+}
+
+/// Opens `path` as an authoring draft source: an existing `.mpack`
+/// package directory when it carries a regular `manifest.json`, otherwise
+/// a fresh album source directory discovered by
+/// [`crate::scan::source_to_draft`]. This mirrors the reference `inspect`
+/// dispatch (a stat on `manifest.json` picks the branch), so the Author
+/// UI's single "open album or package" entry point works for both.
+pub fn open_to_draft(path: &Path) -> Result<String> {
+    if path.join("manifest.json").is_file() {
+        package_to_draft(path)
+    } else {
+        crate::scan::source_to_draft(path)
+    }
 }
 
 #[cfg(test)]

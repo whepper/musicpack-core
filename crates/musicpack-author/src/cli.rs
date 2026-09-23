@@ -67,7 +67,7 @@ fn usage() -> String {
      \x20 identify  <draft.json> [--mb-json FILE] [--mbid UUID] [--mb-search-json FILE] [--json]\n\
      \x20 build     <draft.json> -o DIR [--mpak FILE] [--quality Q] [--no-waveform]\n\
      \x20           [--no-loudness] [--replace] [--mb-json FILE] [--mbid UUID] [--json]\n\
-     \x20 inspect   <package-dir> [--json]"
+     \x20 inspect   <album-dir|package-dir> [--json]"
         .into()
 }
 
@@ -175,7 +175,7 @@ fn print_value(json: bool, value: &Value, text: impl FnOnce()) {
 
 fn cmd_inspect(rest: &[String]) -> Result<ExitCode, CliError> {
     let args = parse_args(rest, "inspect")?;
-    let draft = crate::inspect::package_to_draft(std::path::Path::new(&args.draft))?;
+    let draft = crate::inspect::open_to_draft(std::path::Path::new(&args.draft))?;
     println!("{draft}");
     Ok(ExitCode::SUCCESS)
 }
