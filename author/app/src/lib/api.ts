@@ -113,26 +113,32 @@ export class AuthorApi {
     })) as IdentifyResult;
   }
 
+  /** Creates the package. `opts.quality` is the selected Musepack quality
+   * and is threaded through to any build-time encoding, so the package can
+   * never be built at a quality different from the one the user selected. */
   async createPackage(
     draft: Draft,
     outputDir: string,
-    opts?: { replace?: boolean; syncTags?: boolean },
+    opts: { replace?: boolean; syncTags?: boolean; quality: string },
   ): Promise<CreateResult> {
     return (await this.invokeFn('create_package', {
       draftJson: JSON.stringify(draft),
       outputDir,
-      replace: opts?.replace ?? false,
-      syncTags: opts?.syncTags ?? false,
+      replace: opts.replace ?? false,
+      syncTags: opts.syncTags ?? false,
+      quality: opts.quality,
     })) as CreateResult;
   }
 
   /** Builds the draft and packs it into a single-file `.mpak` container.
    * The backend builds to a private staging `.mpack`, packs it via the
-   * authoritative `musicpack pack`, and removes the staging directory. */
-  async createMpak(draft: Draft, outputMpak: string): Promise<PackResult> {
+   * authoritative `musicpack pack`, and removes the staging directory.
+   * `quality` is threaded through like `createPackage`. */
+  async createMpak(draft: Draft, outputMpak: string, quality: string): Promise<PackResult> {
     return (await this.invokeFn('create_mpak', {
       draftJson: JSON.stringify(draft),
       outputMpak,
+      quality,
     })) as PackResult;
   }
 

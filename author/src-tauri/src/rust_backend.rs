@@ -32,8 +32,9 @@ use crate::author_service::BackendInfo;
 use crate::{musicbrainz, track_lyrics};
 
 /// Author API version spoken by this backend. Bumping it is a UI/host
-/// contract change (see `docs/author-runtime.md` §API version).
-pub const AUTHOR_API: u32 = 8;
+/// contract change (see `docs/author-runtime.md` §API version). Version 9
+/// adds the required `quality` argument on `create_package`/`create_mpak`.
+pub const AUTHOR_API: u32 = 9;
 
 /// MusicBrainz requests are paced to the service's ~1 req/s expectation.
 const MB_MINIMUM_INTERVAL: Duration = Duration::from_secs(1);
@@ -271,17 +272,21 @@ impl RustBackend {
     /// existing package (a failed build never destroys the previous one);
     /// `sync_tags` is accepted for UI compatibility and has no effect (the
     /// Rust path rebuilds deterministically — APEv2 sync is retired, see
-    /// `docs/author-runtime.md`).
+    /// `docs/author-runtime.md`). `quality` is the UI-selected Musepack
+    /// quality: any FLAC/WAV source still present at build time is encoded
+    /// at that quality, so the built package can never silently use a
+    /// different quality than the one the user selected.
     pub fn create_package(
         &mut self,
         draft_json: &str,
         output_dir: &str,
         replace: bool,
         _sync_tags: bool,
+        quality: f32,
     ) -> Result<Value, HostError> {
         stage_lyrics_validation(draft_json)?;
         let options = author::PipelineOptions {
-            quality: author::encode::DEFAULT_QUALITY,
+            quality,
             waveform: waveform_enabled(draft_json),
             loudness: musicpack_core::authoring::LoudnessMode::Measure,
             mpak: None,
@@ -303,8 +308,14 @@ impl RustBackend {
     }
 
     /// Builds the draft and packs it into a single-file `.mpak`, removing
-    /// the intermediate package directory.
-    pub fn create_mpak(&mut self, draft_json: &str, output_mpak: &str) -> Result<Value, HostError> {
+    /// the intermediate package directory. `quality` threads through like
+    /// [`Self::create_package`].
+    pub fn create_mpak(
+        &mut self,
+        draft_json: &str,
+        output_mpak: &str,
+        quality: f32,
+    ) -> Result<Value, HostError> {
         stage_lyrics_validation(draft_json)?;
         if Path::new(output_mpak).exists() {
             return Err(HostError::new(
@@ -314,7 +325,7 @@ impl RustBackend {
         }
         let staging = unique_staging_dir("mpak")?;
         let options = author::PipelineOptions {
-            quality: author::encode::DEFAULT_QUALITY,
+            quality,
             waveform: waveform_enabled(draft_json),
             loudness: musicpack_core::authoring::LoudnessMode::Measure,
             mpak: Some(PathBuf::from(output_mpak)),

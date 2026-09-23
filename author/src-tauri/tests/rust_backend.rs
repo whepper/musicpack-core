@@ -116,7 +116,7 @@ fn vertical_builds_verifies_packs_and_reinspects() {
     // create .mpack
     let output = temp.path().join("Host Album.mpack");
     let created = backend
-        .create_package(&draft, output.to_str().unwrap(), false, false)
+        .create_package(&draft, output.to_str().unwrap(), false, false, 6.0)
         .unwrap();
     assert_eq!(created["ok"], json!(true));
     assert!(output.join("audio/01 - One.mpc").is_file());
@@ -129,7 +129,9 @@ fn vertical_builds_verifies_packs_and_reinspects() {
 
     // create .mpak directly from a draft
     let mpak = temp.path().join("Host Album.mpak");
-    let packed = backend.create_mpak(&draft, mpak.to_str().unwrap()).unwrap();
+    let packed = backend
+        .create_mpak(&draft, mpak.to_str().unwrap(), 6.0)
+        .unwrap();
     assert_eq!(packed["ok"], json!(true));
     assert!(mpak.is_file());
     // The intermediate .mpack is gone.
@@ -167,6 +169,7 @@ fn vertical_builds_verifies_packs_and_reinspects() {
             output.to_str().unwrap(),
             true,
             false,
+            6.0,
         )
         .unwrap();
     assert_eq!(replaced["ok"], json!(true));
@@ -181,11 +184,11 @@ fn replacement_refuses_existing_output_without_replace() {
     let output = temp.path().join("Out.mpack");
     let mut backend = RustBackend::new();
     backend
-        .create_package(&draft, output.to_str().unwrap(), false, false)
+        .create_package(&draft, output.to_str().unwrap(), false, false, 6.0)
         .unwrap();
 
     let err = backend
-        .create_package(&draft, output.to_str().unwrap(), false, false)
+        .create_package(&draft, output.to_str().unwrap(), false, false, 6.0)
         .unwrap_err();
     assert_eq!(err.code, "io_failed");
     assert!(err.message.contains("already exists"), "{err:?}");
@@ -263,7 +266,7 @@ fn lyrics_variants_regress_through_the_host() {
     let mut backend = RustBackend::new();
     let output = temp.path().join("Lyrics.mpack");
     backend
-        .create_package(&draft, output.to_str().unwrap(), false, false)
+        .create_package(&draft, output.to_str().unwrap(), false, false, 6.0)
         .unwrap();
     assert_eq!(verified(output.to_str().unwrap())["ok"], json!(true));
     assert!(output.join("lyrics/plain.lrc").is_file());
@@ -292,6 +295,7 @@ fn lyrics_variants_regress_through_the_host() {
             output.to_str().unwrap(),
             true,
             false,
+            6.0,
         )
         .unwrap();
     assert_eq!(verified(output.to_str().unwrap())["ok"], json!(true));
@@ -377,7 +381,7 @@ fn poisoned_path_is_never_consulted() {
     let mut backend = RustBackend::new();
     let output = temp.path().join("Poison.mpack");
     let created = backend
-        .create_package(&draft, output.to_str().unwrap(), false, false)
+        .create_package(&draft, output.to_str().unwrap(), false, false, 6.0)
         .unwrap();
     let ok =
         created["ok"] == json!(true) && verified(output.to_str().unwrap())["ok"] == json!(true);
@@ -391,5 +395,42 @@ fn poisoned_path_is_never_consulted() {
     assert!(
         !sentinel.exists(),
         "a legacy binary was executed by the Rust authoring runtime"
+    );
+}
+
+/// The selected quality must never silently diverge from the quality the
+/// package is actually built with: `create_package` with `quality = 7.0`
+/// (a user who skips the encode stage) has to produce the q7 stream —
+/// byte-identical to encoding the same source at 7.0, and different from
+/// the default q6 stream that the old hard-coded behaviour produced.
+#[test]
+fn create_package_honours_the_selected_quality() {
+    let temp = TempDir::new("quality");
+    let root = album_root(&temp);
+    let draft = draft_json(&root);
+    let output = temp.path().join("Q7.mpack");
+
+    let mut backend = RustBackend::new();
+    backend
+        .create_package(&draft, output.to_str().unwrap(), false, false, 7.0)
+        .unwrap();
+
+    let built = std::fs::read(output.join("audio/01 - One.mpc")).unwrap();
+
+    // Reference encodes of the same source through the same Author stage.
+    let q7 = temp.path().join("ref-q7.mpc");
+    musicpack_author_pipeline::encode::encode_to(&root.join("one.flac"), &q7, 7.0).unwrap();
+    let q6 = temp.path().join("ref-q6.mpc");
+    musicpack_author_pipeline::encode::encode_to(&root.join("one.flac"), &q6, 6.0).unwrap();
+
+    assert_eq!(
+        built,
+        std::fs::read(&q7).unwrap(),
+        "the package must be built at the selected quality (7.0)"
+    );
+    assert_ne!(
+        built,
+        std::fs::read(&q6).unwrap(),
+        "the package must not silently fall back to the default quality"
     );
 }

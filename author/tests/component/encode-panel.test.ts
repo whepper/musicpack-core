@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import EncodePanel from '../../app/src/lib/ui/EncodePanel.svelte';
 import { api, draftStore } from '../../app/src/lib/bootstrap';
-import { encodeStaging, setEncodeStaging } from '../../app/src/lib/authoring-state';
+import { DEFAULT_QUALITY, encodeQuality, encodeStaging, setEncodeStaging } from '../../app/src/lib/authoring-state';
 import { render, click, tick, type RenderResult } from './helpers';
 import type { Draft, EncodeProgress } from '../../app/src/lib/types';
 
@@ -50,6 +50,7 @@ let view: RenderResult;
 describe('EncodePanel', () => {
   beforeEach(() => {
     setEncodeStaging(null);
+    encodeQuality.set(DEFAULT_QUALITY);
     draftStore.clear();
     draftStore.setDraft(draft());
     vi.restoreAllMocks();
@@ -57,6 +58,7 @@ describe('EncodePanel', () => {
   afterEach(() => {
     view?.cleanup();
     setEncodeStaging(null);
+    encodeQuality.set(DEFAULT_QUALITY);
   });
 
   it('is hidden when every track is already Musepack', () => {
@@ -130,5 +132,18 @@ describe('EncodePanel', () => {
     view = render(EncodePanel);
     const btn = view.queryAll('button').find((b) => (b.textContent ?? '').includes('Encode to Musepack'))!;
     await click(btn);
+  });
+
+  it('writes the selected quality to the shared store package creation reads', async () => {
+    // The dropdown and package creation must share one source of truth:
+    // choosing q7 here means a later create (even with a skipped encode
+    // stage) builds at q7.
+    view = render(EncodePanel);
+    const select = view.query('select[aria-label="Musepack quality"]') as HTMLSelectElement;
+    expect(select.value).toBe('6.0');
+    select.value = '7.0';
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    await tick();
+    expect(encodeQuality.get()).toBe('7.0');
   });
 });

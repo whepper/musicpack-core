@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import CreateDialog from '../../app/src/lib/ui/CreateDialog.svelte';
 import { api, draftStore } from '../../app/src/lib/bootstrap';
-import { createOpen, createResult } from '../../app/src/lib/authoring-state';
+import { createOpen, createResult, DEFAULT_QUALITY, encodeQuality } from '../../app/src/lib/authoring-state';
 import { render, click, tick, type RenderResult } from './helpers';
 import type { Draft } from '../../app/src/lib/types';
 
@@ -37,6 +37,7 @@ describe('CreateDialog packaging format', () => {
   beforeEach(() => {
     createOpen.set(true);
     createResult.set(null);
+    encodeQuality.set(DEFAULT_QUALITY);
     draftStore.setDraft(draft());
   });
   afterEach(() => {
@@ -44,6 +45,7 @@ describe('CreateDialog packaging format', () => {
     view = undefined;
     createOpen.set(false);
     createResult.set(null);
+    encodeQuality.set(DEFAULT_QUALITY);
     vi.restoreAllMocks();
   });
 
@@ -111,5 +113,69 @@ describe('CreateDialog packaging format', () => {
       expect(view!.text('.error-banner')).toContain('source package failed verification');
     });
     expect(view.text('h2')).toBe('Package creation failed');
+  });
+});
+
+describe('CreateDialog quality threading', () => {
+  beforeEach(() => {
+    createOpen.set(true);
+    createResult.set(null);
+    encodeQuality.set(DEFAULT_QUALITY);
+    draftStore.setDraft(draft());
+  });
+  afterEach(() => {
+    view?.cleanup();
+    view = undefined;
+    createOpen.set(false);
+    createResult.set(null);
+    encodeQuality.set(DEFAULT_QUALITY);
+    vi.restoreAllMocks();
+  });
+
+  it('creates the package at the selected quality (no silent q6 fallback)', async () => {
+    // The user picked q7 in the EncodePanel but never ran the encode
+    // stage: package creation must still build at q7, never at the
+    // hard-coded default.
+    encodeQuality.set('7.0');
+    vi.spyOn(api, 'pickOutputDirectory').mockResolvedValue('/out');
+    vi.spyOn(api, 'createPackage').mockResolvedValue({
+      ok: true,
+      outputPath: '/out/Artist - A.mpack',
+      replaced: false,
+      verify: { errors: 0, warnings: 0 },
+    });
+
+    view = render(CreateDialog);
+    await tick();
+    await click(buttonByText(view, 'Choose output…'));
+    await tick();
+    await click(buttonByText(view, 'Create'));
+    await vi.waitFor(() => {
+      expect(api.createPackage).toHaveBeenCalledWith(expect.anything(), '/out/Artist - A.mpack', {
+        replace: false,
+        syncTags: false,
+        quality: '7.0',
+      });
+    });
+  });
+
+  it('threads the selected quality into .mpak creation too', async () => {
+    encodeQuality.set('5.0');
+    vi.spyOn(api, 'pickOutputDirectory').mockResolvedValue('/out');
+    vi.spyOn(api, 'createMpak').mockResolvedValue({ ok: true, outputPath: '/out/Artist - A.mpak' });
+
+    view = render(CreateDialog);
+    await tick();
+    await click(view.query('input[value="mpak"]')!);
+    await click(buttonByText(view, 'Choose output…'));
+    await tick();
+    await click(buttonByText(view, 'Create .mpak'));
+    await vi.waitFor(() => {
+      expect(api.createMpak).toHaveBeenCalledWith(
+        expect.anything(),
+        '/out/Artist - A.mpak',
+        '5.0',
+      );
+    });
   });
 });

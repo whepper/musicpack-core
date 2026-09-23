@@ -36,12 +36,12 @@ command surface the frontend already used:
 
 | Command | Rust behaviour |
 |---|---|
-| `backend_info` | reports `authorApi = 8`, location `rust` |
+| `backend_info` | reports `authorApi = 9`, location `rust` |
 | `inspect_album` | `musicpack_author::inspect::package_to_draft` (`.mpack` dir → draft JSON) |
 | `validate_draft` | `pipeline::validate_json` + R3.5 lyric findings |
 | `identify_draft` | host transport + `identify_apply_json` / `identify_candidates_json` |
-| `create_package` | `pipeline::run` (encode + waveform + loudness + build + verify), optional atomic replace |
-| `create_mpak` | `pipeline::run` with `mpak: Some(..)`, intermediate `.mpack` removed |
+| `create_package` | `pipeline::run` (encode + waveform + loudness + build + verify), optional atomic replace; build-time encoding uses the selected `quality` |
+| `create_mpak` | `pipeline::run` with `mpak: Some(..)`, intermediate `.mpack` removed; same `quality` threading |
 | `pack_package` | core verify, then `storage::directory::pack_directory` |
 | `verify_package` | core `verify_directory` / `verify_mpak_file` → `{ok, errors, warnings}` |
 | `encode_tracks` | `pipeline::encode_stage_with` (per-track progress) |
@@ -53,13 +53,22 @@ command surface the frontend already used:
 draft; otherwise waveforms are generated. Loudness is always measured by the
 core builder. `sync_tags` is accepted and ignored (see §7).
 
+`create_package`/`create_mpak` take the **selected quality** (the same
+value the EncodePanel shows) and pass it to `PipelineOptions.quality`:
+the UI selection and the built package can never silently diverge, even
+when the user skips the encode stage and a FLAC/WAV source is encoded
+during the build itself. An unparseable `quality` fails closed with the
+`invalid_quality` code.
+
 ## 3. API version
 
-The UI↔host contract is versioned explicitly: `AUTHOR_API = 8` in
+The UI↔host contract is versioned explicitly: `AUTHOR_API = 9` in
 `rust_backend.rs`, reported through `backend_info.authorApi` and rendered by
-the backend banner. The legacy CLI keeps the C `MUSICPACK_AUTHOR_API` value;
-a mismatch is a hard error, never auto-negotiated. The version lives at the
-host boundary — `musicpack-core`/`musicpack-author` carry no UI API version.
+the backend banner. Version 9 added the required `quality` argument on
+`create_package`/`create_mpak`. The legacy CLI keeps the C
+`MUSICPACK_AUTHOR_API` value; a mismatch is a hard error, never
+auto-negotiated. The version lives at the host boundary —
+`musicpack-core`/`musicpack-author` carry no UI API version.
 
 ## 4. Progress
 
@@ -83,6 +92,7 @@ Cancellation sets a shared flag; the stages stop between tracks and return a
 |---|---|
 | `invalid_draft` | malformed or structurally invalid draft |
 | `invalid_lyrics` | unreadable/malformed lyric input |
+| `invalid_quality` | unparseable Musepack quality argument |
 | `missing_source` / `io_failed` | missing source or filesystem failure |
 | `unsupported` | unsupported audio / encoder configuration |
 | `encode_failed` | decoder/encoder failure (disc+track context) |

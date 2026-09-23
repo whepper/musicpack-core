@@ -6,7 +6,7 @@ SPDX-License-Identifier: BSD-3-Clause
 <script lang="ts">
   import { onMount } from 'svelte';
   import { api, draft, draftStore } from '../bootstrap';
-  import { createOpen, createResult, encodeStaging } from '../authoring-state';
+  import { createOpen, createResult, encodeQuality, encodeStaging } from '../authoring-state';
   import { defaultPackageName } from '../format';
   import type { CreateResult, PackageFormat, ValidationResult } from '../types';
 
@@ -98,9 +98,10 @@ SPDX-License-Identifier: BSD-3-Clause
         result = await api.createPackage(d, out, {
           replace: true,
           syncTags: true,
+          quality: $encodeQuality,
         });
       } else if (format === 'mpak') {
-        const p = await api.createMpak(d, out);
+        const p = await api.createMpak(d, out, $encodeQuality);
         result = p.ok
           ? {
               ok: true,
@@ -116,6 +117,7 @@ SPDX-License-Identifier: BSD-3-Clause
         result = await api.createPackage(d, out, {
           replace: false,
           syncTags: false,
+          quality: $encodeQuality,
         });
       }
     } catch (e) {

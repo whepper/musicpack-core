@@ -405,6 +405,7 @@ fn create_package(
     output_dir: String,
     replace: Option<bool>,
     sync_tags: Option<bool>,
+    quality: String,
 ) -> Result<serde_json::Value, HostError> {
     if state.rust {
         state.rust_backend.lock().unwrap().create_package(
@@ -412,8 +413,11 @@ fn create_package(
             &output_dir,
             replace.unwrap_or(false),
             sync_tags.unwrap_or(false),
+            parse_quality(&quality)?,
         )
     } else {
+        // Legacy: `build-draft` never encodes (quality lives only on
+        // `encode-draft`), so the selected quality has no effect here.
         state
             .service
             .lock()
@@ -426,6 +430,16 @@ fn create_package(
             )
             .map_err(HostError::from)
     }
+}
+
+/// Parses a UI-selected Musepack quality (same string surface as
+/// `encode_tracks`); an unparseable value fails closed instead of
+/// silently falling back to the default.
+fn parse_quality(quality: &str) -> Result<f32, HostError> {
+    quality
+        .trim()
+        .parse()
+        .map_err(|_| HostError::new("invalid_quality", format!("invalid quality '{quality}'")))
 }
 
 #[tauri::command]
@@ -447,14 +461,16 @@ fn create_mpak(
     state: State<AppState>,
     draft_json: String,
     output_mpak: String,
+    quality: String,
 ) -> Result<serde_json::Value, HostError> {
     if state.rust {
         state
             .rust_backend
             .lock()
             .unwrap()
-            .create_mpak(&draft_json, &output_mpak)
+            .create_mpak(&draft_json, &output_mpak, parse_quality(&quality)?)
     } else {
+        // Legacy: `build-draft` never encodes; see `create_package`.
         state
             .service
             .lock()

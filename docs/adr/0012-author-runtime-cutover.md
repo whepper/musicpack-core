@@ -27,8 +27,10 @@ C implementation stays available as a test/compatibility oracle.
    `MUSICPACK_AUTHOR_LEGACY=1` (`AuthorService`). The escape hatch is
    removable without touching the Rust path.
 3. **Author API version handshake.** The UI↔host boundary carries an explicit
-   `authorApi` version. `RustBackend` reports `AUTHOR_API = 8`
-   (`backend_info`); the legacy CLI reports the C `MUSICPACK_AUTHOR_API`. A
+   `authorApi` version. `RustBackend` reports `AUTHOR_API = 9`
+   (`backend_info`; originally 8, bumped when `create_package`/`create_mpak`
+   gained the required `quality` argument); the legacy CLI reports the C
+   `MUSICPACK_AUTHOR_API`. A
    mismatch is a hard, explicit error — no compatibility guessing. The
    version belongs to the host boundary, never to core.
 4. **Live MusicBrainz transport stays in the host.** `LiveMusicBrainz`

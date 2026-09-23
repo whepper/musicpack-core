@@ -5,12 +5,11 @@ SPDX-License-Identifier: BSD-3-Clause
 
 <script lang="ts">
   import { api, draft, draftStore } from '../bootstrap';
-  import { activeTask, setEncodeStaging } from '../authoring-state';
+  import { activeTask, encodeQuality, setEncodeStaging } from '../authoring-state';
   import { needsEncoding } from '../format';
   import ErrorDetails from './ErrorDetails.svelte';
   import type { EncodeProgress } from '../types';
 
-  const DEFAULT_QUALITY = '6.0';
   const QUALITIES = [
     { value: '6.0', label: 'q6 — excellent (recommended)' },
     { value: '5.0', label: 'q5 — high' },
@@ -23,7 +22,6 @@ SPDX-License-Identifier: BSD-3-Clause
   let total = $state(0);
   let stage = $state<string | null>(null);
   let currentTitle = $state<string | null>(null);
-  let quality = $state(DEFAULT_QUALITY);
   let error = $state<string | null>(null);
   let errorDetails = $state<string | null>(null);
   let encoded = $state(false);
@@ -50,7 +48,7 @@ SPDX-License-Identifier: BSD-3-Clause
     stage = null;
     currentTitle = null;
     try {
-      const result = await api.encodeTracks(d, quality, (p: EncodeProgress) => {
+      const result = await api.encodeTracks(d, $encodeQuality, (p: EncodeProgress) => {
         if (p.event === 'stage') {
           stage = p.stage ?? null;
           currentTitle = p.title ?? null;
@@ -113,7 +111,7 @@ SPDX-License-Identifier: BSD-3-Clause
     <h2>Encode to Musepack</h2>
     <p class="muted">
       Lossless sources are converted to Musepack SV8 at
-      <strong>q{quality}</strong> before the package is built. Your source
+      <strong>q{$encodeQuality}</strong> before the package is built. Your source
       files are never modified.
     </p>
 
@@ -127,7 +125,7 @@ SPDX-License-Identifier: BSD-3-Clause
     {:else if encoded}
       <p>
         <span class="chip ok">●</span>
-        Encoded {total} track(s) at q{quality} — ready to create the package
+        Encoded {total} track(s) at q{$encodeQuality} — ready to create the package
       </p>
       <p class="muted">
         Tracks carry the tags written at encode time. Edit album and track
@@ -143,7 +141,7 @@ SPDX-License-Identifier: BSD-3-Clause
       </button>
       <details class="advanced">
         <summary>Quality</summary>
-        <select aria-label="Musepack quality" bind:value={quality}>
+        <select aria-label="Musepack quality" bind:value={$encodeQuality}>
           {#each QUALITIES as q}
             <option value={q.value}>{q.label}</option>
           {/each}

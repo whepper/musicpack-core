@@ -54,6 +54,15 @@ export function setEncodeStaging(dir: string | null): void {
   encodeStaging.set(dir);
 }
 
+/** Default Musepack quality (the EncodePanel's documented default). */
+export const DEFAULT_QUALITY = '6.0';
+
+/** The Musepack quality the user selected. One source of truth: the
+ * EncodePanel writes it and package creation reads it, so the quality a
+ * package is built with can never silently diverge from the selected one
+ * (a skipped encode stage still builds at the selected quality). */
+export const encodeQuality = writable<string>(DEFAULT_QUALITY);
+
 export function invalidateValidation(): void {
   validation.set(null);
   validationDirty.set(false);

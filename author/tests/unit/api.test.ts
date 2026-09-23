@@ -70,20 +70,24 @@ describe('AuthorApi command surface', () => {
   it('creates a package at the chosen output', async () => {
     const calls: unknown[] = [];
     const { api } = makeApi(calls);
-    await api.createPackage(draft(), '/out.mpack');
+    await api.createPackage(draft(), '/out.mpack', { quality: '6.0' });
     expect(calls[0]).toMatchObject({
       cmd: 'create_package',
-      args: { outputDir: '/out.mpack' },
+      args: { outputDir: '/out.mpack', quality: '6.0' },
     });
   });
 
   it('passes replace and sync-tags for an in-place package save', async () => {
     const calls: unknown[] = [];
     const { api } = makeApi(calls);
-    await api.createPackage(draft(), '/existing.mpack', { replace: true, syncTags: true });
+    await api.createPackage(draft(), '/existing.mpack', {
+      replace: true,
+      syncTags: true,
+      quality: '7.0',
+    });
     expect(calls[0]).toMatchObject({
       cmd: 'create_package',
-      args: { outputDir: '/existing.mpack', replace: true, syncTags: true },
+      args: { outputDir: '/existing.mpack', replace: true, syncTags: true, quality: '7.0' },
     });
   });
 
@@ -100,10 +104,10 @@ describe('AuthorApi command surface', () => {
     const calls: unknown[] = [];
     const { api } = makeApi(calls);
     const d = draft();
-    await api.createMpak(d, '/out/album.mpak');
+    await api.createMpak(d, '/out/album.mpak', '7.0');
     expect(calls[0]).toEqual({
       cmd: 'create_mpak',
-      args: { draftJson: JSON.stringify(d), outputMpak: '/out/album.mpak' },
+      args: { draftJson: JSON.stringify(d), outputMpak: '/out/album.mpak', quality: '7.0' },
     });
   });
 
