@@ -790,3 +790,170 @@ fn apev2_absent_binary_non_utf8_and_malformed() {
     let mut cur = Cursor::new(bad_version);
     assert!(audio::musepack::apev2::read_tags(&mut cur).is_err());
 }
+
+// ---------------------------------------------------------------------
+// Embedded artwork reader: FLAC PICTURE blocks.
+// ---------------------------------------------------------------------
+
+/// A minimal metadata-only FLAC stream: `fLaC` + the given blocks with
+/// correct `is_last` flags (the first must be STREAMINFO). No frames —
+/// the picture reader never touches audio.
+fn flac_metadata(blocks: &[(u8, Vec<u8>)]) -> Vec<u8> {
+    assert!(!blocks.is_empty());
+    let mut out = b"fLaC".to_vec();
+    for (i, (block_type, payload)) in blocks.iter().enumerate() {
+        let len = payload.len();
+        assert!(len <= 0x00FF_FFFF, "block length is a 24-bit field");
+        let header = if i + 1 == blocks.len() {
+            0x80 | block_type
+        } else {
+            *block_type
+        };
+        out.push(header);
+        out.extend_from_slice(&[(len >> 16) as u8, (len >> 8) as u8, len as u8]);
+        out.extend_from_slice(payload);
+    }
+    out
+}
+
+/// The mandatory first block (34 payload bytes; the reader checks the
+/// block layout, not the acoustic facts).
+fn streaminfo() -> (u8, Vec<u8>) {
+    (0, vec![0u8; 34])
+}
+
+/// A well-formed PICTURE block payload.
+fn picture_payload(picture_type: u32, mime: &str, description: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut p = Vec::new();
+    p.extend_from_slice(&picture_type.to_be_bytes());
+    p.extend_from_slice(&(mime.len() as u32).to_be_bytes());
+    p.extend_from_slice(mime.as_bytes());
+    p.extend_from_slice(&(description.len() as u32).to_be_bytes());
+    p.extend_from_slice(description);
+    p.extend_from_slice(&1u32.to_be_bytes()); // width (never consumed)
+    p.extend_from_slice(&1u32.to_be_bytes()); // height
+    p.extend_from_slice(&24u32.to_be_bytes()); // depth
+    p.extend_from_slice(&0u32.to_be_bytes()); // colors
+    p.extend_from_slice(&(data.len() as u32).to_be_bytes());
+    p.extend_from_slice(data);
+    p
+}
+
+/// Signature-valid image payloads (the readers never decode, so the
+/// bytes only need to be preserved exactly).
+const JPEG_IMAGE: &[u8] = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\xff\xd9";
+const PNG_IMAGE: &[u8] = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\xff\xd9";
+
+#[test]
+fn flac_pictures_preserve_types_mime_and_exact_bytes() {
+    let stream = flac_metadata(&[
+        streaminfo(),
+        (3, vec![0u8; 8]), // padding: exercised by the bounded skip path
+        (
+            6,
+            picture_payload(3, "image/jpeg", b"front cover", JPEG_IMAGE),
+        ),
+        (6, picture_payload(4, "image/png", b"", PNG_IMAGE)),
+    ]);
+    let pictures = audio::flac::read_pictures(Box::new(Cursor::new(stream))).unwrap();
+    assert_eq!(pictures.len(), 2, "both PICTURE blocks, in block order");
+    assert_eq!(pictures[0].picture_type, 3);
+    assert_eq!(pictures[0].mime, "image/jpeg");
+    assert_eq!(pictures[0].data, JPEG_IMAGE, "payload preserved exactly");
+    assert_eq!(pictures[1].picture_type, 4);
+    assert_eq!(pictures[1].mime, "image/png");
+    assert_eq!(pictures[1].data, PNG_IMAGE);
+}
+
+#[test]
+fn flac_pictures_allow_empty_payloads() {
+    // Structurally valid with zero image bytes; the consumer decides
+    // whether an empty payload is usable artwork (it is not).
+    let stream = flac_metadata(&[
+        streaminfo(),
+        (6, picture_payload(3, "image/jpeg", b"", &[])),
+    ]);
+    let pictures = audio::flac::read_pictures(Box::new(Cursor::new(stream))).unwrap();
+    assert_eq!(pictures.len(), 1);
+    assert!(pictures[0].data.is_empty());
+}
+
+#[test]
+fn flac_pictures_reject_malformed_metadata() {
+    let read = |stream: Vec<u8>| audio::flac::read_pictures(Box::new(Cursor::new(stream)));
+
+    // No fLaC signature.
+    assert!(read(b"OggSnot-a-flac".to_vec()).is_err());
+
+    // The first block must be STREAMINFO.
+    assert!(
+        read(flac_metadata(&[(
+            6,
+            picture_payload(3, "image/jpeg", b"", JPEG_IMAGE)
+        )]))
+        .is_err()
+    );
+
+    // A second STREAMINFO block.
+    assert!(read(flac_metadata(&[streaminfo(), streaminfo()])).is_err());
+
+    // Reserved block type 127.
+    assert!(read(flac_metadata(&[streaminfo(), (127, Vec::new())])).is_err());
+
+    // Truncated picture payload: the block claims more bytes than exist.
+    let mut truncated = flac_metadata(&[
+        streaminfo(),
+        (6, picture_payload(3, "image/jpeg", b"", JPEG_IMAGE)),
+    ]);
+    truncated.truncate(truncated.len() - 4);
+    assert!(read(truncated).is_err());
+
+    // Truncated header: the stream stops mid-header.
+    let mut cut_header = b"fLaC".to_vec();
+    cut_header.extend_from_slice(&[0x80, 0x00]);
+    assert!(read(cut_header).is_err());
+
+    // MIME longer than the reference's 128-byte bound.
+    let mut long_mime = picture_payload(3, "image/jpeg", b"", JPEG_IMAGE);
+    long_mime[4..8].copy_from_slice(&256u32.to_be_bytes());
+    assert!(read(flac_metadata(&[streaminfo(), (6, long_mime)])).is_err());
+
+    // MIME that is not valid UTF-8 (structurally invalid metadata).
+    let mut bad_mime = Vec::new();
+    bad_mime.extend_from_slice(&3u32.to_be_bytes()); // picture type
+    bad_mime.extend_from_slice(&2u32.to_be_bytes()); // mime length
+    bad_mime.extend_from_slice(&[0xff, 0xfe]); // invalid UTF-8
+    assert!(read(flac_metadata(&[streaminfo(), (6, bad_mime)])).is_err());
+
+    // Description longer than the reference's 4096-byte bound.
+    let mut long_description = picture_payload(3, "image/jpeg", b"", JPEG_IMAGE);
+    let description_len_at = 4 + 4 + "image/jpeg".len();
+    long_description[description_len_at..description_len_at + 4]
+        .copy_from_slice(&8193u32.to_be_bytes());
+    assert!(read(flac_metadata(&[streaminfo(), (6, long_description)])).is_err());
+
+    // Image data length beyond the block that declares it.
+    let mut beyond_block = picture_payload(3, "image/jpeg", b"", JPEG_IMAGE);
+    let data_len_at = beyond_block.len() - JPEG_IMAGE.len() - 4;
+    beyond_block[data_len_at..data_len_at + 4].copy_from_slice(&0x00FF_FFFFu32.to_be_bytes());
+    assert!(read(flac_metadata(&[streaminfo(), (6, beyond_block)])).is_err());
+
+    // Image data length above the 32 MiB picture bound (checked before
+    // any allocation follows the claimed length).
+    let mut oversized = picture_payload(3, "image/jpeg", b"", JPEG_IMAGE);
+    let data_len_at = oversized.len() - JPEG_IMAGE.len() - 4;
+    oversized[data_len_at..data_len_at + 4].copy_from_slice(&0x0200_0001u32.to_be_bytes());
+    assert!(read(flac_metadata(&[streaminfo(), (6, oversized)])).is_err());
+}
+
+#[test]
+fn flac_metadata_block_count_is_bounded() {
+    // STREAMINFO + 4096 further blocks: the 4097th header fails closed
+    // (the reference's FLAC_BLOCK_MAX), so a hostile stream of zero-cost
+    // blocks cannot spin the walker.
+    let mut blocks: Vec<(u8, Vec<u8>)> = vec![streaminfo()];
+    for _ in 0..4096 {
+        blocks.push((1, Vec::new()));
+    }
+    assert!(audio::flac::read_pictures(Box::new(Cursor::new(flac_metadata(&blocks)))).is_err());
+}

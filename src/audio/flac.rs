@@ -29,11 +29,16 @@
 //! unwinding through the core. This holds for unwind builds (the default,
 //! and what tests/fuzzing use); a build compiled with `panic = "abort"`
 //! cannot intercept a panic by construction.
+//!
+//! Besides decoding, this module hosts the read-only metadata seams that
+//! fresh-album discovery and the authoring pipeline share —
+//! [`read_vorbis_comments`] (tags) and [`read_pictures`] (embedded
+//! artwork) — neither of which decodes any audio.
 
 use std::io::Read;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use super::{AudioDecoder, AudioInfo, Codec, int_pcm_to_f32, invalid};
+use super::{AudioDecoder, AudioInfo, Codec, int_pcm_to_f32, invalid, read_full};
 use crate::{Error, Result};
 
 /// A FLAC decoding session.
@@ -262,4 +267,187 @@ pub fn read_vorbis_comments(source: Box<dyn Read>) -> Result<Vec<(String, String
         .tags()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect())
+}
+
+// ---------------------------------------------------------------------
+// PICTURE metadata blocks (embedded artwork)
+// ---------------------------------------------------------------------
+
+/// Maximum accepted size of one embedded picture payload, in bytes — the
+/// reference's `MUSICPACK_PICTURE_MAX` (32 MiB). A FLAC metadata block
+/// length is a 24-bit field, so a well-formed block cannot reach this;
+/// the bound is defence in depth against a lying `data length` field.
+pub const MAX_PICTURE_BYTES: u64 = 32 * 1024 * 1024;
+/// Bound on walked metadata blocks (the reference's `FLAC_BLOCK_MAX`).
+const MAX_METADATA_BLOCKS: u32 = 4096;
+/// Bound on a PICTURE block's MIME-type field (the reference's `mlen > 128`).
+const MAX_MIME_BYTES: usize = 128;
+/// Bound on a PICTURE block's description field (the reference's
+/// `dlen > 4096`).
+const MAX_DESCRIPTION_BYTES: usize = 4096;
+
+/// A FLAC `PICTURE` metadata block with its image payload preserved
+/// byte-for-byte (never decoded, transcoded or re-encoded).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EmbeddedPicture {
+    /// The FLAC picture type field (3 = front cover, 4 = back cover,
+    /// 7 = leaflet page, 8 = media, …; anything else has no MusicPack
+    /// role of its own).
+    pub picture_type: u32,
+    /// The block's declared MIME type (ASCII per spec, accepted as UTF-8;
+    /// may be empty). A hint only — consumers validate signatures.
+    pub mime: String,
+    /// The original encoded image bytes.
+    pub data: Vec<u8>,
+}
+
+/// Reads every `PICTURE` metadata block of a FLAC stream **without
+/// decoding any audio**, preserving each image's bytes exactly.
+///
+/// This is the embedded-artwork seam for fresh-album discovery and the
+/// authoring pipeline (`musicpack-author`). `claxon` skips PICTURE
+/// blocks (they are not part of its public metadata surface), so the
+/// blocks are walked here directly, with the same structural rules as
+/// [`FlacDecoder::new`] / [`read_vorbis_comments`]: `fLaC` magic,
+/// STREAMINFO first and only once, block type 127 rejected, block count
+/// bounded. Every PICTURE payload is parsed with the reference's bounds
+/// (reference `picture_parse`: MIME ≤ 128 bytes, description ≤ 4096
+/// bytes, data ≤ [`MAX_PICTURE_BYTES`], all fields within the block).
+/// Truncated or out-of-bounds metadata is [`Error::Invalid`]; no
+/// third-party code is involved, so no panic can escape.
+///
+/// The description field is bounds-checked and discarded — MusicPack
+/// never consumes it, so a real-world non-UTF-8 description cannot fail
+/// an otherwise valid picture. The returned `data` is the original
+/// payload; callers decide whether it is usable (the authoring layer
+/// validates JPEG/PNG signatures before the bytes become artwork).
+pub fn read_pictures(source: Box<dyn Read>) -> Result<Vec<EmbeddedPicture>> {
+    let mut source = source;
+
+    let mut magic = [0u8; 4];
+    read_exact_or_invalid(source.as_mut(), &mut magic, "FLAC signature")?;
+    if &magic != b"fLaC" {
+        return Err(invalid("FLAC stream has no fLaC signature"));
+    }
+
+    let mut pictures = Vec::new();
+    let mut blocks: u32 = 0;
+    let mut saw_streaminfo = false;
+    loop {
+        let mut header = [0u8; 4];
+        read_exact_or_invalid(source.as_mut(), &mut header, "FLAC metadata block header")?;
+        blocks += 1;
+        if blocks > MAX_METADATA_BLOCKS {
+            return Err(invalid("FLAC stream has too many metadata blocks"));
+        }
+        let is_last = header[0] & 0x80 != 0;
+        let block_type = header[0] & 0x7f;
+        let length = u32::from_be_bytes([0, header[1], header[2], header[3]]);
+        // Same structural rules as the claxon walk (type 127 is reserved
+        // to reject frame-sync confusion; STREAMINFO must come first and
+        // only once).
+        if block_type == 127 {
+            return Err(invalid("FLAC metadata block type 127 is invalid"));
+        }
+        if !saw_streaminfo {
+            if block_type != 0 {
+                return Err(invalid("FLAC stream does not start with STREAMINFO"));
+            }
+            saw_streaminfo = true;
+        } else if block_type == 0 {
+            return Err(invalid("FLAC stream has a second STREAMINFO block"));
+        }
+
+        if block_type == 6 {
+            let mut payload = vec![0u8; length as usize];
+            read_exact_or_invalid(source.as_mut(), &mut payload, "FLAC PICTURE block")?;
+            pictures.push(parse_picture(&payload)?);
+        } else {
+            skip_exact(source.as_mut(), length, "FLAC metadata block")?;
+        }
+        if is_last {
+            break;
+        }
+    }
+    Ok(pictures)
+}
+
+/// Parses one PICTURE block payload with checked, bounded reads; every
+/// failure is [`Error::Invalid`] and the caller discards the payload.
+fn parse_picture(payload: &[u8]) -> Result<EmbeddedPicture> {
+    let mut at = 0usize;
+
+    let picture_type = take_be32(payload, &mut at)?;
+
+    let mime_len = take_be32(payload, &mut at)? as usize;
+    if mime_len > MAX_MIME_BYTES {
+        return Err(invalid("FLAC PICTURE MIME type is too long"));
+    }
+    let mime = std::str::from_utf8(take(payload, &mut at, mime_len)?)
+        .map_err(|_| invalid("FLAC PICTURE MIME type is not valid UTF-8"))?
+        .to_string();
+
+    let description_len = take_be32(payload, &mut at)? as usize;
+    if description_len > MAX_DESCRIPTION_BYTES {
+        return Err(invalid("FLAC PICTURE description is too long"));
+    }
+    // Bounds-checked, then discarded: never consumed by MusicPack.
+    let _description = take(payload, &mut at, description_len)?;
+
+    // width, height, depth, colors (pixel facts MusicPack never consumes).
+    take(payload, &mut at, 16)?;
+
+    let data_len = take_be32(payload, &mut at)?;
+    if u64::from(data_len) > MAX_PICTURE_BYTES {
+        return Err(invalid("FLAC PICTURE data exceeds the picture size bound"));
+    }
+    let data = take(payload, &mut at, data_len as usize)?.to_vec();
+
+    Ok(EmbeddedPicture {
+        picture_type,
+        mime,
+        data,
+    })
+}
+
+/// Reads one big-endian `u32`, failing closed on a short payload.
+fn take_be32(payload: &[u8], at: &mut usize) -> Result<u32> {
+    let bytes = take(payload, at, 4)?;
+    Ok(u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+}
+
+/// Advances `at` by `n` bytes and returns the slice, using checked
+/// arithmetic; a short payload is [`Error::Invalid`], never a panic or
+/// an out-of-bounds read.
+fn take<'a>(payload: &'a [u8], at: &mut usize, n: usize) -> Result<&'a [u8]> {
+    let end = at
+        .checked_add(n)
+        .ok_or_else(|| invalid("FLAC PICTURE length overflows"))?;
+    let bytes = payload
+        .get(*at..end)
+        .ok_or_else(|| invalid("FLAC PICTURE metadata is truncated"))?;
+    *at = end;
+    Ok(bytes)
+}
+
+/// Reads `buf` exactly; a short stream is truncated metadata
+/// ([`Error::Invalid`]), while a real source failure stays
+/// [`Error::Io`] through [`read_full`].
+fn read_exact_or_invalid(source: &mut dyn Read, buf: &mut [u8], what: &str) -> Result<()> {
+    match read_full(source, buf)? {
+        n if n == buf.len() => Ok(()),
+        _ => Err(invalid(&format!("{what} is truncated"))),
+    }
+}
+
+/// Reads and discards `remaining` bytes in bounded chunks (portable
+/// skip for non-seekable sources), failing closed on truncation.
+fn skip_exact(source: &mut dyn Read, mut remaining: u32, what: &str) -> Result<()> {
+    let mut buffer = [0u8; 4096];
+    while remaining > 0 {
+        let chunk = remaining.min(buffer.len() as u32) as usize;
+        read_exact_or_invalid(source, &mut buffer[..chunk], what)?;
+        remaining -= chunk as u32;
+    }
+    Ok(())
 }
