@@ -112,8 +112,11 @@ Offline Rust playback: time-to-playing ≈ 125 ms, seek ≈ 148 ms (R4.4 e2e).
   are rejected as an intentional boundary, and the full **integer** matrix
   (`0..=10` × 44.1/48/37.8/32 kHz, 44 configurations) plus mono differential
   coverage remain frozen regression oracles.
-- **Embedded artwork extraction** — FLAC PICTURE / APEv2 (Author pipeline),
-  if the product requires in-package embedded covers.
+- **Embedded artwork extraction** — **completed by the embedded-artwork
+  slice**: FLAC `PICTURE` and APEv2 `Cover Art (Front)` pictures
+  (JPEG/PNG by signature, external `front` wins, other roles fill in
+  deterministic order) are discovered at album scan and extracted
+  byte-exactly at staging (see `docs/author-pipeline.md` §3).
 - **SV7** — permanently out of scope unless SV7 is un-retired (ADR 0014 §5).
 - **`musicpack-mpc-tools`** — needs a product workflow before it gains a
   runtime consumer.

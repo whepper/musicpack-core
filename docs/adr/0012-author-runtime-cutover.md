@@ -81,5 +81,5 @@ C implementation stays available as a test/compatibility oracle.
   as optional development oracles.
 - Author packages verify with the core verifier, the C verifier, and ingest
   into the Rust server.
-- Known limitations (encoder matrix, >16-bit reduction, embedded-artwork
-  extraction, retired sonic/APEv2) are documented, not silent.
+- Known limitations (encoder matrix, >16-bit reduction, retired
+  sonic/APEv2) are documented, not silent.

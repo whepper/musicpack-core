@@ -97,22 +97,44 @@ pipeline cannot build (`.ogg`) are *not* discovered — a
 discovered-but-unbuildable draft would only fail later. Assets: one
 deterministic `front` cover from `cover|front|folder` × `jpg|jpeg|png`
 (root before disc dirs, then name, then extension order),
-`booklet.pdf`, `*.lrc`, `*.txt`/`*.md`.
+`booklet.pdf`, `*.lrc`, `*.txt`/`*.md`; embedded artwork (FLAC
+`PICTURE` blocks, the APEv2 `Cover Art (Front)` item) as draft entries —
+see **Artwork** below.
 
 **Tags.** FLAC → Vorbis comments (the core's claxon metadata walk, no
 audio decode; malformed blocks fail closed), `.mpc` → trailing APEv2
-text items (binary items such as cover art are skipped — embedded
-artwork is not extracted here), WAV → none (the reference scan reads
-none either). Tag reads are best-effort: a malformed tag leaves the
-file untagged — filename inference still applies — rather than failing
-discovery. The surface is the MVP mapping the draft model and identify
-consume: album `ALBUM`, `ALBUMARTIST`, `DATE|YEAR`, `GENRE`,
-`RELEASETYPE`/`MUSICBRAINZ_ALBUMTYPE`, label/catalogue, `BARCODE`,
-MusicBrainz release/release-group ids; per track `TITLE`,
+text items (binary items are skipped for tags; the single front-cover
+item is read separately for artwork, below), WAV → none (the reference
+scan reads none either). Tag reads are best-effort: a malformed tag
+leaves the file untagged — filename inference still applies — rather
+than failing discovery. The surface is the MVP mapping the draft model
+and identify consume: album `ALBUM`, `ALBUMARTIST`, `DATE|YEAR`,
+`GENRE`, `RELEASETYPE`/`MUSICBRAINZ_ALBUMTYPE`, label/catalogue,
+`BARCODE`, MusicBrainz release/release-group ids; per track `TITLE`,
 `TRACKNUMBER`, `ARTIST`, `COMPOSER`, `ISRC`, MusicBrainz
 recording/track ids. Album metadata is a first-wins union across the
 tracks in final order (a richer tag on a later file is never shadowed
 by an absent one).
+
+**Artwork.** External cover selection is unchanged (one deterministic
+`front`, above). Embedded artwork is *discovered* here and *extracted*
+later, with the reference's selection semantics: the external cover
+claims the `front` role first; FLAC `PICTURE` blocks (mapped 3 →
+`front`, 4 → `back`, 7 → `booklet-page`, 8 → `medium`, else `other`)
+and the APEv2 `Cover Art (Front)` item then fill the roles still free —
+first claim per role, tracks in final order, pictures in block order,
+front-role entries emitted first, so the result never depends on
+filesystem traversal order. Only signature-valid **JPEG/PNG** payloads
+of non-zero length qualify (extensions and declared MIME types are
+hints, never the decision); reads are best-effort, so structurally
+malformed embedded metadata contributes no artwork instead of failing
+discovery (the audio and its ordinary tags are unaffected). The bytes
+are extracted **at staging** (`pipeline::stage_artwork` via
+`musicpack_author::artwork`) — fail-closed now: an entry discovered
+earlier must still yield its role's artwork — and preserved verbatim
+(never decoded, resized or transcoded), after which the draft entry
+becomes a plain `artwork/<role>.<jpg|png>` path and the downstream
+builder never learns where the bytes came from.
 
 **Numbering and order.** `TRACKNUMBER` (APEv2 `Track`) wins, else the
 filename's leading digits, else the track is unnumbered. A disc with
@@ -127,11 +149,12 @@ deterministic: repeated scans of the same tree are byte-identical.
 **Not done here** — derived facts and fail-closed concerns stay where
 they were: no stream probing (per-track `codec`/`sampleRate`/
 `duration` hints are re-derived at build; rate/channel support fails
-closed in the encode stage), no embedded-artwork extraction (§9), no
-resampling, downmixing, hashing or MusicBrainz lookup (identify stays
-an explicit user action), and no `waveformAnalysis`/`identity`/
-`openedFrom` blocks (absent means "new draft"; the runtime defaults
-waveforms on).
+closed in the encode stage), no embedded-artwork *byte extraction* during
+discovery itself (discovery reports embedded entries; staging extracts
+them — **Artwork** above), no resampling, downmixing, hashing or
+MusicBrainz lookup (identify stays an explicit user action), and no
+`waveformAnalysis`/`identity`/`openedFrom` blocks (absent means "new
+draft"; the runtime defaults waveforms on).
 
 Intentional divergences from the legacy C scan:
 
@@ -245,7 +268,7 @@ CLI survives only as a non-default development escape hatch
 |---|---|---|
 | Encoder quality/rate matrix | unsupported pairs error instead of encoding | the Rust encoder has no frozen tables for them; documented gap, not a silent remap |
 | Album loudness with mixed rate/channels | typed error | R4.1 robustness decision (the C mismeasures silently) |
-| Embedded artwork | typed error; extract to a file first | not yet ported; fail-closed |
+| Embedded artwork | extracted at staging from the draft's embedded entries; front-role entries emitted first | ported from the reference `extract_embedded_image`/`inspect` (same picture-role mapping, JPEG/PNG signature rule, external-`front`-wins precedence, byte preservation); only the draft's entry order differs (reference: track order) |
 | `--sync-tags` (APEv2) | not implemented | optional tooling; not required for package correctness |
 | Sonic analysis | out of the pipeline | no Rust equivalent; not required for the package contract |
 | `representations[]` | materialized from draft source paths | the C CLI never staged them; R4.1 supports them |

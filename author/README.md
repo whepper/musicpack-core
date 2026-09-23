@@ -320,9 +320,19 @@ intentionally not identical to the stage order.
 5. **Artwork/assets** — choose/change front artwork, add role-tagged artwork,
    and manage booklet/lyrics/extras. These are package-level assets: the
    `lyrics` row here feeds the manifest's root `lyrics[]`, not any track
-   (per-track lyrics live on the Tracks step). Embedded artwork is
-   extracted at build time. (Phase 1 artwork files must live inside the
-   album directory — lyric source files follow the same rule.)
+   (per-track lyrics live on the Tracks step). Embedded artwork — FLAC
+   `PICTURE` blocks and Musepack APEv2 `Cover Art (Front)` items — is
+   discovered with the album and extracted at build time: **JPEG/PNG
+   only**, chosen by byte signature (never by extension or declared MIME),
+   preserved exactly — never decoded, resized or transcoded. An external
+   `cover`/`front`/`folder` file always wins the `front` role; embedded
+   pictures then fill the roles still free (`front`, `back`,
+   `booklet-page`, `medium`, `other`), first per role in track order, so
+   the same album always produces the same package. Malformed embedded
+   artwork is skipped at import (the album and its tags still open) and
+   fails only the build of an entry that can no longer be extracted.
+   (Phase 1 artwork files must live inside the album directory — lyric
+   source files follow the same rule.)
 6. **Identity** — enter a MusicBrainz release ID (exact match applied) or
    search by barcode for candidates with per-release confidence; applying a
    candidate fetches and applies that release. Confidence is always visible
@@ -438,6 +448,11 @@ measured.
 - Barcode candidate selection exists; artist/title MusicBrainz search does not.
 - New artwork/assets must be inside the album directory (no external file
   copying yet).
+- Embedded artwork covers the MusicPack artwork contract only: JPEG/PNG
+  front and role pictures from FLAC `PICTURE` blocks and the APEv2 front
+  cover, extracted byte-exactly at build. Other embedded image formats
+  (WebP/AVIF/GIF/…) are ignored, embedded artwork is not previewed in the
+  UI before a build, and images are never resized or transcoded.
 - The standalone `.app` is built for the host architecture only (arm64 or
   x86_64, not yet universal).
 - No signing/notarization/distribution: the bundle is ad-hoc signed by
