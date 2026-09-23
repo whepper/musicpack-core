@@ -8,8 +8,9 @@
 
 use std::path::{Path, PathBuf};
 
-use musicpack_author::pipeline::{AuthorRequest, PipelineOptions, run};
+use musicpack_author::pipeline::{AuthorRequest, PipelineOptions, encode_stage, run};
 use musicpack_author::{draft, encode, scan};
+use musicpack_core::authoring::LoudnessMode;
 use musicpack_core::format::manifest::ReleaseType;
 use musicpack_musepack_encoder::encoder::{EncoderConfig, MusepackEncoder};
 
@@ -941,6 +942,126 @@ fn validation_requires_a_source_for_embedded_artwork() {
             .any(|e| e.contains("has no sourceAudio")),
         "errors: {report:?}"
     );
+}
+#[test]
+fn embedded_artwork_flows_into_the_package() {
+    let temp = TempDir::new("embedded-e2e");
+    let album = temp.album("Embedded Album");
+    let tags = [
+        ("TITLE", "One"),
+        ("TRACKNUMBER", "1"),
+        ("ALBUM", "Embedded Album"),
+        ("ALBUMARTIST", "The Band"),
+    ];
+    std::fs::write(
+        album.join("01 - One.flac"),
+        tagged_flac_with_pictures(
+            &tags,
+            &[(3, "image/jpeg", JPEG_IMAGE), (4, "image/png", PNG_IMAGE)],
+        ),
+    )
+    .unwrap();
+
+    // discovery → draft → validation → existing pipeline (encode +
+    // build_directory + core verify).
+    let bytes = scan::source_to_draft(&album).unwrap();
+    let d = draft::parse(bytes.as_bytes()).unwrap();
+    assert_eq!(d.artwork.len(), 2);
+    assert!(draft::validate(&d).is_ok());
+
+    let output = temp.path().join("Embedded Album.mpack");
+    let outcome = run(&AuthorRequest {
+        draft_json: bytes.as_bytes(),
+        output: &output,
+        options: PipelineOptions {
+            waveform: false,
+            loudness: LoudnessMode::Omit,
+            ..PipelineOptions::default()
+        },
+        identify: None,
+    })
+    .expect("pipeline run");
+    assert!(outcome.report.is_ok(), "{:?}", outcome.report.findings());
+
+    // The package carries the embedded bytes exactly — no transcoding.
+    let roles: Vec<&str> = outcome
+        .manifest
+        .artwork
+        .iter()
+        .map(|a| a.role.as_str())
+        .collect();
+    assert_eq!(roles, vec!["front", "back"]);
+    for (role, expected, file) in [
+        ("front", JPEG_IMAGE, "artwork/front.jpg"),
+        ("back", PNG_IMAGE, "artwork/back.png"),
+    ] {
+        let packaged = std::fs::read(output.join(file))
+            .unwrap_or_else(|e| panic!("{role} artwork missing from package: {e}"));
+        assert_eq!(packaged, expected, "{role} bytes preserved exactly");
+        let manifest_entry = outcome
+            .manifest
+            .artwork
+            .iter()
+            .find(|a| a.role == role)
+            .expect("manifest entry");
+        assert_eq!(
+            manifest_entry.asset.sha256,
+            musicpack_core::format::checksum::sha256_hex(&packaged),
+            "{role} hash matches the packaged bytes"
+        );
+    }
+}
+
+#[test]
+fn embedded_mpc_artwork_survives_the_encode_stage() {
+    let temp = TempDir::new("embedded-stage");
+    let album = temp.album("Sine Album");
+    let mut mpc = std::fs::read(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/musepack/sine44-q5.mpc"),
+    )
+    .unwrap();
+    let mut cover = b"cover.png\0".to_vec();
+    cover.extend_from_slice(PNG_IMAGE);
+    mpc.extend(apev2_bytes(&[
+        ("Title", b"Q5 Sine".as_slice(), 0),
+        ("Album", b"Sine Album".as_slice(), 0),
+        ("Artist", b"The Synth".as_slice(), 0),
+        ("Track", b"4".as_slice(), 0),
+        ("Cover Art (Front)", &cover, 0x8000_0000),
+    ]));
+    std::fs::write(album.join("04 - Q5 Sine.mpc"), mpc).unwrap();
+    let bytes = scan::source_to_draft(&album).unwrap();
+    assert!(draft::validate(&draft::parse(bytes.as_bytes()).unwrap()).is_ok());
+
+    // The GUI's encode stage: extraction happens here, and the draft
+    // entry becomes a plain path (embedded/sourceAudio dropped).
+    let staging = temp.path().join("staging");
+    let transformed = encode_stage(bytes.as_bytes(), &staging, 6.0).unwrap();
+    let staged = std::fs::read(staging.join("artwork/front.png")).unwrap();
+    assert_eq!(staged, PNG_IMAGE, "staged bytes are the embedded bytes");
+    let t = draft::parse(transformed.as_bytes()).unwrap();
+    assert_eq!(t.artwork.len(), 1);
+    assert_eq!(t.artwork[0].path.as_deref(), Some("artwork/front.png"));
+    assert!(!t.artwork[0].embedded);
+    assert!(t.artwork[0].source_audio.is_none());
+
+    // The transformed draft builds through the existing pipeline.
+    let output = temp.path().join("Sine.mpack");
+    let outcome = run(&AuthorRequest {
+        draft_json: transformed.as_bytes(),
+        output: &output,
+        options: PipelineOptions {
+            waveform: false,
+            loudness: LoudnessMode::Omit,
+            ..PipelineOptions::default()
+        },
+        identify: None,
+    })
+    .expect("pipeline run");
+    assert!(outcome.report.is_ok(), "{:?}", outcome.report.findings());
+    let packaged = std::fs::read(output.join("artwork/front.png")).unwrap();
+    assert_eq!(packaged, PNG_IMAGE, "package bytes preserved exactly");
 }
 
 // ---------------------------------------------------------------------

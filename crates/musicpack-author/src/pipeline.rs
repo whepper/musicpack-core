@@ -51,7 +51,7 @@ use crate::draft::{
 };
 use crate::error::{AuthorError, Result};
 use crate::identify::{self, Confidence, MusicBrainzProvider};
-use crate::{encode, waveform};
+use crate::{artwork, encode, waveform};
 
 /// Pipeline options.
 #[derive(Debug, Clone, PartialEq)]
@@ -837,7 +837,15 @@ fn stage_audio(
     })
 }
 
-/// Stages file-based artwork.
+/// Stages artwork: file-based entries are copied as before; embedded
+/// entries are extracted from their `sourceAudio` file (FLAC `PICTURE`
+/// blocks / the APEv2 front cover) through [`crate::artwork`], with the
+/// original image bytes preserved and the extension taken from the
+/// JPEG/PNG signature. Extraction is fail-closed — a draft entry that
+/// promises embedded artwork must yield signature-valid bytes of the
+/// entry's role at build time (the reference's `extract_embedded_image`
+/// contract); the downstream builder receives plain files and never
+/// learns where they came from.
 fn stage_artwork(
     draft: &Draft,
     works: &WorkTree,
@@ -845,26 +853,64 @@ fn stage_artwork(
 ) -> Result<Vec<StagedArtwork>> {
     let mut out = Vec::new();
     for entry in &draft.artwork {
-        let Some(path) = &entry.path else {
-            return Err(AuthorError::Unsupported {
+        let (rel, source) = if let Some(path) = &entry.path {
+            let source =
+                draft::resolve_source(&draft.source_root, path).ok_or_else(|| AuthorError::Io {
+                    detail: format!("artwork file not found: {path}"),
+                })?;
+            let ext = extension_of(path);
+            let name = if ext.is_empty() {
+                entry.role.clone()
+            } else {
+                format!("{}.{ext}", entry.role)
+            };
+            (namer.unique(format!("artwork/{name}")), source)
+        } else if entry.embedded || entry.source_audio.is_some() {
+            let src = entry
+                .source_audio
+                .as_deref()
+                .ok_or_else(|| AuthorError::Artwork {
+                    detail: format!(
+                        "embedded artwork entry for role '{}' has no sourceAudio",
+                        entry.role
+                    ),
+                })?;
+            let source =
+                draft::resolve_source(&draft.source_root, src).ok_or_else(|| AuthorError::Io {
+                    detail: format!("embedded artwork source not found: {src}"),
+                })?;
+            let image =
+                artwork::extract_role(&source, &entry.role).map_err(|e| AuthorError::Artwork {
+                    detail: format!(
+                        "cannot extract embedded '{}' artwork from '{}': {e}",
+                        entry.role, src
+                    ),
+                })?;
+            let Some(image) = image else {
+                return Err(AuthorError::Artwork {
+                    detail: format!("no usable embedded '{}' artwork in '{}'", entry.role, src),
+                });
+            };
+            let rel = namer.unique(format!("artwork/{}.{}", entry.role, image.format.ext()));
+            let dest = works.path().join(&rel);
+            create_parent(&dest)?;
+            fs::write(&dest, &image.bytes).map_err(|e| AuthorError::Io {
+                detail: format!("cannot write '{}': {e}", dest.display()),
+            })?;
+            out.push(StagedArtwork {
+                role: entry.role.clone(),
+                package: rel.clone(),
+                work: rel,
+            });
+            continue;
+        } else {
+            return Err(AuthorError::Artwork {
                 detail: format!(
-                    "embedded artwork for role '{}' is not yet supported by the Rust pipeline; \
-                     extract the image to a file first",
+                    "artwork entry for role '{}' has neither a path nor an embedded source",
                     entry.role
                 ),
             });
         };
-        let source =
-            draft::resolve_source(&draft.source_root, path).ok_or_else(|| AuthorError::Io {
-                detail: format!("artwork file not found: {path}"),
-            })?;
-        let ext = extension_of(path);
-        let name = if ext.is_empty() {
-            entry.role.clone()
-        } else {
-            format!("{}.{ext}", entry.role)
-        };
-        let rel = namer.unique(format!("artwork/{name}"));
         copy_into(works.path(), &rel, &source)?;
         out.push(StagedArtwork {
             role: entry.role.clone(),

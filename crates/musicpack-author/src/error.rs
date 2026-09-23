@@ -2,8 +2,9 @@
 //!
 //! Stages fail distinctly so callers (the CLI, the future Tauri host) can
 //! react per stage: a draft that does not parse, a draft that fails
-//! validation, an unsupported source, an encoder failure, an identification
-//! failure, a package-build failure, or a pack failure.
+//! validation, an unsupported source, an encoder failure, an embedded
+//! artwork extraction failure, an identification failure, a package-build
+//! failure, or a pack failure.
 //!
 //! Every message is actionable and includes disc/track context where a
 //! track is the subject. The pipeline is fail-closed: any `Err` means no
@@ -45,6 +46,13 @@ pub enum AuthorError {
         /// What is unsupported and why.
         detail: String,
     },
+    /// An artwork entry could not be staged: embedded artwork that a
+    /// draft entry promises is not extractable from its `sourceAudio`
+    /// (missing role, malformed metadata, unsupported or empty payload).
+    Artwork {
+        /// What failed and where.
+        detail: String,
+    },
     /// MusicBrainz identification failed.
     Identification {
         /// What failed.
@@ -79,6 +87,7 @@ impl fmt::Display for AuthorError {
                 detail,
             } => write!(f, "disc {disc} track {track}: {detail}"),
             AuthorError::Unsupported { detail } => write!(f, "unsupported: {detail}"),
+            AuthorError::Artwork { detail } => write!(f, "artwork: {detail}"),
             AuthorError::Identification { detail } => write!(f, "identification: {detail}"),
             AuthorError::Build(e) => write!(f, "package build failed: {e}"),
             AuthorError::Pack { detail } => write!(f, "pack failed: {detail}"),
