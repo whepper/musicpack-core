@@ -570,3 +570,223 @@ fn open_sniffs_magic_not_extension() {
         Err(Error::Invalid { .. })
     ));
 }
+
+// ---------------------------------------------------------------------
+// Tag readers for fresh-album discovery: FLAC Vorbis comments and the
+// trailing APEv2 tag of `.mpc` pass-through sources.
+// ---------------------------------------------------------------------
+
+/// Replaces the fixture's `VORBIS_COMMENT` block payload with the given
+/// comments (the block's position and the frames stay untouched; only
+/// its length bytes and payload change).
+fn flac_with_comments(comments: &[(&str, &str)]) -> Vec<u8> {
+    let bytes = fixture("flac16-44k.flac");
+    assert_eq!(&bytes[0..4], b"fLaC");
+
+    // Locate the existing VORBIS_COMMENT block (type 4).
+    let mut offset = 4usize;
+    let (payload_at, frames_at) = loop {
+        assert!(offset + 4 <= bytes.len(), "truncated metadata block header");
+        let header = bytes[offset];
+        let len = u32::from_be_bytes([0, bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]])
+            as usize;
+        let next = offset + 4 + len;
+        assert!(next <= bytes.len(), "truncated metadata block payload");
+        if header & 0x7f == 4 {
+            break (offset + 4, next);
+        }
+        assert_eq!(header & 0x80, 0, "fixture must contain a comment block");
+        offset = next;
+    };
+
+    let mut payload = Vec::new();
+    payload.extend_from_slice(&9u32.to_le_bytes()); // vendor length
+    payload.extend_from_slice(b"musicpack");
+    payload.extend_from_slice(&(comments.len() as u32).to_le_bytes());
+    for (key, value) in comments {
+        let entry = format!("{key}={value}");
+        payload.extend_from_slice(&(entry.len() as u32).to_le_bytes());
+        payload.extend_from_slice(entry.as_bytes());
+    }
+
+    let mut out = Vec::with_capacity(bytes.len() + payload.len());
+    out.extend_from_slice(&bytes[..payload_at - 3]); // through the block header byte
+    let len = payload.len();
+    out.extend_from_slice(&[(len >> 16) as u8, (len >> 8) as u8, len as u8]);
+    out.extend_from_slice(&payload);
+    out.extend_from_slice(&bytes[frames_at..]);
+    out
+}
+
+/// A FLAC whose `VORBIS_COMMENT` block claims an entry far longer than
+/// the block itself — structurally malformed metadata.
+fn flac_with_malformed_comments() -> Vec<u8> {
+    let mut tagged = flac_with_comments(&[("TITLE", "Alpha")]);
+    // payload = vendor_len(4) + vendor(9) + count(4) + entry_len(4) …
+    let entry_len_at = {
+        let mut offset = 4usize;
+        loop {
+            let block_type = tagged[offset] & 0x7f;
+            let len = u32::from_be_bytes([
+                0,
+                tagged[offset + 1],
+                tagged[offset + 2],
+                tagged[offset + 3],
+            ]) as usize;
+            if block_type == 4 {
+                let vendor_len = u32::from_le_bytes([
+                    tagged[offset + 4],
+                    tagged[offset + 5],
+                    tagged[offset + 6],
+                    tagged[offset + 7],
+                ]) as usize;
+                break offset + 4 + 4 + vendor_len + 4;
+            }
+            offset += 4 + len;
+        }
+    };
+    tagged[entry_len_at..entry_len_at + 4].copy_from_slice(&0x00FF_FFFFu32.to_le_bytes());
+    tagged
+}
+
+#[test]
+fn flac_vorbis_comments_round_trip_without_decoding() {
+    let tagged = flac_with_comments(&[
+        ("TITLE", "Alpha"),
+        ("ARTIST", "A & B"),
+        ("title", "duplicate"),
+    ]);
+    let tags = audio::flac::read_vorbis_comments(Box::new(Cursor::new(tagged))).unwrap();
+    assert_eq!(
+        tags,
+        vec![
+            ("TITLE".to_string(), "Alpha".to_string()),
+            ("ARTIST".to_string(), "A & B".to_string()),
+            // Original casing is preserved; the scan layer upper-cases.
+            ("title".to_string(), "duplicate".to_string()),
+        ]
+    );
+
+    // The untagged fixture still carries only its original single
+    // comment (`encoder=Lavf63.1.101`, written by the encoder that made
+    // it) — reading never errors and never invents entries.
+    let plain = fixture("flac16-44k.flac");
+    assert_eq!(
+        audio::flac::read_vorbis_comments(Box::new(Cursor::new(plain))).unwrap(),
+        vec![("encoder".to_string(), "Lavf63.1.101".to_string())]
+    );
+}
+
+#[test]
+fn flac_vorbis_comments_fail_closed_on_malformed_blocks() {
+    let err =
+        audio::flac::read_vorbis_comments(Box::new(Cursor::new(flac_with_malformed_comments())))
+            .unwrap_err();
+    assert!(!err.to_string().is_empty());
+}
+
+/// An APEv2 tag: optional 32-byte header + items + 32-byte footer.
+fn apev2_bytes(items: &[(&str, &[u8], u32)]) -> Vec<u8> {
+    fn footer(tag_size: u32, count: u32, flags: u32) -> Vec<u8> {
+        let mut f = b"APETAGEX".to_vec();
+        f.extend_from_slice(&2000u32.to_le_bytes()); // APEv2.00
+        f.extend_from_slice(&tag_size.to_le_bytes());
+        f.extend_from_slice(&count.to_le_bytes());
+        f.extend_from_slice(&flags.to_le_bytes());
+        f.extend_from_slice(&[0u8; 8]);
+        f
+    }
+    let mut body = Vec::new();
+    for (key, value, flags) in items {
+        body.extend_from_slice(&(value.len() as u32).to_le_bytes());
+        body.extend_from_slice(&flags.to_le_bytes());
+        body.extend_from_slice(key.as_bytes());
+        body.push(0);
+        body.extend_from_slice(value);
+    }
+    let tag_size = (64 + body.len()) as u32;
+    let count = items.len() as u32;
+    let mut out = footer(tag_size, count, 0x2000_0000 | 0x4000_0000); // is-header|has-footer
+    out.extend_from_slice(&body);
+    out.extend_from_slice(&footer(tag_size, count, 0x8000_0000 | 0x4000_0000)); // has-header|has-footer
+    out
+}
+
+#[test]
+fn apev2_text_tags_round_trip_from_the_file_tail() {
+    let mut data = b"not a real stream, but seekable bytes".to_vec();
+    data.extend(apev2_bytes(&[
+        ("Title", b"Alpha".as_slice(), 0),
+        ("Track", b"3".as_slice(), 0),
+    ]));
+    let mut cur = Cursor::new(data);
+    let tags = audio::musepack::apev2::read_tags(&mut cur).unwrap();
+    assert_eq!(
+        tags,
+        vec![
+            ("Title".to_string(), "Alpha".to_string()),
+            ("Track".to_string(), "3".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn apev2_absent_binary_non_utf8_and_malformed() {
+    // No tag at the tail → empty, not an error.
+    let mut plain = Cursor::new(b"plain bytes".to_vec());
+    assert!(
+        audio::musepack::apev2::read_tags(&mut plain)
+            .unwrap()
+            .is_empty()
+    );
+
+    // Binary items (cover art) and non-UTF-8 text items are skipped;
+    // valid text items around them are kept, in tag order.
+    let mut data = b"payload".to_vec();
+    data.extend(apev2_bytes(&[
+        (
+            "Cover Art (Front)",
+            b"folder.jpg\0\xff\xd8binary".as_slice(),
+            0x8000_0000, // binary
+        ),
+        ("Comment", [0xffu8, 0xfe].as_slice(), 0), // not UTF-8
+        ("Title", b"Gamma".as_slice(), 0),
+    ]));
+    let mut cur = Cursor::new(data);
+    assert_eq!(
+        audio::musepack::apev2::read_tags(&mut cur).unwrap(),
+        vec![("Title".to_string(), "Gamma".to_string())]
+    );
+
+    // A footer claiming more items than the tag holds → truncated → error.
+    let mut item = Vec::new();
+    item.extend_from_slice(&1u32.to_le_bytes()); // value size
+    item.extend_from_slice(&0u32.to_le_bytes()); // flags (text)
+    item.extend_from_slice(b"Title\0");
+    item.extend_from_slice(b"x");
+    let tag_size = (64 + item.len()) as u32; // header + one item + footer
+    let mut f = b"APETAGEX".to_vec();
+    f.extend_from_slice(&2000u32.to_le_bytes());
+    f.extend_from_slice(&tag_size.to_le_bytes());
+    f.extend_from_slice(&5u32.to_le_bytes()); // claims 5 items, holds 1
+    f.extend_from_slice(&0x4000_0000u32.to_le_bytes()); // has-footer, no header
+    f.extend_from_slice(&[0u8; 8]);
+    let mut truncated = b"payload".to_vec();
+    truncated.extend_from_slice(&f); // leading copy (no-header layout: items start at tag_start)
+    truncated.extend_from_slice(&item);
+    truncated.extend_from_slice(&f); // footer
+    let mut cur = Cursor::new(truncated);
+    assert!(audio::musepack::apev2::read_tags(&mut cur).is_err());
+
+    // An unsupported footer version → error.
+    let mut bad_version = b"payload".to_vec();
+    let mut f = b"APETAGEX".to_vec();
+    f.extend_from_slice(&4242u32.to_le_bytes());
+    f.extend_from_slice(&32u32.to_le_bytes());
+    f.extend_from_slice(&0u32.to_le_bytes());
+    f.extend_from_slice(&0u32.to_le_bytes());
+    f.extend_from_slice(&[0u8; 8]);
+    bad_version.extend_from_slice(&f);
+    let mut cur = Cursor::new(bad_version);
+    assert!(audio::musepack::apev2::read_tags(&mut cur).is_err());
+}
