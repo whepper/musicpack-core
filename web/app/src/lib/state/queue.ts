@@ -22,8 +22,13 @@ import {
 
 export interface QueueItem extends PlaybackItem {
   track: Track;
-  releaseId: number;
-  albumId: number;
+  /** Owning release row id. Absent for a source outside the server's
+   *  release/album graph — a client-side `.mpak` container track, which is
+   *  discovered from the container's own MANF. Every reader is already
+   *  tolerant (`transition-profiles.ts` guards it). */
+  releaseId?: number;
+  /** Owning album row id; absent for the same reason as `releaseId`. */
+  albumId?: number;
   /** Set iff an alternate representation was selected for this item
    *  (Phase 4); absent = the track's primary audio. */
   representationId?: number;
@@ -182,9 +187,20 @@ export function createQueueStore(opts: { selection?: () => SelectionContext } = 
       if (items.length === 0) throw new Error('This release has no playable tracks.');
       return model.playSequence(items, startIndex);
     },
+    /** Play a ready-made item sequence (e.g. tracks discovered from a
+     *  client-side `.mpak` container). The same queue and player as a
+     *  server-backed release; the items are already fully built. */
+    playItems(items: QueueItem[], startIndex = 0): QueueItem {
+      if (items.length === 0) throw new Error('There are no tracks to play.');
+      return model.playSequence(items, startIndex);
+    },
     /** Append a single item to the end of the current queue. */
     addItem(item: QueueItem): void {
       model.enqueue(item);
+    },
+    /** Append a ready-made item sequence to the end of the current queue. */
+    addItems(items: QueueItem[]): void {
+      model.enqueueMany(items);
     },
     /** Append all tracks of a release to the end of the current queue. */
     addAlbum(

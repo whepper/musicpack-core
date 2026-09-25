@@ -47,6 +47,234 @@ use musicpack_engine::{
 pub mod core_impl {
     use super::*;
 
+    // ---- container (`mpak:`) track discovery --------------------------------
+    //
+    // Opens a container through a host's *range reads* and reports the tracks
+    // its MANF defines. The chain is the authoritative one and is shared with
+    // the playback path: `RangeByteSource` → `MpakBackend` (container index,
+    // member bounds, member rules) → the core manifest parser. Nothing here
+    // re-implements container or manifest parsing, and nothing in JavaScript
+    // needs to know a container's framing.
+
+    /// One track discovered in a container, as the client needs it.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ContainerTrack {
+        /// Manifest track number.
+        pub number: i64,
+        /// Manifest track title.
+        pub title: String,
+        /// The audio member's package-relative path.
+        pub member: String,
+        /// The canonical playback source: `mpak:<container>#<member>`.
+        ///
+        /// Built by core's single formatter, never assembled by hand.
+        pub source: String,
+        /// The member's byte length (from the member table, not a stat).
+        pub size: u64,
+        /// The codec hint for backend selection, or `None` when the member is
+        /// not a decodable stream. `None` is reported, never omitted: the
+        /// track still exists, and playing it fails loudly at backend
+        /// selection rather than the album looking complete.
+        pub codec: Option<String>,
+        /// The MIME hint, from the same sniffed codec.
+        pub mime_type: Option<String>,
+        /// Declared length in seconds, when the stream declares one.
+        pub duration_seconds: Option<f64>,
+    }
+
+    /// The album a container's MANF describes, plus its tracks.
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct ContainerAlbum {
+        /// The container URL/key the tracks are members of.
+        pub container: String,
+        /// The container's own length in bytes.
+        pub size: u64,
+        /// Album title.
+        pub title: String,
+        /// Album artist names, in manifest order.
+        pub artists: Vec<String>,
+        /// Release type, when the manifest declares one.
+        pub release_type: Option<String>,
+        /// Tracks in disc-major, manifest order.
+        pub tracks: Vec<ContainerTrack>,
+    }
+
+    /// Names a sniffed [`audio::Codec`] for the client's backend selection.
+    ///
+    /// Detection is core's (magic bytes, in [`audio::open`]); this only names
+    /// the result on the wire, using the codec strings the client's existing
+    /// `rustDecodesCodec` predicate already accepts. A codec this build does not
+    /// name yields **no** hint rather than a guessed one, so the client fails
+    /// loudly at backend selection instead of trying a backend that cannot
+    /// decode it.
+    fn codec_hint(codec: audio::Codec) -> Option<(&'static str, &'static str)> {
+        match codec {
+            // core's Musepack decoder is SV8-only, so this is exact.
+            audio::Codec::Musepack => Some(("musepack-sv8", "audio/musepack")),
+            audio::Codec::Flac => Some(("flac", "audio/flac")),
+            audio::Codec::Wav => Some(("wav", "audio/wav")),
+            // `Codec` is `#[non_exhaustive]`.
+            _ => None,
+        }
+    }
+
+    /// Opens the container at `container` (of `size` bytes) through `fetch`
+    /// and reports its MANF's tracks.
+    ///
+    /// `fetch` is the host's synchronous range reader — the same
+    /// `(url, offset, len)` contract the playback engine uses, so a host
+    /// implements it once for both.
+    pub fn container_album<F>(
+        container: &str,
+        size: u64,
+        fetch: F,
+    ) -> Result<ContainerAlbum, String>
+    where
+        F: Fn(&str, u64, usize) -> Result<Vec<u8>, String> + 'static,
+    {
+        use musicpack_core::player::source_url::container_playback_source;
+        use musicpack_core::storage::PackageBackend;
+        use musicpack_core::storage::mpak::MpakBackend;
+        use std::sync::Arc;
+
+        // `MpakBackend::open` takes an `Arc<dyn ByteSource>`, which is the one
+        // signature to satisfy. The handle never crosses a thread: it is opened
+        // and dropped inside one call, and on wasm (and natively, here) the
+        // whole path is single-threaded, so the `Arc` is an API artefact rather
+        // than shared ownership.
+        #[allow(clippy::arc_with_non_send_sync)]
+        let backend = MpakBackend::open(Arc::new(musicpack_engine::RangeByteSource::new(
+            Rc::new(fetch),
+            container,
+            size,
+        )))
+        .map_err(|e| format!("cannot open container '{container}': {e}"))?;
+
+        // The MANF is the manifest; the container rules (exactly one MANF, the
+        // NUL check) were applied when the backend opened.
+        let manifest =
+            musicpack_core::format::manifest::ParsedManifest::parse(backend.manifest_bytes())
+                .map_err(|e| format!("container MANF is not a valid manifest: {e}"))?
+                .manifest()
+                .clone();
+
+        let mut tracks = Vec::new();
+        for disc in &manifest.media {
+            for track in &disc.tracks {
+                let member = track.audio.path.as_str();
+                // A member that is not in the member table cannot be served,
+                // and is reported as such rather than skipped silently.
+                let extent = backend
+                    .open_asset(member)
+                    .map_err(|_| format!("container '{container}' has no member '{member}'"))?;
+                let member_size = extent.len;
+                // Sniff the member's own leading bytes: the codec hint comes
+                // from what the member actually is, not from its extension.
+                let probed = match audio::open(extent.reader) {
+                    Ok(decoder) => {
+                        let info = decoder.info();
+                        let (codec, mime_type) = match codec_hint(info.codec) {
+                            Some((codec, mime)) => {
+                                (Some(codec.to_string()), Some(mime.to_string()))
+                            }
+                            None => (None, None),
+                        };
+                        (
+                            codec,
+                            mime_type,
+                            info.total_frames
+                                .map(|frames| frames as f64 / info.sample_rate as f64),
+                        )
+                    }
+                    // No decodable header: report no codec hint rather than a
+                    // guessed one (the track still exists; playing it fails
+                    // loudly), and fall back to the declared duration.
+                    Err(_) => (None, None, track.duration),
+                };
+                let (codec, mime_type, duration_seconds) = probed;
+                tracks.push(ContainerTrack {
+                    number: track.number as i64,
+                    title: track.title.clone(),
+                    member: member.to_string(),
+                    source: container_playback_source(container, member).url,
+                    size: member_size,
+                    codec,
+                    mime_type,
+                    duration_seconds,
+                });
+            }
+        }
+        if tracks.is_empty() {
+            return Err(format!(
+                "container '{container}' defines no playable tracks"
+            ));
+        }
+
+        Ok(ContainerAlbum {
+            container: container.to_string(),
+            size,
+            title: manifest.album.title.clone(),
+            artists: manifest
+                .album
+                .artists
+                .iter()
+                .map(|a| a.name.clone())
+                .collect(),
+            release_type: manifest.album.release_type.map(|r| r.as_str().to_string()),
+            tracks,
+        })
+    }
+
+    /// The client-facing JSON shape for a discovered container.
+    ///
+    /// Plain data only (no handles), so a host can hold it, snapshot it or
+    /// post it between workers unchanged.
+    pub fn container_album_value(album: &ContainerAlbum) -> Value {
+        let tracks = album
+            .tracks
+            .iter()
+            .map(|t| {
+                let mut fields: Vec<(String, Value)> = vec![
+                    ("number".into(), Value::Number(t.number as f64)),
+                    ("title".into(), Value::String(t.title.clone())),
+                    ("member".into(), Value::String(t.member.clone())),
+                    ("source".into(), Value::String(t.source.clone())),
+                    ("size".into(), Value::Number(t.size as f64)),
+                ];
+                if let Some(codec) = &t.codec {
+                    fields.push(("codec".into(), Value::String(codec.clone())));
+                }
+                if let Some(mime) = &t.mime_type {
+                    fields.push(("mimeType".into(), Value::String(mime.clone())));
+                }
+                if let Some(duration) = t.duration_seconds {
+                    fields.push(("durationSeconds".into(), Value::Number(duration)));
+                }
+                Value::Object(fields)
+            })
+            .collect();
+        let mut album_fields: Vec<(String, Value)> = vec![
+            ("container".into(), Value::String(album.container.clone())),
+            ("size".into(), Value::Number(album.size as f64)),
+            ("title".into(), Value::String(album.title.clone())),
+            (
+                "artists".into(),
+                Value::Array(
+                    album
+                        .artists
+                        .iter()
+                        .map(|a| Value::String(a.clone()))
+                        .collect(),
+                ),
+            ),
+        ];
+        if let Some(kind) = &album.release_type {
+            album_fields.push(("releaseType".into(), Value::String(kind.clone())));
+        }
+        album_fields.push(("tracks".into(), Value::Array(tracks)));
+        Value::Object(album_fields)
+    }
+
     /// A slab of open decode sessions.
     #[derive(Default)]
     pub struct Decodes {
@@ -1105,7 +1333,7 @@ pub mod core_impl {
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::core_impl::{Decodes, EngineCore, LyricsDocs, PlayerCore};
+    use super::core_impl::{Decodes, EngineCore, LyricsDocs, PlayerCore, RangeFetch};
     use js_sys::Float32Array;
     use wasm_bindgen::JsValue;
     use wasm_bindgen::prelude::*;
@@ -1117,6 +1345,72 @@ mod wasm {
     thread_local! {
         static DECODES: std::cell::RefCell<Decodes> = std::cell::RefCell::new(Decodes::default());
         static LYRICS: std::cell::RefCell<LyricsDocs> = std::cell::RefCell::new(LyricsDocs::default());
+    }
+
+    /// A synchronous range fetch backed by a JS callback.
+    struct JsRangeFetch(js_sys::Function);
+
+    impl super::core_impl::RangeFetch for JsRangeFetch {
+        fn fetch(&self, url: &str, offset: u64, len: usize) -> Result<Vec<u8>, String> {
+            let result = self.0.call3(
+                &JsValue::NULL,
+                &JsValue::from_str(url),
+                &JsValue::from_f64(offset as f64),
+                &JsValue::from_f64(len as f64),
+            );
+            match result {
+                Ok(value) => {
+                    if value.is_null() || value.is_undefined() {
+                        Ok(Vec::new())
+                    } else {
+                        let array = js_sys::Uint8Array::new(&value);
+                        let mut out = vec![0u8; array.length() as usize];
+                        array.copy_to(&mut out);
+                        Ok(out)
+                    }
+                }
+                Err(e) => Err(format!("range source error: {e:?}")),
+            }
+        }
+    }
+
+    /// Reads a `.mpak` container's MANF and returns the tracks it defines, as
+    /// JSON (see `core_impl::container_album_value` for the shape).
+    ///
+    /// `read(url, offset, len) -> Uint8Array` is the host's **synchronous**
+    /// range reader — the same contract, and the same function, the playback
+    /// engine uses — so a host implements it once. It is invoked only from the
+    /// decoder worker, where blocking is legal.
+    ///
+    /// `container` is the container's transport URL and `size` its length in
+    /// bytes: the container's tail framing is at the end of the file, so the
+    /// scan needs the real size. Every byte of container parsing, member
+    /// lookup and codec sniffing happens in Rust through
+    /// `musicpack-core`; the caller receives data, not container knowledge.
+    ///
+    /// An invalid container, an unparsable MANF, or a container with no
+    /// playable tracks is an error — never a partial album presented as
+    /// complete.
+    #[wasm_bindgen(js_name = containerTracks)]
+    pub fn container_tracks(
+        read: js_sys::Function,
+        container: &str,
+        size: f64,
+    ) -> Result<String, JsValue> {
+        if !(size.is_finite() && size > 0.0) {
+            return Err(err(
+                "a container source needs its length in bytes".to_string()
+            ));
+        }
+        let fetch = std::rc::Rc::new(JsRangeFetch(read));
+        let album =
+            super::core_impl::container_album(container, size as u64, move |url, offset, len| {
+                fetch.fetch(url, offset, len)
+            })
+            .map_err(err)?;
+        Ok(musicpack_core::json::print_canonical(
+            &super::core_impl::container_album_value(&album),
+        ))
     }
 
     /// Parses LRC bytes under the strict lyrics profile
@@ -1212,33 +1506,6 @@ mod wasm {
     ) -> Result<String, JsValue> {
         super::core_impl::representation_select(track_json, pref_json.as_deref(), predicate_json)
             .map_err(err)
-    }
-
-    /// A synchronous range fetch backed by a JS callback.
-    struct JsRangeFetch(js_sys::Function);
-
-    impl super::core_impl::RangeFetch for JsRangeFetch {
-        fn fetch(&self, url: &str, offset: u64, len: usize) -> Result<Vec<u8>, String> {
-            let result = self.0.call3(
-                &JsValue::NULL,
-                &JsValue::from_str(url),
-                &JsValue::from_f64(offset as f64),
-                &JsValue::from_f64(len as f64),
-            );
-            match result {
-                Ok(value) => {
-                    if value.is_null() || value.is_undefined() {
-                        Ok(Vec::new())
-                    } else {
-                        let array = js_sys::Uint8Array::new(&value);
-                        let mut out = vec![0u8; array.length() as usize];
-                        array.copy_to(&mut out);
-                        Ok(out)
-                    }
-                }
-                Err(e) => Err(format!("range source error: {e:?}")),
-            }
-        }
     }
 
     /// A browser engine control-plane handle (not a second Player).
@@ -1427,8 +1694,360 @@ mod tests {
     use std::sync::Arc;
 
     use super::core_impl::{
-        Decodes, EngineCore, LyricsDocs, PlayerCore, RangeFetch, representation_select,
+        Decodes, EngineCore, LyricsDocs, PlayerCore, RangeFetch, container_album,
+        container_album_value, representation_select,
     };
+
+    /// A real container with two real, *distinct* SV8 members, packed with
+    /// core's own writer — the same fixture shape the engine and server suites
+    /// use. Never a hand-rolled container.
+    ///
+    /// The second member is a different corpus file (37.1 kHz against
+    /// 44.1 kHz), so "these two members are independent" is a real claim: their
+    /// decoded audio genuinely differs, and a source that resolved to the
+    /// wrong member could not pass.
+    fn packed_album() -> (Vec<u8>, Vec<u8>, Vec<u8>) {
+        use musicpack_core::format::checksum::sha256_hex;
+        use musicpack_core::format::mpak::{PackMember, PackSource, write_mpak};
+        use std::io::Read;
+
+        let audio = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/musepack/sine44-q5.mpc"
+        ))
+        .expect("fixture corpus");
+        let second = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/musepack/sine37-q4.mpc"
+        ))
+        .expect("fixture corpus");
+        let sha1 = sha256_hex(&audio);
+        let sha2 = sha256_hex(&second);
+        let manifest = format!(
+            r#"{{"format":"musicpack","version":1,"album":{{"title":"Wasm Album","artists":[{{"name":"The Packer"}}],"releaseType":"album"}},"media":[{{"disc":1,"tracks":[{{"track":1,"title":"One","audio":{{"path":"audio/01.mpc","sha256":"{sha1}"}}}},{{"track":2,"title":"Two","audio":{{"path":"audio/02.mpc","sha256":"{sha2}"}}}}]}}]}}"#
+        );
+        struct Two<'a> {
+            manifest: String,
+            table: Vec<PackMember>,
+            content: Vec<(String, &'a [u8])>,
+        }
+        impl PackSource for Two<'_> {
+            fn manifest_bytes(&self) -> &[u8] {
+                self.manifest.as_bytes()
+            }
+            fn members(&self) -> &[PackMember] {
+                &self.table
+            }
+            fn member_size(&self, path: &str) -> Result<u64, musicpack_core::Error> {
+                Ok(self
+                    .content
+                    .iter()
+                    .find(|(p, _)| p == path)
+                    .map(|(_, b)| b.len() as u64)
+                    .unwrap_or(0))
+            }
+            fn read_member(&self, path: &str) -> Result<Box<dyn Read>, musicpack_core::Error> {
+                Ok(Box::new(std::io::Cursor::new(
+                    self.content
+                        .iter()
+                        .find(|(p, _)| p == path)
+                        .map(|(_, b)| b.to_vec())
+                        .unwrap_or_default(),
+                )))
+            }
+        }
+        let source = Two {
+            manifest,
+            table: vec![
+                PackMember {
+                    path: "audio/01.mpc".into(),
+                    sha256_hex: sha1,
+                },
+                PackMember {
+                    path: "audio/02.mpc".into(),
+                    sha256_hex: sha2,
+                },
+            ],
+            content: vec![
+                ("audio/01.mpc".to_string(), audio.as_slice()),
+                ("audio/02.mpc".to_string(), second.as_slice()),
+            ],
+        };
+        let mut container = Vec::new();
+        write_mpak(&source, &mut container).expect("pack");
+        (container, audio, second)
+    }
+
+    /// A block-aligned host over a whole container, as the browser's is.
+    fn blocky(
+        bytes: Vec<u8>,
+        expect: &str,
+    ) -> impl Fn(&str, u64, usize) -> Result<Vec<u8>, String> + 'static {
+        let expect = expect.to_string();
+        move |url: &str, offset: u64, len: usize| {
+            if url != expect {
+                return Err(format!("host asked for '{url}'"));
+            }
+            const BLOCK: usize = 64 * 1024;
+            let base = (offset as usize / BLOCK) * BLOCK;
+            let end = (base + BLOCK).min(bytes.len());
+            let from = (offset as usize).min(bytes.len()).max(base);
+            let to = (from + len).min(end);
+            Ok(bytes[from..to.max(from)].to_vec())
+        }
+    }
+
+    #[test]
+    fn container_manf_tracks_are_discovered_with_canonical_sources() {
+        let (container, audio, second) = packed_album();
+        let url = "https://library.test/album.mpak";
+        let album = container_album(url, container.len() as u64, blocky(container, url))
+            .expect("the container opens");
+
+        // Album identity came from the MANF.
+        assert_eq!(album.title, "Wasm Album");
+        assert_eq!(album.artists, vec!["The Packer".to_string()]);
+        assert_eq!(album.release_type.as_deref(), Some("album"));
+        assert_eq!(album.container, url);
+
+        // Every MANF track is present, in manifest order, with its member.
+        assert_eq!(album.tracks.len(), 2);
+        assert_eq!(album.tracks[0].title, "One");
+        assert_eq!(album.tracks[0].member, "audio/01.mpc");
+        assert_eq!(album.tracks[1].title, "Two");
+        assert_eq!(album.tracks[1].member, "audio/02.mpc");
+
+        // The canonical source round-trips to exactly the container and member.
+        for track in &album.tracks {
+            assert_eq!(
+                track.source,
+                format!("mpak:{url}#{}", track.member),
+                "canonical key"
+            );
+            let parsed = musicpack_core::player::source_url::parse_container_source(&track.source)
+                .unwrap()
+                .expect("a container key");
+            assert_eq!(parsed.container, url);
+            assert_eq!(parsed.member, track.member);
+        }
+
+        // Sizes are the members' real lengths, and the two differ per member.
+        assert_eq!(album.tracks[0].size, audio.len() as u64);
+        assert_eq!(album.tracks[1].size, second.len() as u64);
+        assert_ne!(
+            album.tracks[0].source, album.tracks[1].source,
+            "two members never share an identity"
+        );
+
+        // The codec hint is sniffed from the member's own bytes, not guessed
+        // from its extension.
+        assert_eq!(album.tracks[0].codec.as_deref(), Some("musepack-sv8"));
+        assert_eq!(album.tracks[0].mime_type.as_deref(), Some("audio/musepack"));
+
+        // The JSON shape is plain data, ready to hand to a host.
+        let value = container_album_value(&album);
+        let text = musicpack_core::json::print_canonical(&value);
+        let back = musicpack_core::json::parse(text.as_bytes()).expect("canonical JSON re-parses");
+        let track_count = match back.get("tracks") {
+            Some(musicpack_core::json::Value::Array(items)) => items.len(),
+            other => panic!("tracks must be an array, got {other:?}"),
+        };
+        assert_eq!(track_count, 2);
+    }
+
+    #[test]
+    fn a_member_that_is_not_audio_is_reported_not_hidden() {
+        // The committed reference container's audio member is a stub: the track
+        // still exists (MANF is authoritative for membership) but carries no
+        // codec hint, so playing it fails loudly instead of the album looking
+        // complete.
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/reference/reference-small.mpak"
+        );
+        let Ok(bytes) = std::fs::read(path) else {
+            return; // fixture corpus unavailable
+        };
+        let url = "https://library.test/reference-small.mpak";
+        let album = container_album(url, bytes.len() as u64, blocky(bytes, url))
+            .expect("the committed container opens");
+        assert_eq!(album.title, "Reference Container");
+        assert_eq!(album.artists, vec!["Tester".to_string()]);
+        assert_eq!(album.tracks.len(), 1);
+        assert_eq!(album.tracks[0].member, "audio/01.bin");
+        assert_eq!(album.tracks[0].source, format!("mpak:{url}#audio/01.bin"));
+        assert_eq!(
+            album.tracks[0].codec, None,
+            "a non-audio member reports no codec hint rather than a wrong one"
+        );
+    }
+
+    /// The complete client path, end to end:
+    ///
+    /// ```text
+    /// .mpak -> MANF -> track -> mpak source -> RangeSourceBackend
+    ///       -> member bytes -> decoder -> PCM
+    /// ```
+    ///
+    /// and the strongest assertion available: the PCM of a member reached
+    /// through MANF discovery is **identical** to decoding that member's own
+    /// bytes directly, and matches the frozen reference oracle digest.
+    ///
+    /// This lives here rather than in the web suite because the fixture is
+    /// written by core's container writer; the browser suite proves the
+    /// MANF→queue half against a committed real container instead.
+    ///
+    /// It drives the *same* `EngineCore::new_range` session the browser worker
+    /// drives, so the chain under test is the production one.
+    #[test]
+    fn a_manf_discovered_member_decodes_identically() {
+        use std::rc::Rc;
+
+        let (container, audio, second) = packed_album();
+        let url = "https://library.test/album.mpak";
+        let size = container.len() as u64;
+
+        // A block-aligned host over the whole container, exactly like
+        // `networker.js` behind the mailbox, and answerable only for the
+        // container: the engine must never ask the host for a member key.
+        struct BlockyFetch {
+            data: Vec<u8>,
+            expect_url: String,
+        }
+        impl RangeFetch for BlockyFetch {
+            fn fetch(&self, url: &str, offset: u64, len: usize) -> Result<Vec<u8>, String> {
+                if url != self.expect_url {
+                    return Err(format!("host was asked for '{url}'"));
+                }
+                const BLOCK: usize = 64 * 1024;
+                let base = (offset as usize / BLOCK) * BLOCK;
+                let end = (base + BLOCK).min(self.data.len());
+                let from = (offset as usize).min(self.data.len()).max(base);
+                let to = (from + len).min(end);
+                Ok(self.data[from..to.max(from)].to_vec())
+            }
+        }
+
+        // 1. MANF discovery, over the same range transport playback uses.
+        let discovery_host = Rc::new(BlockyFetch {
+            data: container.clone(),
+            expect_url: url.into(),
+        });
+        let album = container_album(url, size, move |u, o, l| discovery_host.fetch(u, o, l))
+            .expect("the container is discovered");
+        assert_eq!(album.tracks.len(), 2);
+        assert_eq!(album.tracks[0].member, "audio/01.mpc");
+        assert_eq!(album.tracks[1].member, "audio/02.mpc");
+        assert_ne!(
+            album.tracks[0].source, album.tracks[1].source,
+            "two members never share a playback identity"
+        );
+
+        // Renders one second of `item_json` through a range session over `data`.
+        fn render(item_json: &str, data: Vec<u8>, expect_url: &str) -> Vec<f32> {
+            let mut core = EngineCore::new_range(
+                44_100,
+                2,
+                std::rc::Rc::new(BlockyFetch {
+                    data,
+                    expect_url: expect_url.into(),
+                }),
+            );
+            core.open(item_json).expect("open");
+            core.start();
+            core.play();
+            let mut pcm: Vec<f32> = Vec::new();
+            for _ in 0..400 {
+                let block = core.render(1152);
+                pcm.extend_from_slice(&block);
+                if core.rendered_samples() >= 44_100.0 {
+                    break;
+                }
+            }
+            core.close();
+            pcm.truncate(44_100 * 2);
+            pcm
+        }
+
+        let members: [&[u8]; 2] = [&audio, &second];
+        let mut decoded: Vec<Vec<f32>> = Vec::new();
+        for (index, track) in album.tracks.iter().enumerate() {
+            // 2. The canonical key round-trips to exactly this container and
+            //    member — a track can never resolve elsewhere.
+            let parsed = musicpack_core::player::source_url::parse_container_source(&track.source)
+                .expect("well-formed")
+                .expect("a container key");
+            assert_eq!(parsed.container, url);
+            assert_eq!(parsed.member, track.member);
+
+            // 3. That source, through the range-backed engine.
+            let item_json = format!(
+                r#"{{"id":"t","trackId":1,"url":"{}","byteSize":{size},"codec":"{}"}}"#,
+                track.source,
+                track.codec.as_deref().unwrap_or("unknown")
+            );
+            let via_container = render(&item_json, container.clone(), url);
+            assert!(
+                via_container.iter().any(|s| s.abs() > 0.01),
+                "{} decoded audible audio",
+                track.member
+            );
+
+            // 4. The reference: the same member's own bytes, decoded whole.
+            let reference = render(
+                r#"{"id":"t","trackId":1,"url":"/member.mpc","codec":"musepack-sv8"}"#,
+                members[index].to_vec(),
+                "/member.mpc",
+            );
+            assert_eq!(
+                via_container, reference,
+                "{}: a MANF-discovered member decodes differently from its own bytes",
+                track.member
+            );
+            decoded.push(via_container);
+        }
+
+        // The two members are independent: neither yields the other's audio.
+        assert_ne!(decoded[0], decoded[1], "members decode independently");
+
+        // And the first member is the committed reference fixture, so its PCM
+        // must equal the frozen oracle digest.
+        if let Some(want) = oracle_pcm_sha("sine44-q5.mpc") {
+            let mut le = Vec::with_capacity(decoded[0].len() * 4);
+            for sample in &decoded[0] {
+                le.extend_from_slice(&sample.to_le_bytes());
+            }
+            assert_eq!(
+                musicpack_core::format::checksum::sha256_hex(&le),
+                want,
+                "the member's PCM differs from the reference oracle"
+            );
+        }
+    }
+
+    #[test]
+    fn an_invalid_container_fails_closed() {
+        // Not a container at all.
+        let url = "https://library.test/broken.mpak";
+        let err = container_album(url, 4, |_, _, _| Ok(b"junk".to_vec()))
+            .expect_err("junk is not a container");
+        assert!(err.contains("cannot open container"), "{err}");
+
+        // A real container whose payload is corrupted after the header: the
+        // member table no longer validates, so no tracks are reported.
+        let (mut container, _, _) = packed_album();
+        for b in container.iter_mut().skip(64) {
+            *b ^= 0xff;
+        }
+        let err = container_album(url, container.len() as u64, blocky(container, url))
+            .expect_err("a corrupt container yields no album");
+        assert!(err.contains("cannot open container"), "{err}");
+
+        // A missing length cannot be scanned at all.
+        let err = container_album(url, 0, |_, _, _| Err("no transport".to_string()))
+            .expect_err("needs size");
+        assert!(err.contains("cannot open container"), "{err}");
+    }
 
     struct VecFetch {
         data: Vec<u8>,

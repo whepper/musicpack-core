@@ -66,7 +66,13 @@ SPDX-License-Identifier: BSD-3-Clause
         </p>
         <h1 class="np-title">{item.track.title}</h1>
         <p class="np-context">
-          {item.artist} — <a href={`/albums/${item.albumId}`}>{item.albumTitle}</a>
+          {item.artist} —
+          {#if item.albumId !== undefined}
+            <a href={`/albums/${item.albumId}`}>{item.albumTitle}</a>
+          {:else}
+            <!-- No album row: a client-side .mpak container track. -->
+            <span>{item.albumTitle}</span>
+          {/if}
           {#if item.edition} · {item.edition}{/if}
         </p>
         <p class="np-format smallcaps">

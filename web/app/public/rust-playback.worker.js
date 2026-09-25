@@ -406,10 +406,37 @@ async function pumpLoop() {
   }
 }
 
+/** Reads a container's MANF and reports the tracks it defines.
+ *
+ *  All container work happens in Rust: the transport is registered here, then
+ *  `wasm.containerTracks` scans the container through the *same* `readRange`
+ *  callback the playback engine uses and returns plain JSON. No JavaScript here
+ *  knows a container's framing, its member table or its manifest.
+ *
+ *  Unlike `handleOpen` this does not close the existing sources: opening a
+ *  container must not interrupt playback, and `openNetworker` is idempotent
+ *  per transport URL, so a container already being played is reused. */
+async function handleOpenContainer(d) {
+  await ensureWasm(d.assets);
+  const transport = transportUrlFor(d.container);
+  if (d.kind === 'local-file') {
+    await openLocal(transport, d.size);
+  } else {
+    await openNetworker(transport, d.size, d.token);
+  }
+  // `readRange` dispatches on the transport URL, which is exactly what the
+  // container argument is: the member path is never mentioned here.
+  const album = JSON.parse(wasm.containerTracks(readRange, transport, d.size));
+  post({ type: 'containerTracks', generation: d.generation, album });
+}
+
 async function handleCommand(d) {
   switch (d.type) {
     case 'open':
       await handleOpen(d);
+      return;
+    case 'openContainer':
+      await handleOpenContainer(d);
       return;
     case 'startPumping':
       pumping = true;

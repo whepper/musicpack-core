@@ -64,6 +64,29 @@ class FakeWorker implements PlaybackWorkerLike {
           result: { info: INFO, overlapFrames: 1000 },
         });
         break;
+      case 'openContainer':
+        this.emit({
+          type: 'containerTracks',
+          generation,
+          album: {
+            container: m.container,
+            size: m.size,
+            title: 'Wasm Album',
+            artists: ['The Packer'],
+            tracks: [
+              {
+                number: 1,
+                title: 'One',
+                member: 'audio/01.mpc',
+                source: `${m.container}`.replace(/^/, 'mpak:') + '#audio/01.mpc',
+                size: 28226,
+                codec: 'musepack-sv8',
+                mimeType: 'audio/musepack',
+              },
+            ],
+          },
+        });
+        break;
       case 'close':
         this.emit({ type: 'closed', generation });
         break;
@@ -319,6 +342,116 @@ describe('RustPlaybackEngine (production adapter seam)', () => {
     const opens = worker.sent.filter((m) => m.type === 'open');
     expect(opens).toHaveLength(2);
     expect(opens[1]!.generation).toBe(2);
+  });
+});
+
+describe('RustPlaybackEngine.openContainer (mpak MANF discovery)', () => {
+  it('reads a container MANF and returns the canonical sources', async () => {
+    const { engine, worker, sink } = makeEngine();
+    await engine.init('tok');
+    const album = await engine.openContainer('https://library.test/album.mpak', 1365);
+
+    // The worker protocol: the container URL/key, its length and the session
+    // token. The length is required — the container's tail framing is at the
+    // end of the file.
+    expect(worker.sent[0]).toMatchObject({
+      type: 'openContainer',
+      container: 'https://library.test/album.mpak',
+      size: 1365,
+      kind: 'http-range',
+      token: 'tok',
+    });
+
+    // The reply is plain data with core's canonical member keys.
+    expect(album.title).toBe('Wasm Album');
+    expect(album.tracks).toHaveLength(1);
+    expect(album.tracks[0]!.source).toBe(
+      'mpak:https://library.test/album.mpak#audio/01.mpc',
+    );
+    // Discovery only reads bytes: nothing was decoded and no audio ring was
+    // attached, so the container is never mistaken for playable audio.
+    expect(sink.attaches).toHaveLength(0);
+    expect(worker.sent.some((m) => m.type === 'open')).toBe(false);
+  });
+
+  it('spawns a worker on demand so no playback session is required', async () => {
+    const { engine, worker } = makeEngine();
+    // No `init`, no `open`: the capability brings up its own transport.
+    const album = await engine.openContainer('/local.album.mpak', 4096, 'local-file');
+    expect(album.tracks[0]!.member).toBe('audio/01.mpc');
+    expect(worker.sent[0]).toMatchObject({ kind: 'local-file', container: '/local.album.mpak' });
+  });
+
+  it('does not disturb a live playback session', async () => {
+    const { engine, worker, sink } = await opened();
+    expect(worker.sent.filter((m) => m.type === 'open')).toHaveLength(1);
+
+    // Reading a container while a track plays must not close the session: the
+    // worker registers the container's transport alongside the live one.
+    await engine.openContainer('https://library.test/other.mpak', 2048);
+
+    expect(worker.terminated).toBe(0);
+    expect(worker.sent.filter((m) => m.type === 'close')).toHaveLength(0);
+    // The session's sink is still the one that was attached.
+    expect(sink.attaches).toHaveLength(1);
+  });
+
+  it('isolates generations and rejects an in-flight read on replacement', async () => {
+    const { engine, worker } = makeEngine();
+    await engine.init('tok');
+    worker.autoRespond = false;
+    const pending = engine.openContainer('/a.mpak', 100);
+    const generation = worker.sent[0]!.generation as number;
+
+    // A reply carrying another generation's identity must not resolve this
+    // request with someone else's tracks.
+    worker.emit({
+      type: 'containerTracks',
+      generation: generation - 1,
+      album: { container: '/stale.mpak', size: 1, title: 'Stale', artists: [], tracks: [] },
+    });
+    let settled = false;
+    void pending.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    // Replacing the generation tears the worker down, so the read fails rather
+    // than hanging forever.
+    worker.autoRespond = true;
+    await engine.open(item('/b.mpc'));
+    await expect(pending).rejects.toThrow(/generation replaced/);
+  });
+
+  it('rejects when the worker fails', async () => {
+    const { engine, worker } = makeEngine();
+    await engine.init('tok');
+    worker.autoRespond = false;
+    const pending = engine.openContainer('/a.mpak', 100);
+    worker.onerror?.({ message: 'boom' });
+    await expect(pending).rejects.toThrow();
+  });
+
+  it('a failed read rejects only that request, and leaves playback alone', async () => {
+    // A container that cannot be read reports through the worker's generic
+    // error path, which is also the player's error path — so the adapter must
+    // route it to the reader and not tear the session down.
+    const { engine, worker, events } = await opened();
+    worker.autoRespond = false;
+    const pending = engine.openContainer('/broken.mpak', 100);
+    const generation = worker.sent[worker.sent.length - 1]!.generation as number;
+    worker.emit({
+      type: 'error',
+      generation,
+      message: "cannot open container '/broken.mpak': no container header",
+    });
+
+    await expect(pending).rejects.toThrow(/cannot open container/);
+    // No player error was raised and the session was not torn down.
+    expect(events.filter((e) => e.startsWith('error:'))).toHaveLength(0);
+    expect(worker.terminated).toBe(0);
   });
 });
 

@@ -9,7 +9,7 @@ they are deliberately separate:
 | **Client byte transport** — read a member over ranged HTTP/OPFS reads | done (Stage 1) | `crates/musicpack-engine/src/mpak_source.rs` |
 | **Server ingestion and indexing** — discover, open, verify, project a container into the library index | done | `crates/musicpack-server/src/source.rs` |
 | **Server HTTP byte serving** of an indexed container member | done | `crates/musicpack-server/src/media.rs` |
-| **MANF → client queue → playback** | **not done** (product decision pending) | — |
+| **MANF → client queue → playback** | done | `crates/musicpack-wasm/src/lib.rs`, `web/app/src/lib/mpak/container-tracks.ts` |
 
 Both halves address a member the same way, with one shared definition of the
 key, so neither can drift from the other.
@@ -131,11 +131,74 @@ bounded `TAIL`/`INDX`/`MANF` read, never a whole-file read), because
 `media::open` is stateless by design — exactly as it opens a fresh file handle
 per request.
 
+## MANF → client queue → playback
+
+A container that is **already available to the client** (reachable at a URL or
+offline key the range transport can read) exposes its `MANF` tracks through the
+ordinary queue and player. There is no container queue, no container player and
+no second source kind; the tracks are ordinary `QueueItem`s.
+
+```text
+.mpak
+  ↓  RustPlaybackEngine.openContainer(url, size)   → worker `openContainer`
+MANF                                              → core MpakBackend + manifest parser
+  ↓  track/member identity
+mpak:<container>#<member>                          ← core's formatter, once
+  ↓  itemsForContainer() → queue.playItems()
+existing playback source routing
+  ↓  worker's transportUrlFor + readRange
+RangeByteSource → core MpakBackend
+  ↓
+audio member bytes → existing decoder/playback engine
+```
+
+| Item | Role |
+|---|---|
+| `core_impl::container_album` (`crates/musicpack-wasm`) | opens a container over a host's **synchronous** range reads and reports its `MANF` tracks: album identity, per-track member, member length, sniffed codec hint, declared duration |
+| `wasm.containerTracks(read, container, size)` | the browser binding for the above; returns plain JSON, no handles |
+| `handleOpenContainer` (`rust-playback.worker.js`) | registers the container's transport (idempotent, and **without** closing existing sources) and calls the binding with the same `readRange` playback uses |
+| `RustPlaybackEngine.openContainer` | the main-thread call: spawns a worker on demand, needs no audio context, and leaves any live playback session alone |
+| `itemsForContainer` / `containerQueueItems` (`web/app/src/lib/mpak/container-tracks.ts`) | field mapping only — Rust hands over each `mpak:` key and it is passed through untouched, so client and container can never disagree about a member |
+| `queue.playItems` / `queue.addItems` (`web/app/src/lib/state/queue.ts`) | generic entry points for a ready-made item sequence; a server-backed release still uses `playAlbum` |
+
+`size` (the container's length in bytes) is a required argument: a container's
+`TAIL` framing is at the end of the file, so it cannot be scanned without it.
+
+The codec hint is **sniffed from the member's own leading bytes** through
+`musicpack_core::audio::open`, not guessed from the member's extension — the
+core deliberately has no extension→codec table. A member that is not a
+decodable stream is reported with no hint rather than a wrong one: the track
+still exists (`MANF` is authoritative for membership), and playing it fails
+loudly at backend selection instead of the album looking complete.
+
+A container track has no server row, so its `QueueItem.trackId` is a stable
+hash of the canonical key (negative, so it can never collide with a positive
+SQLite rowid) and `releaseId`/`albumId` are absent. `QueueItem` types those two
+as optional, which every existing reader already tolerates.
+
+### Tests
+
+- `crates/musicpack-wasm` → `container_manf_tracks_are_discovered_with_canonical_sources`,
+  `a_manf_discovered_member_decodes_identically`,
+  `a_member_that_is_not_audio_is_reported_not_hidden`,
+  `an_invalid_container_fails_closed`. The middle one drives the **complete**
+  path against a container written by core's own writer and asserts the PCM
+  equals a whole-file decode of the same member **and** the frozen oracle
+  digest, with two members proven independent.
+- `web/tests/unit/mpak-client-tracks.test.ts` → the browser half against the
+  committed `fixtures/reference/reference-small.mpak`, read back by core's real
+  reader through the generated wasm module.
+- `web/tests/unit/rust-playback-engine.test.ts` → the worker protocol mapping,
+  generation isolation, and that opening a container does not disturb playback.
+
 ## Known gaps
 
-- **`MANF` → queue → playback** in the client, and offline install of a
-  container as one stored file. Both are product decisions, not gaps in this
-  capability.
+- **Offline install of a container** as one stored file, and any container
+  acquisition (downloading, syncing, a container manager). The `MANF` → queue →
+  playback path above assumes the container is already available to the client.
+- **`PlaybackSource` still has no typed member field.** The `mpak:` key remains
+  an opaque URL-shaped string, so a member is not inspectable as a field
+  (playback routing does not need it).
 
 ## Client byte transport (Stage 1)
 
@@ -272,8 +335,10 @@ JS mirror is deliberately trivial and covered by the same test vectors.
 
 Deliberately unimplemented, pending product decisions:
 
-- `MANF` → track discovery → queue → playback in the client. A container is
-  something a host hands the engine by key, not something the player finds.
+- Container *acquisition* — downloading, syncing, or a container manager. A
+  container is something a host hands the client by key; `MANF` → track
+  discovery → queue → playback for a container that is **already available** is
+  implemented (see above).
 - Offline install/audit of a container as one stored file, and any change to
   the per-track OPFS layout.
 - A typed source representation for the member. The `mpak:` key is the interim

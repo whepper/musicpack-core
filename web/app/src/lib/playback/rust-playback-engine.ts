@@ -35,7 +35,44 @@ import type {
   EngineEventName,
   PreloadEngine,
 } from '../../../../player-core/src/engine';
-import type { PlaybackItem, StreamInfo } from '../../../../player-core/src/types';
+import type {
+  PlaybackItem,
+  PlaybackSource,
+  StreamInfo,
+} from '../../../../player-core/src/types';
+
+/** One track a `.mpak` container's MANF defines, as reported by Rust.
+ *
+ *  Plain data only: `source` is the canonical `mpak:<container>#<member>` key
+ *  built by core's formatter, never assembled in JavaScript. `codec`/`mimeType`
+ *  are absent when the member is not a decodable stream — the track still
+ *  exists, and playing it fails loudly at backend selection rather than the
+ *  album looking complete. */
+export interface ContainerTrackWire {
+  number: number;
+  title: string;
+  /** The audio member's package-relative path inside the container. */
+  member: string;
+  /** Canonical playback source for this member. */
+  source: string;
+  /** The member's byte length. */
+  size: number;
+  codec?: string;
+  mimeType?: string;
+  durationSeconds?: number;
+}
+
+/** A container's album identity plus its MANF tracks. */
+export interface ContainerAlbumWire {
+  /** The container's transport URL/key. */
+  container: string;
+  /** The container's length in bytes. */
+  size: number;
+  title: string;
+  artists: string[];
+  releaseType?: string;
+  tracks: ContainerTrackWire[];
+}
 
 /** Constructor callbacks (the legacy web-controller handler shape). */
 export interface EngineHandlers {
@@ -232,6 +269,11 @@ export class RustPlaybackEngine implements Engine, PreloadEngine, CrossfadeEngin
     resolve: (result: CrossfadeResult | null) => void;
     reject: (error: Error) => void;
   } | null = null;
+  private containerPending: {
+    generation: number;
+    resolve: (album: ContainerAlbumWire) => void;
+    reject: (error: Error) => void;
+  } | null = null;
 
   constructor(options: RustPlaybackEngineOptions) {
     this.handlers = options.handlers;
@@ -265,6 +307,50 @@ export class RustPlaybackEngine implements Engine, PreloadEngine, CrossfadeEngin
   }
 
   // ---- lifecycle -----------------------------------------------------------
+
+  /**
+   * Reads an available `.mpak` container's MANF and returns the tracks it
+   * defines, as plain data.
+   *
+   * This is the only way a container enters the client: the container is
+   * opened by the same Rust container implementation, over the same
+   * synchronous range transport, that playback uses — and the returned tracks
+   * carry canonical `mpak:<container>#<member>` sources, so they play through
+   * the ordinary queue and engine path with no container-specific branch.
+   *
+   * It needs no audio context and does not disturb playback: a worker is
+   * spawned only if none is live, and the container's transport is registered
+   * alongside any existing sources.
+   *
+   * `size` is the container's length in bytes and is required — the container
+   * tail framing is at the end of the file.
+   */
+  async openContainer(
+    container: string,
+    size: number,
+    kind: PlaybackSource['kind'] = 'http-range',
+  ): Promise<ContainerAlbumWire> {
+    if (!this.worker) {
+      const worker = this.makeWorker();
+      worker.onmessage = (event) => this.onWorkerMessage(event.data);
+      worker.onerror = (event) => this.onWorkerError(event);
+      this.worker = worker;
+    }
+    const generation = ++this.generation;
+    const worker = this.worker;
+    return await new Promise<ContainerAlbumWire>((resolve, reject) => {
+      this.containerPending = { generation, resolve, reject };
+      worker.postMessage({
+        type: 'openContainer',
+        generation,
+        container,
+        kind,
+        size,
+        token: this.token,
+        assets: this.assets,
+      });
+    });
+  }
 
   async open(item: PlaybackItem): Promise<StreamInfo> {
     await this.teardownWorker();
@@ -339,6 +425,8 @@ export class RustPlaybackEngine implements Engine, PreloadEngine, CrossfadeEngin
     this.worker = null;
     this.openPending?.reject(new Error('engine generation replaced'));
     this.openPending = null;
+    this.containerPending?.reject(new Error('engine generation replaced'));
+    this.containerPending = null;
     this.seekPending = null;
     this.preparePending = null;
     this.advancePending = null;
@@ -580,6 +668,14 @@ export class RustPlaybackEngine implements Engine, PreloadEngine, CrossfadeEngin
         }
         return;
       }
+      case 'containerTracks': {
+        const pending = this.containerPending;
+        this.containerPending = null;
+        if (pending && pending.generation === generation) {
+          pending.resolve(message.album as ContainerAlbumWire);
+        }
+        return;
+      }
       case 'seeked': {
         const pending = this.seekPending;
         this.seekPending = null;
@@ -642,6 +738,14 @@ export class RustPlaybackEngine implements Engine, PreloadEngine, CrossfadeEngin
       }
       case 'error': {
         const detail = String(message.message ?? 'Rust playback error');
+        // A failed container read is the reader's error, not the player's: it
+        // rejects that one request and leaves any live session playing.
+        const reading = this.containerPending;
+        if (reading && reading.generation === generation) {
+          this.containerPending = null;
+          reading.reject(new Error(detail));
+          return;
+        }
         // If this generation is still opening, reject the open promise with the
         // real cause (otherwise the caller would only see the teardown reason).
         const pending = this.openPending;

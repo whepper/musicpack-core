@@ -54,6 +54,9 @@ web/
         auth/          session store (token → cookie, never stored)
         state/         library (shelf, editions), queue (core adapter),
                        player model
+        mpak/          `.mpak` container MANF tracks → queue items
+                       (see ../../docs/mpak-source.md; the container itself
+                       is read in Rust, this is field mapping only)
         playback/      web facade + engines: MusepackEngine, NativeBackend,
                        codec resolution, Media Session, loudness re-export
                        (transport/queue/persistence semantics live in
@@ -361,7 +364,7 @@ musicpack-core/
 │   │   ├── public/         committed platform JS (workers/readers/sw.js)
 │   │   │                   + oracle-only legacy decoder (PROVENANCE…md)
 │   │   │                   + rust/ (GENERATED binding — gitignored)
-│   │   └── src/lib/        api/ auth/ state/ playback/ offline/ ui/
+│   │   └── src/lib/        api/ auth/ state/ playback/ offline/ mpak/ ui/
 │   ├── player-core/        platform-independent playback domain (pure TS)
 │   ├── tests/              unit/ e2e/ node/ perf/
 │   └── scripts/            build-wasm.mjs, e2e start-server.sh
