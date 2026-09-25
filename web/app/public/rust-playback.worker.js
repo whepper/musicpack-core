@@ -65,6 +65,10 @@ const networkers = new Map();
 // same decoder serves both paths; only the byte source differs. The sync
 // access handle is legal because this is a dedicated worker that already uses
 // SharedArrayBuffer for the online path.
+/** Scheme prefix of a container-member source key (`mpak:<container>#<member>`).
+ *  Mirrors `musicpack_engine::CONTAINER_PREFIX`; see `transportUrlFor`. */
+const MPAK_PREFIX = 'mpak:';
+
 const OPFS_ROOT = 'musicpack-offline-v1';
 const OPFS_RELEASES = 'releases';
 /** Bytes per OPFS read (mirrors the Rust reader's 64 KiB window). */
@@ -115,13 +119,39 @@ function readLocal(key, offset, len) {
   return got === want ? scratch : scratch.subarray(0, got);
 }
 
-/** Opens the byte source for an item: OPFS for `local-file`, HTTP otherwise. */
+/** Opens the byte source for an item: OPFS for `local-file`, HTTP otherwise.
+ *
+ *  A `mpak:<container>#<member>` source key names a member *inside* a
+ *  container; the transport is the container itself. `transportUrlFor` is the
+ *  single place that knows the key form (kept in step with the Rust parser,
+ *  `musicpack_engine::parse_container_source`), and the engine is always handed
+ *  the transport URL, so `readRange` never sees a member key. `size` is the
+ *  transport's size (the container's, for a member), never the member's. */
 async function openSource(kind, url, size, token) {
+  const transport = transportUrlFor(url);
   if (kind === 'local-file') {
-    await openLocal(url, size);
+    await openLocal(transport, size);
     return;
   }
-  await openNetworker(url, size, token);
+  await openNetworker(transport, size, token);
+}
+
+/** The URL/store key that actually serves the bytes of a source key.
+ *
+ *  Mirrors the `mpak:` form the engine parses; a plain key is returned
+ *  unchanged. Kept deliberately trivial — all container semantics live in
+ *  Rust, and this only answers "which transport serves this key". */
+function transportUrlFor(url) {
+  if (typeof url !== 'string' || !url.startsWith(MPAK_PREFIX)) return url;
+  const hash = url.indexOf('#');
+  if (hash < 0) return url;
+  const container = url.slice(MPAK_PREFIX.length, hash);
+  if (!container) return url;
+  try {
+    return decodeURIComponent(container);
+  } catch {
+    return url;
+  }
 }
 
 function post(message) {

@@ -45,6 +45,7 @@
 pub mod decoder;
 pub mod engine;
 pub mod mixer;
+pub mod mpak_source;
 pub mod resampler;
 pub mod ring;
 pub mod session;
@@ -60,3 +61,8 @@ pub use session::{
     PRIME_FRACTION, RING_SECONDS,
 };
 pub use source::{MemorySourceBackend, PackageSourceBackend, SourceBackend, SourceError};
+
+pub use mpak_source::{
+    CONTAINER_PREFIX, ContainerSourceUrl, RangeByteSource, RangeFetcher, RangeSourceBackend,
+    SourceUrlError, format_container_source, parse_container_source, transport_url,
+};

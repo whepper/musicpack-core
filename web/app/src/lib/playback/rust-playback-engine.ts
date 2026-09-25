@@ -125,6 +125,9 @@ function toWasmItem(item: PlaybackItem): string {
     url: item.source.url,
     kind: item.source.kind,
     durationHintSeconds: item.durationHintSeconds,
+    // The transport size, read by the engine only for a `mpak:`
+    // container-member source (where it is the container's own length).
+    byteSize: item.source.byteSize,
     title: item.title,
     artist: item.artist,
     albumTitle: item.albumTitle,

@@ -38,13 +38,13 @@ const wasmSource = join(
   'release',
   'musicpack_wasm.wasm',
 );
+// `musicpack-core` is the repository-root crate, so its sources are `src/` and
+// the root manifest — not a `crates/musicpack-core/` directory.
 const CRATE_SOURCES = [
   'crates/musicpack-wasm',
   'crates/musicpack-engine',
-  'crates/musicpack-core/src',
-  'crates/musicpack-core/Cargo.toml',
-  'crates/musicpack-engine/Cargo.toml',
-  'crates/musicpack-wasm/Cargo.toml',
+  'src',
+  'Cargo.toml',
   'Cargo.lock',
 ].map((p) => join(repoRoot, p));
 
@@ -56,7 +56,10 @@ function newestSourceMtime(paths, acc = { t: 0, file: '' }) {
     if (!existsSync(p)) continue;
     const st = statSync(p);
     if (st.isFile() && st.mtimeMs > acc.t) acc = { t: st.mtimeMs, file: p };
-    if (st.isDirectory()) newestSourceMtime(readdirSync(p).map((f) => join(p, f)), acc);
+    // The accumulator is threaded through the *return value*: passing `acc` in
+    // and dropping the result would silently discard every nested file, leaving
+    // the guard blind to edits inside a crate directory.
+    if (st.isDirectory()) acc = newestSourceMtime(readdirSync(p).map((f) => join(p, f)), acc);
   }
   return acc;
 }

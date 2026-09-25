@@ -534,6 +534,13 @@ pub mod core_impl {
             Some(Value::String(s)) => s.clone(),
             _ => return Err("item needs a string url".into()),
         };
+        // A `mpak:` container-member source needs the *transport* size (the
+        // container's own length) to locate the container tail. It is read only
+        // for that case; a plain source ignores it, as before.
+        let byte_size = match v.get("byteSize") {
+            Some(Value::Number(n)) => Some(*n as u64),
+            _ => None,
+        };
         let duration = match v.get("durationHintSeconds") {
             Some(Value::Number(n)) => Some(*n),
             _ => None,
@@ -551,7 +558,7 @@ pub mod core_impl {
             source: PlaybackSource {
                 kind,
                 url,
-                byte_size: None,
+                byte_size,
             },
             duration_hint_seconds: duration,
             title: string("title").unwrap_or_default(),
@@ -849,41 +856,34 @@ pub mod core_impl {
     /// JS callback inside the decoder worker for the browser.
     pub trait RangeFetch {
         /// Fetches up to `len` bytes at `offset` for `url`.
+        ///
+        /// `url` is always the **transport** URL: for a `mpak:` container-member
+        /// source this is the container's own URL, never the member key (see
+        /// [`musicpack_engine::transport_url`]). A short reply is normal — a
+        /// block-aligned host caps its own reads — but a request that makes no
+        /// progress at all is an error.
         fn fetch(&self, url: &str, offset: u64, len: usize) -> Result<Vec<u8>, String>;
     }
 
-    struct RangeRead {
-        fetch: Rc<dyn RangeFetch>,
-        url: String,
-        pos: u64,
-    }
-
-    impl std::io::Read for RangeRead {
-        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            if buf.is_empty() {
-                return Ok(0);
-            }
-            let want = buf.len().min(64 * 1024);
-            let bytes = self
-                .fetch
-                .fetch(&self.url, self.pos, want)
-                .map_err(std::io::Error::other)?;
-            let n = bytes.len().min(buf.len());
-            buf[..n].copy_from_slice(&bytes[..n]);
-            self.pos += n as u64;
-            Ok(n)
-        }
-    }
-
     /// A `SourceBackend` over a synchronous [`RangeFetch`].
+    ///
+    /// Delegates to the engine's [`RangeSourceBackend`], which also resolves
+    /// `mpak:` container-member keys (a scanned container read through the same
+    /// range transport). The browser host therefore needs no container logic: it
+    /// implements one flat range reader and nothing else.
     pub struct RangeBackend {
-        fetch: Rc<dyn RangeFetch>,
+        inner: musicpack_engine::RangeSourceBackend,
     }
 
     impl RangeBackend {
         /// Wraps a synchronous range fetch.
         pub fn new(fetch: Rc<dyn RangeFetch>) -> Self {
-            Self { fetch }
+            let fetch = fetch.clone();
+            let adapter: musicpack_engine::RangeFetcher =
+                Rc::new(move |url: &str, offset: u64, len: usize| fetch.fetch(url, offset, len));
+            Self {
+                inner: musicpack_engine::RangeSourceBackend::new(adapter),
+            }
         }
     }
 
@@ -892,11 +892,7 @@ pub mod core_impl {
             &self,
             source: &musicpack_core::player::types::PlaybackSource,
         ) -> Result<Box<dyn std::io::Read>, SourceError> {
-            Ok(Box::new(RangeRead {
-                fetch: self.fetch.clone(),
-                url: source.url.clone(),
-                pos: 0,
-            }))
+            self.inner.open_source(source)
         }
     }
 
@@ -1428,6 +1424,8 @@ mod wasm {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::core_impl::{
         Decodes, EngineCore, LyricsDocs, PlayerCore, RangeFetch, representation_select,
     };
@@ -1521,6 +1519,192 @@ mod tests {
             );
         }
         core.close();
+    }
+
+    /// A container packed in memory, served through the same range contract the
+    /// browser host implements (block-aligned, short replies allowed).
+    struct ContainerFixture {
+        container: Vec<u8>,
+        audio_offset: u64,
+        audio_len: u64,
+    }
+
+    impl ContainerFixture {
+        /// Packs `audio` (a real SV8 member) into a one-member container.
+        fn build(audio: &[u8]) -> Self {
+            use musicpack_core::format::checksum::sha256_hex;
+            use musicpack_core::format::mpak::{PackMember, PackSource, write_mpak};
+
+            let sha = sha256_hex(audio);
+            let manifest = format!(
+                r#"{{"format":"musicpack","version":1,"album":{{"title":"Wasm","artists":[{{"name":"A"}}]}},"media":[{{"disc":1,"tracks":[{{"track":1,"title":"t","audio":{{"path":"audio/01.mpc","sha256":"{sha}"}}}}]}}]}}"#
+            );
+            struct One<'a> {
+                manifest: String,
+                members: [PackMember; 1],
+                audio: &'a [u8],
+            }
+            impl PackSource for One<'_> {
+                fn manifest_bytes(&self) -> &[u8] {
+                    self.manifest.as_bytes()
+                }
+                fn members(&self) -> &[PackMember] {
+                    &self.members
+                }
+                fn member_size(&self, path: &str) -> Result<u64, musicpack_core::Error> {
+                    Ok(match path {
+                        "audio/01.mpc" => self.audio.len() as u64,
+                        _ => 0,
+                    })
+                }
+                fn read_member(
+                    &self,
+                    path: &str,
+                ) -> Result<Box<dyn std::io::Read>, musicpack_core::Error> {
+                    Ok(Box::new(std::io::Cursor::new(match path {
+                        "audio/01.mpc" => self.audio.to_vec(),
+                        _ => Vec::new(),
+                    })))
+                }
+            }
+            let source = One {
+                manifest,
+                members: [PackMember {
+                    path: "audio/01.mpc".into(),
+                    sha256_hex: sha,
+                }],
+                audio,
+            };
+            let mut container = Vec::new();
+            write_mpak(&source, &mut container).expect("pack");
+
+            // The member's span, read back from the finished container.
+            let scanned = musicpack_core::storage::mpak::MpakBackend::open(Arc::new(
+                musicpack_core::format::mpak::MemorySource::new(container.clone()),
+            ))
+            .expect("scan");
+            let member = scanned
+                .reader()
+                .members()
+                .iter()
+                .find(|m| m.path == "audio/01.mpc")
+                .expect("audio member");
+            Self {
+                container,
+                audio_offset: member.offset,
+                audio_len: member.length,
+            }
+        }
+    }
+
+    /// Stage 1's acceptance criterion at the wasm boundary: the same decoder,
+    /// driven by the same synchronous range contract, produces byte-identical
+    /// PCM whether the SV8 member is read out of a container or handed over
+    /// whole. Both paths are additionally checked against the reference oracle
+    /// when it is available.
+    #[test]
+    fn a_container_member_decodes_identically_over_the_range_source() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/fixtures/musepack/sine44-q5.mpc"
+        );
+        let Ok(audio) = std::fs::read(path) else {
+            return; // fixture corpus unavailable; covered by core tests
+        };
+        let fixture = ContainerFixture::build(&audio);
+        assert_eq!(fixture.audio_len, audio.len() as u64);
+        assert!(fixture.audio_offset > 0, "the member is not at offset 0");
+        let container_size = fixture.container.len();
+        let url = "mpak:memory://packages/sine44.mpak#audio/01.mpc";
+
+        // A block-aligned host: every reply is capped to the containing 64 KiB
+        // block, exactly like `networker.js` behind the mailbox.
+        const BLOCK: usize = 64 * 1024;
+        struct BlockyFetch {
+            data: Vec<u8>,
+            expect_url: String,
+        }
+        impl RangeFetch for BlockyFetch {
+            fn fetch(&self, url: &str, offset: u64, len: usize) -> Result<Vec<u8>, String> {
+                if url != self.expect_url {
+                    // The engine must hand the host the transport URL, never the
+                    // member key.
+                    return Err(format!("host was asked for '{url}'"));
+                }
+                let base = (offset as usize / BLOCK) * BLOCK;
+                let end = (base + BLOCK).min(self.data.len());
+                let from = (offset as usize).min(self.data.len()).max(base);
+                let to = (from + len).min(end);
+                Ok(self.data[from..to].to_vec())
+            }
+        }
+
+        let mut core = EngineCore::new_range(
+            44_100,
+            2,
+            std::rc::Rc::new(BlockyFetch {
+                data: fixture.container,
+                expect_url: "memory://packages/sine44.mpak".into(),
+            }),
+        );
+        let item = format!(
+            r#"{{"id":"t","trackId":1,"url":"{url}","byteSize":{container_size},"codec":"musepack-sv8"}}"#
+        );
+        core.open(&item).expect("open container member");
+        core.start();
+        core.play();
+        let mut pcm: Vec<f32> = Vec::new();
+        for _ in 0..400 {
+            let block = core.render(1152);
+            pcm.extend_from_slice(&block);
+            if core.rendered_samples() >= 44_100.0 {
+                break;
+            }
+        }
+        core.close();
+        assert!(pcm.iter().any(|s| s.abs() > 0.01), "decoded audio audible");
+        pcm.truncate(44_100 * 2);
+
+        // Reference: the same member handed to the same engine whole.
+        let mut whole = EngineCore::new_range(
+            44_100,
+            2,
+            std::rc::Rc::new(VecFetch {
+                data: audio,
+                calls: std::cell::RefCell::new(Vec::new()),
+            }),
+        );
+        whole
+            .open(r#"{"id":"t","trackId":1,"url":"/f.mpc","codec":"musepack-sv8"}"#)
+            .expect("open whole member");
+        whole.start();
+        whole.play();
+        let mut reference: Vec<f32> = Vec::new();
+        for _ in 0..400 {
+            let block = whole.render(1152);
+            reference.extend_from_slice(&block);
+            if whole.rendered_samples() >= 44_100.0 {
+                break;
+            }
+        }
+        whole.close();
+        reference.truncate(44_100 * 2);
+
+        assert_eq!(
+            pcm, reference,
+            "range-backed container member decodes differently from the whole member"
+        );
+        if let Some(want) = oracle_pcm_sha("sine44-q5.mpc") {
+            let mut le = Vec::with_capacity(pcm.len() * 4);
+            for sample in &pcm {
+                le.extend_from_slice(&sample.to_le_bytes());
+            }
+            assert_eq!(
+                musicpack_core::format::checksum::sha256_hex(&le),
+                want,
+                "container-member PCM differs from the reference oracle"
+            );
+        }
     }
 
     #[test]
