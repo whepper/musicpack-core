@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use musicpack_server::discover::{
-    CandidateBody, DiscoverError, InvalidReason, PackageCandidate, discover,
+    CandidateBody, DiscoverError, InvalidReason, PackageCandidate, SourceKind, discover,
 };
 
 const EMPTY_SHA: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -81,22 +81,77 @@ fn names(candidates: &[PackageCandidate], root: &Path) -> Vec<String> {
 }
 
 #[test]
-fn discovers_exactly_the_package_directories() {
+fn discovers_the_package_directories_and_the_container_files() {
     let root = mixed_tree();
     let found = discover(&root).unwrap();
     // Sorted by path. UPPER.MPACK is absent (wrong case: recursed, not a
-    // package); plain/, archive.mpak and notes.txt are absent (not `.mpack`
-    // directories); empty.mpack and bad.mpack are present but invalid.
+    // package); notes.txt is absent (not a source); empty.mpack, bad.mpack and
+    // archive.mpak are present but invalid.
+    //
+    // `archive.mpak` is here because the Rust walker recognises single-file
+    // containers as library sources; the C reference does not, and this test
+    // pins that deliberate superset. `plain/` is absent (no package inside).
     assert_eq!(
         names(&found, &root),
         vec![
             "alpha.mpack",
+            "archive.mpak",
             "bad.mpack",
             "beta.mpack",
             "empty.mpack",
             "nested/inner.mpack",
         ]
     );
+}
+
+#[test]
+fn a_source_kind_must_match_its_physical_shape() {
+    // The classification is about the *pair* (name, physical shape), which is
+    // what keeps `.mpack` directory semantics exactly as the reference had
+    // them while adding containers.
+    let root = test_root("classification");
+    write_package(&root.join("dir.mpack"), &minimal_manifest("D", "D"));
+    std::fs::write(root.join("container.mpak"), b"not a real container").unwrap();
+    // A *file* named like a bundle, and a *directory* named like a container:
+    // neither is a source, because the name and the shape disagree.
+    std::fs::write(root.join("looks-like-a-bundle.mpack"), b"file").unwrap();
+    std::fs::create_dir_all(root.join("looks-like-a-container.mpak")).unwrap();
+
+    let found = discover(&root).unwrap();
+    let set: std::collections::BTreeSet<String> = names(&found, &root).into_iter().collect();
+    assert!(set.contains("dir.mpack"), "a .mpack directory is a package");
+    assert!(
+        set.contains("container.mpak"),
+        "a .mpak file is a container source"
+    );
+    assert!(
+        !set.contains("looks-like-a-bundle.mpack"),
+        "a .mpack *file* is not a package"
+    );
+    assert!(
+        !set.contains("looks-like-a-container.mpak/manifest.json"),
+        "a .mpak *directory* is not a container"
+    );
+    assert!(
+        !set.contains("looks-like-a-container.mpak"),
+        "a .mpak directory is recursed, not indexed"
+    );
+
+    // The junk container is reported, never silently dropped.
+    let container = found
+        .iter()
+        .find(|c| c.path.ends_with("container.mpak"))
+        .unwrap();
+    assert_eq!(container.kind, SourceKind::Container);
+    assert!(matches!(
+        container.body,
+        CandidateBody::Invalid(InvalidReason::UnreadableManifest(_))
+    ));
+    let dir = found
+        .iter()
+        .find(|c| c.path.ends_with("dir.mpack"))
+        .unwrap();
+    assert_eq!(dir.kind, SourceKind::Directory);
 }
 
 #[test]
@@ -248,7 +303,11 @@ fn symlinks_are_never_followed() {
     assert!(!set.contains("dirlink/inner.mpack"));
     assert!(!set.contains("loop-a"));
     assert!(!set.contains("dangling"));
-    assert_eq!(set.len(), 5, "only the real packages remain");
+    // The five real packages, plus the real `archive.mpak` container file that
+    // the Rust walker recognises (the C reference would report neither the
+    // symlinks nor the container).
+    assert_eq!(set.len(), 6, "only the real sources remain");
+    assert!(set.contains("archive.mpak"), "the real container is found");
 }
 
 #[cfg(target_os = "linux")]

@@ -40,6 +40,27 @@ library job APIs (`POST /api/v1/library/scan|verify`, live
 connection, `verify_library` verdict persistence — `tests/jobs_oracle.rs`),
 all differentially proven against the live C server.
 
+**Stage 7 (complete): `.mpak` container sources.** A library source is now
+either a `.mpack` directory bundle or a single-file `.mpak` container.
+`discover::classify` is the one classification point; `source::PackageSource`
+is the one abstraction the rest of the pipeline asks, so identity, the
+missing-object count, the codec probe, verification and the content sync never
+branch on the kind. Containers are read through `musicpack-core`'s
+`MpakBackend` (the authoritative implementation) over its native `FileSource`,
+never a second parser. An indexed container track carries the canonical
+`mpak:<container>#<member>` source, produced by
+`musicpack_core::player::source_url` — the same definition the client's range
+transport uses — and is served over the existing media endpoint as a byte range
+inside its container: HTTP ranges stay member-relative, the container's size is
+never exposed, and a member is reached only through core's member table
+(`docs/mpak-source.md`). No schema change: `packages.path` is the locator and
+`audio_objects.relative_path` the member. Covered by `tests/mpak_ingest.rs`
+and `tests/mpak_media_serving.rs`.
+
+This is a deliberate **superset** of the C reference, which only walked
+`.mpack` directories; `tests/discovery.rs` pins the difference while the
+differential oracles continue to compare only valid packages.
+
 ```text
 musicpack-server scan    --library DIR [--database PATH] [--verify]
 musicpack-server serve   --library DIR [--database PATH] [--listen IP]
@@ -53,8 +74,7 @@ Configuration precedence: flags > `MUSICPACK_LIBRARY` / `MUSICPACK_DATABASE`
 `./library.db`, loopback `127.0.0.1:8080`). Exit codes: 0 success, 1
 failure, 2 usage error.
 
-Not implemented yet (later stages of `docs/server-migration.md`):
-docker/compose + deployment docs and the cutover sign-off (see
+Not yet: docker/compose + deployment docs and the cutover sign-off (see
 `docs/server-cutover-checklist.md`). `scan`, `verify`, `serve`, `token`
 and the full HTTP contract — JSON API, byte serving, static hosting and
 library jobs — are functional; out-of-scope HTTP routes answer explicit

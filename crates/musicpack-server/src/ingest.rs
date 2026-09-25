@@ -33,7 +33,7 @@ use musicpack_core::format::manifest::Manifest;
 
 use crate::discover::{CandidateBody, PackageCandidate, discover};
 use crate::identity;
-use crate::probe;
+use crate::source::PackageSource;
 use crate::store::{Store, TrackProbes};
 
 /// Scan counters (`mp_scan_result`).
@@ -167,26 +167,45 @@ pub fn verify_library(
     let mut result = VerifyResult::default();
     for (id, path) in &entries {
         result.total += 1;
-        let (status, verify_status) = match musicpack_core::storage::directory::verify_directory(
-            std::path::Path::new(path),
-        ) {
-            // The package cannot even be opened (unreadable/missing
-            // manifest) — the C `musicpack_package_open_dir` failure arm.
+        // The verdict comes from the source kind's own verifier — the
+        // reference's `verify_directory` for a bundle, core's
+        // `verify_mpak_file` for a container — over the same `Report`, so the
+        // status vocabulary is identical. The kind is recovered from the
+        // recorded locator with the one classifier, so no new column and no
+        // schema change is needed.
+        let verified = match crate::discover::classify_source_path(Path::new(path)) {
+            crate::discover::SourceKind::Container => {
+                musicpack_core::storage::mpak::verify_mpak_file(path)
+                    .map_err(|e| e.to_string())
+                    .map(|report| (report.errors(), report.warnings()))
+            }
+            crate::discover::SourceKind::Directory => {
+                musicpack_core::storage::directory::verify_directory(Path::new(path))
+                    .map_err(|e| e.to_string())
+                    .map(|report| (report.errors(), report.warnings()))
+            }
+        };
+        let (status, verify_status) = match verified {
+            // The package cannot even be opened (unreadable/missing manifest,
+            // or a container that does not scan) — the C
+            // `musicpack_package_open_dir` failure arm.
             Err(_) => {
                 result.failed += 1;
                 ("warning", "unverified")
             }
-            Ok(report) => {
-                if report.errors() > 0 {
-                    result.failed += 1;
-                    ("checksum-failed", "checksum-failed")
-                } else if report.warnings() > 0 {
-                    result.warnings += 1;
-                    ("warning", "warning")
-                } else {
-                    result.passed += 1;
-                    ("valid", "valid")
-                }
+            Ok((0, 0)) => {
+                result.passed += 1;
+                ("valid", "valid")
+            }
+            Ok((0, _warnings)) => {
+                // Warnings only: counted as warnings, never as failures, like
+                // the reference (which increments its warning tally alone).
+                result.warnings += 1;
+                ("warning", "warning")
+            }
+            Ok((_, _)) => {
+                result.failed += 1;
+                ("checksum-failed", "checksum-failed")
             }
         };
         store
@@ -204,44 +223,23 @@ pub fn verify_library(
 /// (primary audio, artwork, booklet, lyrics, extras, analysis — notably
 /// not representations or waveforms). An object counts as missing when it
 /// fails to resolve or is not a servable-shaped file.
-fn count_missing_objects(root: &Path, manifest: &Manifest) -> usize {
-    let mut missing = 0;
-    let mut check = |rel: &str| {
-        if !probe::is_regular_file(&root.join(rel)) {
-            missing += 1;
-        }
-    };
-    for disc in &manifest.media {
-        for track in &disc.tracks {
-            check(&track.audio.path);
-        }
-    }
-    for artwork in &manifest.artwork {
-        check(&artwork.asset.path);
-    }
-    for asset in &manifest.booklet {
-        check(&asset.path);
-    }
-    for asset in &manifest.lyrics {
-        check(&asset.path);
-    }
-    for asset in &manifest.extras {
-        check(&asset.path);
-    }
-    for analysis in &manifest.analysis {
-        check(&analysis.asset.path);
-    }
-    missing
+fn count_missing_objects(source: &PackageSource, manifest: &Manifest) -> usize {
+    crate::source::count_missing_objects(source, manifest)
 }
 
 /// Computes `(status, verify_status, last_error)` for a parsed package.
+///
+/// The verification arm is the source kind's own: a directory bundle is
+/// verified by the reference's `verify_directory`, a container by core's
+/// `verify_mpak_file` over the same `Report` shape, so the status vocabulary
+/// (`valid` / `warning` / `checksum-failed`) is identical for both.
 fn determine_status(
-    root: &Path,
+    source: &PackageSource,
     manifest: &Manifest,
     verify: bool,
 ) -> (String, String, Option<String>) {
     if !verify {
-        let missing = count_missing_objects(root, manifest);
+        let missing = count_missing_objects(source, manifest);
         if missing > 0 {
             return (
                 "warning".into(),
@@ -251,32 +249,36 @@ fn determine_status(
         }
         return ("valid".into(), "unverified".into(), None);
     }
-    match musicpack_core::storage::directory::verify_directory(root) {
-        Ok(report) => {
-            if report.errors() > 0 {
-                (
-                    "checksum-failed".into(),
-                    "checksum-failed".into(),
-                    Some(format!(
-                        "integrity verification failed ({} errors, {} warnings)",
-                        report.errors(),
-                        report.warnings()
-                    )),
-                )
-            } else if report.warnings() > 0 {
-                (
-                    "warning".into(),
-                    "warning".into(),
-                    Some(format!("{} warning(s)", report.warnings())),
-                )
-            } else {
-                ("valid".into(), "valid".into(), None)
-            }
+    let verified = match source {
+        PackageSource::Directory { root } => {
+            musicpack_core::storage::directory::verify_directory(root)
+                .map_err(|e| e.to_string())
+                .map(|report| (report.errors(), report.warnings()))
         }
-        Err(e) => (
+        PackageSource::Container { path, .. } => {
+            musicpack_core::storage::mpak::verify_mpak_file(path)
+                .map_err(|e| e.to_string())
+                .map(|report| (report.errors(), report.warnings()))
+        }
+    };
+    match verified {
+        Ok((0, 0)) => ("valid".into(), "valid".into(), None),
+        Ok((0, warnings)) => (
+            "warning".into(),
+            "warning".into(),
+            Some(format!("{warnings} warning(s)")),
+        ),
+        Ok((errors, warnings)) => (
             "checksum-failed".into(),
             "checksum-failed".into(),
-            Some(format!("integrity verification failed ({e})")),
+            Some(format!(
+                "integrity verification failed ({errors} errors, {warnings} warnings)"
+            )),
+        ),
+        Err(detail) => (
+            "checksum-failed".into(),
+            "checksum-failed".into(),
+            Some(format!("integrity verification failed ({detail})")),
         ),
     }
 }
@@ -284,17 +286,17 @@ fn determine_status(
 /// Collects per-track codec probes in disc-major manifest order (the
 /// reference's `collect_track_ingest`, minus the absolute-path struct —
 /// probes resolve paths themselves).
-fn collect_probes(root: &Path, manifest: &Manifest) -> Vec<TrackProbes> {
+fn collect_probes(source: &PackageSource, manifest: &Manifest) -> Vec<TrackProbes> {
     manifest
         .media
         .iter()
         .flat_map(|disc| disc.tracks.iter())
         .map(|track| {
-            let primary = probe::probe_track(root, &track.audio.path);
+            let primary = source.probe_track(&track.audio.path);
             let variants = track
                 .representations
                 .iter()
-                .map(|rep| probe::probe_track(root, &rep.path))
+                .map(|rep| source.probe_track(&rep.path))
                 .collect();
             TrackProbes { primary, variants }
         })
@@ -357,12 +359,28 @@ fn record_invalid(
     }
 }
 
+/// Whether the package recorded at `recorded_path` is still present, in the
+/// shape **its own** recorded kind implies.
+///
+/// The reference tests `is_dir` because every package it knew about is a
+/// directory. A container package is a file, so testing a live container with
+/// `is_dir` would wrongly report it gone and let a *different* source — a
+/// directory twin of the same album, say — take over its row. The kind is
+/// therefore recovered from the recorded locator with the one classifier.
+fn recorded_package_present(recorded_path: &str) -> bool {
+    let recorded = Path::new(recorded_path);
+    match crate::discover::classify_source_path(recorded) {
+        crate::discover::SourceKind::Container => recorded.is_file(),
+        crate::discover::SourceKind::Directory => recorded.is_dir(),
+    }
+}
+
 /// A package already known by content fingerprint is a move: the existing
 /// row takes the new path (identity and release stay). A quarantined
 /// package stays quarantined. Returns `true` when handled.
 fn handle_move(
     store: &mut impl Store,
-    dir: &Path,
+    source: &PackageSource,
     manifest: &Manifest,
     manifest_sha: &str,
     last_scan: &str,
@@ -370,6 +388,7 @@ fn handle_move(
     result: &mut ScanResult,
 ) -> Result<bool, ScanError> {
     let fail = |e: crate::error::ServerError| ScanError::Store(e.to_string());
+    let dir = source.locator();
     let fingerprint =
         identity::package_fingerprint(manifest).map_err(|e| ScanError::Store(e.to_string()))?;
     let Some(row) = store.package_by_fingerprint(&fingerprint).map_err(fail)? else {
@@ -379,7 +398,7 @@ fn handle_move(
         return Ok(false);
     }
     // A duplicate package must not take over an extant package's row.
-    if Path::new(&row.path).is_dir() {
+    if recorded_package_present(&row.path) {
         return Ok(false);
     }
     // A quarantined package stays quarantined across a move; only an
@@ -391,7 +410,7 @@ fn handle_move(
             Some("identity conflict with active package owning this release".to_string()),
         )
     } else {
-        let (status, verify_status, last_error) = determine_status(dir, manifest, verify);
+        let (status, verify_status, last_error) = determine_status(source, manifest, verify);
         (status, verify_status, last_error)
     };
     store.begin().map_err(fail)?;
@@ -425,7 +444,7 @@ fn handle_move(
 #[allow(clippy::too_many_arguments)]
 fn ingest_valid(
     store: &mut impl Store,
-    dir: &Path,
+    source: &PackageSource,
     manifest: &Manifest,
     manifest_sha: &str,
     last_scan: &str,
@@ -433,7 +452,7 @@ fn ingest_valid(
     result: &mut ScanResult,
 ) -> Result<(), ScanError> {
     let fail = |e: crate::error::ServerError| ScanError::Store(e.to_string());
-    let dir_str = dir.to_string_lossy();
+    let dir_str = source.locator().to_string_lossy();
     let fingerprint =
         identity::package_fingerprint(manifest).map_err(|e| ScanError::Store(e.to_string()))?;
     let group_key = identity::group_key(manifest);
@@ -479,7 +498,7 @@ fn ingest_valid(
             .map_err(fail)?;
 
         let (mut status, mut verify_status, mut last_error) =
-            determine_status(dir, manifest, verify);
+            determine_status(source, manifest, verify);
         if conflict {
             status = "conflict".into();
             verify_status = "unverified".into();
@@ -523,9 +542,9 @@ fn ingest_valid(
         };
 
         if take_ownership {
-            let probes = collect_probes(dir, manifest);
+            let probes = collect_probes(source, manifest);
             store
-                .replace_release_content(release_id, manifest, dir, &probes)
+                .replace_release_content(release_id, manifest, source, &probes)
                 .map_err(fail)?;
             store.release_set_owner(release_id, pkg_id).map_err(fail)?;
         }
@@ -551,6 +570,13 @@ fn process_candidate(
     let fail = |e: crate::error::ServerError| ScanError::Store(e.to_string());
     let dir = &candidate.path;
     let dir_str = dir.to_string_lossy().into_owned();
+    // Re-open the source for the work that follows: the object table, the
+    // probes and the content sync all read through it, and a container must be
+    // open to answer any of those.
+    let open_source = || match candidate.kind {
+        crate::discover::SourceKind::Directory => PackageSource::directory(dir),
+        crate::discover::SourceKind::Container => PackageSource::container(dir),
+    };
     let (manifest_sha, manifest) = match &candidate.body {
         CandidateBody::Invalid(crate::discover::InvalidReason::UnreadableManifest(_)) => {
             record_invalid(
@@ -558,7 +584,7 @@ fn process_candidate(
                 &dir_str,
                 "",
                 last_scan,
-                "manifest.json unreadable",
+                "manifest unreadable",
                 result,
             )?;
             return Ok(());
@@ -646,7 +672,7 @@ fn process_candidate(
     if !verify {
         if let Some(row) = store.package_by_path(&dir_str).map_err(fail)? {
             if row.manifest_sha256 == manifest_sha {
-                let missing = count_missing_objects(dir, manifest);
+                let missing = count_missing_objects(&open_source(), manifest);
                 let (status, vstat, last_error) = if missing > 0 {
                     (
                         "warning".to_string(),
@@ -686,10 +712,11 @@ fn process_candidate(
     }
 
     // Move detection (only when no row exists at this path).
+    let package = open_source();
     if store.package_by_path(&dir_str).map_err(fail)?.is_none()
         && handle_move(
             store,
-            dir,
+            &package,
             manifest,
             &manifest_sha,
             last_scan,
@@ -702,7 +729,7 @@ fn process_candidate(
 
     ingest_valid(
         store,
-        dir,
+        &package,
         manifest,
         &manifest_sha,
         last_scan,

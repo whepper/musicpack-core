@@ -816,7 +816,7 @@ impl Store for SqliteStore {
         &mut self,
         release_id: i64,
         manifest: &Manifest,
-        root: &std::path::Path,
+        source: &crate::source::PackageSource,
         probes: &[TrackProbes],
     ) -> Result<(), ServerError> {
         // Snapshot the stored graph so surviving entities update in place
@@ -858,12 +858,12 @@ impl Store for SqliteStore {
                             media_ids[d],
                             track,
                             probes,
-                            root,
+                            source,
                             &mut old_variants,
                         )?;
                         id
                     }
-                    None => self.insert_track_row(media_ids[d], track, probes, root)?,
+                    None => self.insert_track_row(media_ids[d], track, probes, source)?,
                 };
                 if !track.lyrics.is_empty() {
                     track_lyrics.push((track_row_id, track));
@@ -890,7 +890,7 @@ impl Store for SqliteStore {
         for artwork in &manifest.artwork {
             self.sync_one_asset(
                 release_id,
-                root,
+                source,
                 "artwork",
                 Some(artwork.role.as_str()),
                 None,
@@ -903,7 +903,7 @@ impl Store for SqliteStore {
         for asset in &manifest.booklet {
             self.sync_one_asset(
                 release_id,
-                root,
+                source,
                 "booklet",
                 None,
                 None,
@@ -916,7 +916,7 @@ impl Store for SqliteStore {
         for asset in &manifest.lyrics {
             self.sync_one_asset(
                 release_id,
-                root,
+                source,
                 "lyrics",
                 None,
                 None,
@@ -929,7 +929,7 @@ impl Store for SqliteStore {
         for asset in &manifest.extras {
             self.sync_one_asset(
                 release_id,
-                root,
+                source,
                 "extras",
                 None,
                 None,
@@ -945,7 +945,7 @@ impl Store for SqliteStore {
         // ids identical to what the reference assigns for the same
         // package. Vanished rows fall to the unmatched sweep below.
         for (track_id, track) in track_lyrics {
-            self.sync_track_lyrics(release_id, track_id, root, track, &mut old_assets)?;
+            self.sync_track_lyrics(release_id, track_id, source, track, &mut old_assets)?;
         }
         for stored in old_assets.iter().filter(|a| !a.matched) {
             self.conn
@@ -1309,7 +1309,7 @@ impl SqliteStore {
         media_id: i64,
         track: &musicpack_core::format::manifest::Track,
         probes: Option<&TrackProbes>,
-        root: &std::path::Path,
+        package: &crate::source::PackageSource,
         old_variants: &mut [StoredVariant],
     ) -> Result<(), ServerError> {
         let identifiers = track.identifiers.as_ref();
@@ -1362,7 +1362,7 @@ impl SqliteStore {
             )
             .map_err(sqlite_err("cannot clear track artists"))?;
         self.insert_track_artists(id, track)?;
-        self.sync_track_waveform(id, root, track)?;
+        self.sync_track_waveform(id, package, track)?;
         let variants = probes.map(|p| p.variants.as_slice()).unwrap_or(&[]);
         self.sync_track_variants(id, track, variants, old_variants)?;
         Ok(())
@@ -1376,7 +1376,7 @@ impl SqliteStore {
         media_id: i64,
         track: &musicpack_core::format::manifest::Track,
         probes: Option<&TrackProbes>,
-        root: &std::path::Path,
+        package: &crate::source::PackageSource,
     ) -> Result<i64, ServerError> {
         let identifiers = track.identifiers.as_ref();
         let source = track.source.as_ref();
@@ -1425,7 +1425,7 @@ impl SqliteStore {
         // declares one (the update path always clears first, then
         // conditionally re-inserts — see `sync_track_waveform`).
         if track.waveform.is_some() {
-            self.insert_waveform_row(id, root, track)?;
+            self.insert_waveform_row(id, package, track)?;
         }
         // All variants are new on the insert path.
         let mut no_variants = Vec::new();
@@ -1525,7 +1525,7 @@ impl SqliteStore {
     fn sync_track_waveform(
         &self,
         track_id: i64,
-        root: &std::path::Path,
+        source: &crate::source::PackageSource,
         track: &musicpack_core::format::manifest::Track,
     ) -> Result<(), ServerError> {
         self.conn
@@ -1535,24 +1535,25 @@ impl SqliteStore {
             )
             .map_err(sqlite_err("cannot clear waveform"))?;
         if track.waveform.is_some() {
-            self.insert_waveform_row(track_id, root, track)?;
+            self.insert_waveform_row(track_id, source, track)?;
         }
         Ok(())
     }
 
-    /// Writes one waveform row. `file_size` stats the joined path (0 when
-    /// missing), like the reference's `file_size_of`.
+    /// Writes one waveform row. The size comes from the source (a `stat` of
+    /// the joined path for a directory bundle, the member length for a
+    /// container), 0 when missing — like the reference's `file_size_of`.
     fn insert_waveform_row(
         &self,
         track_id: i64,
-        root: &std::path::Path,
+        source: &crate::source::PackageSource,
         track: &musicpack_core::format::manifest::Track,
     ) -> Result<(), ServerError> {
         let waveform = track
             .waveform
             .as_ref()
             .ok_or_else(|| ServerError::Store("waveform expected".into()))?;
-        let size = crate::probe::file_size(&root.join(&waveform.path));
+        let size = source.object_size(&waveform.path);
         self.conn
             .execute(
                 "INSERT INTO track_waveforms(track_id, version, relative_path, sha256,
@@ -1672,7 +1673,7 @@ impl SqliteStore {
     fn sync_one_asset(
         &self,
         release_id: i64,
-        root: &std::path::Path,
+        source: &crate::source::PackageSource,
         kind: &str,
         role: Option<&str>,
         track_id: Option<i64>,
@@ -1681,13 +1682,14 @@ impl SqliteStore {
         sha256: &str,
         old_assets: &mut [StoredAsset],
     ) -> Result<(), ServerError> {
-        let abs = root.join(rel);
         // Mirror the reference: an unresolvable asset path skips the row
-        // silently instead of failing ingestion.
-        if abs.as_os_str().as_encoded_bytes().len() >= 4096 + 2 {
+        // silently instead of failing ingestion. The bound is the reference's
+        // fixed path buffer, measured on whichever path this source resolves
+        // the object through.
+        if source.resolved_path_len(rel) >= 4096 + 2 {
             return Ok(());
         }
-        let size = crate::probe::file_size(&abs);
+        let size = source.object_size(rel);
         match old_assets.iter_mut().find(|a| {
             !a.matched
                 && a.kind == kind
@@ -1747,14 +1749,14 @@ impl SqliteStore {
         &self,
         release_id: i64,
         track_id: i64,
-        root: &std::path::Path,
+        package: &crate::source::PackageSource,
         track: &musicpack_core::format::manifest::Track,
         old_assets: &mut [StoredAsset],
     ) -> Result<(), ServerError> {
         for lyrics in &track.lyrics {
             self.sync_one_asset(
                 release_id,
-                root,
+                package,
                 "lyrics",
                 None,
                 Some(track_id),
@@ -1855,10 +1857,10 @@ fn find_track_by_content(rows: &[StoredTrack], sha256: &str) -> Option<usize> {
 /// probe's when non-empty, else the extension-derived codec with zeroed
 /// numbers (the reference's `resolve_audio_codec`).
 fn audio_columns(path: &str, probe: Option<&TrackProbe>) -> (String, i64, i64, i64, i64) {
-    let size = probe
-        .and_then(|p| p.abs_path.as_ref())
-        .map(|p| crate::probe::file_size(p))
-        .unwrap_or(0) as i64;
+    // The size comes from the probe itself: for a directory source that is the
+    // `file_size_of` stat the reference does, and for a container member it is
+    // the length the member table reports.
+    let size = probe.map(|p| p.size).unwrap_or(0) as i64;
     match probe {
         Some(p) if !p.codec.is_empty() => (
             p.codec.clone(),

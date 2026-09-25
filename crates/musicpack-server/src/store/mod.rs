@@ -177,14 +177,22 @@ pub struct PackageRow {
 
 /// Codec probe for one manifest audio object (primary or representation).
 ///
-/// Produced by the ingestion layer's filesystem probe ([`crate::probe`])
-/// and consumed by content sync. `abs_path` is `None` when the object
-/// could not be resolved; `codec` is empty then, and the sync falls back
-/// to the extension-derived codec — exactly the reference's
-/// `resolve_audio_codec` precedence.
+/// Produced by the ingestion layer's probe ([`crate::probe`]) and consumed by
+/// content sync. `abs_path` is `None` when the object could not be resolved;
+/// `codec` is empty then, and the sync falls back to the extension-derived
+/// codec — exactly the reference's `resolve_audio_codec` precedence.
+///
+/// `size` is the object's byte count, carried explicitly because a container
+/// member has no filesystem path: the reference's `file_size_of` (stat the
+/// resolved file) has no container equivalent, so the size is captured where
+/// the object was actually opened. `abs_path` stays the *directory* source's
+/// identity and is `None` for a member.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TrackProbe {
+    /// The object's filesystem path, for a directory-bundle source.
     pub abs_path: Option<std::path::PathBuf>,
+    /// The object's byte count (0 when unresolved).
+    pub size: u64,
     pub codec: String,
     pub stream_version: i64,
     pub sample_rate: i64,
@@ -563,11 +571,16 @@ pub trait Store {
     /// variants matched by the reference's natural keys; per-track lyric
     /// assets by the track-extended key — `docs/musicpack-lyrics-v1.md`
     /// §7.2).
+    ///
+    /// `source` supplies the objects' sizes and the locator recorded with each
+    /// row. It is a [`PackageSource`](crate::source::PackageSource) rather
+    /// than a path so a container member sizes from the member table instead
+    /// of a `stat` that cannot exist.
     fn replace_release_content(
         &mut self,
         release_id: i64,
         manifest: &musicpack_core::format::manifest::Manifest,
-        root: &std::path::Path,
+        source: &crate::source::PackageSource,
         probes: &[TrackProbes],
     ) -> Result<(), ServerError>;
 

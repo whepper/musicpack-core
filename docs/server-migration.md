@@ -16,9 +16,17 @@ the legacy implementation plus `specs/musicpack-api-v1.md` — the same
    `group_key` / `release_key`), an ingestion state machine, a rebuildable
    SQLite index, an HTTP API, and auth. None of that belongs in
    `musicpack-core` (package domain); it belongs in a server crate.
-2. **The library on disk is `.mpack` directories only.** `.mpak` single-file
-   containers are an *acquisition/transport* concern (client-side range
-   readers, `mpakhttp/`); the server library never serves from them.
+2. **The library on disk is `.mpack` directories and `.mpak` containers.**
+   Both are first-class library sources: a `.mpack` directory bundle is read
+   through `DirectoryBackend`, a `.mpak` single-file container through
+   `MpakBackend`, and both project into the same SQLite index with the same
+   identity, ownership and content-sync rules. This is a deliberate **superset**
+   of the C reference, which only ever walked `.mpack` directories; the
+   differential tests pin the difference. Container *acquisition and transport*
+   is a separate concern: the engine reads container members over a range
+   source (`docs/mpak-source.md`, Stage 1), and the server serves an indexed
+   member as a byte range inside its container, so the client never sees a
+   container offset or a container size.
 3. **The server never transcodes and never decodes.** Audio delivery is byte
    serving of the original stored members (RFC 7233 single range, strong
    sha256 ETag, `If-Range`, 304/416). Decoding happens client-side

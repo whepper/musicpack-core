@@ -29,5 +29,6 @@ pub mod media;
 pub mod pathsafe;
 pub mod probe;
 pub mod shutdown;
+pub mod source;
 pub mod store;
 pub mod tokens;

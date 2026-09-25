@@ -41,8 +41,20 @@ use crate::store::MediaRef;
 pub struct MediaResource {
     /// The opened file, positioned at 0.
     pub file: File,
-    /// `fstat` size — the only byte count serving trusts.
+    /// The **logical** object size — the only byte count serving trusts.
+    ///
+    /// For a directory-bundle object this is the file's `fstat` size. For a
+    /// container member it is the member's length, so every range calculation,
+    /// `Content-Range` total and `416` boundary is member-relative and the
+    /// client never learns the container's size.
     pub size: u64,
+    /// Where the logical object starts inside [`Self::file`].
+    ///
+    /// `0` for a directory-bundle object. For a container member it is the
+    /// member's offset in the container file, as reported by core's member
+    /// table. Serving adds it to every file seek and to nothing else, so the
+    /// bytes outside `[base, base + size)` are unreachable.
+    pub base: u64,
     /// Stored MIME type (served verbatim as `Content-Type`).
     pub mime: String,
     /// Content hash for ETags (`None` → no ETag, like an empty sha256).
@@ -95,6 +107,18 @@ impl MediaError {
 }
 
 /// Opens and validates the file behind a resolved [`MediaRef`].
+///
+/// Two source shapes, one decision point. A directory-bundle package resolves
+/// `package_path + relative_path` as a contained file, exactly as before. A
+/// container package's locator is the `.mpak` file itself, so the member's
+/// extent comes from core's member table and the resource carries it as a
+/// `(base, size)` window inside that one file — the byte layer then seeks
+/// `base + offset`, which is what makes "serve only this member" structural
+/// rather than a check someone has to remember.
+///
+/// The member path is never joined onto anything: it is looked up in the
+/// container's own member table, and a miss is an error rather than a
+/// fallback.
 pub fn open(media: &MediaRef) -> Result<MediaResource, MediaError> {
     // The serveability gate: only `valid`/`warning` packages serve (the C
     // `serveable()`; `verify_status` was already gated by the resolver
@@ -104,31 +128,59 @@ pub fn open(media: &MediaRef) -> Result<MediaResource, MediaError> {
             "package unavailable; rescan the library",
         ));
     }
-    // Canonical path rules first (the C `musicpack_path_resolve`), then the
-    // final-component discipline with media's extra single-link policy.
-    let Some(abs) = crate::pathsafe::resolve_contained(&media.package_path, &media.relative_path)
-    else {
-        return Err(MediaError::Unavailable("audio object not found"));
+    let source =
+        crate::source::PackageSource::for_locator(std::path::Path::new(&media.package_path));
+    let (mut file, base, size) = match &source {
+        crate::source::PackageSource::Directory { root } => {
+            // Canonical path rules first (the C `musicpack_path_resolve`), then
+            // the final-component discipline with media's extra single-link
+            // policy.
+            let Some(abs) =
+                crate::pathsafe::resolve_contained(&root.to_string_lossy(), &media.relative_path)
+            else {
+                return Err(MediaError::Unavailable("audio object not found"));
+            };
+            let (file, size) = open_servable(&abs)?;
+            (file, 0u64, size)
+        }
+        crate::source::PackageSource::Container { path, .. } => {
+            // The container is the file to open, and it is opened under the
+            // same discipline as any other served file (not a symlink, regular,
+            // single link). The member's extent is core's, or nothing is
+            // served.
+            let (file, _container_size) = open_servable(path)?;
+            let Some((offset, length)) = source.member_extent(&media.relative_path) else {
+                return Err(MediaError::Unavailable("audio object not found"));
+            };
+            (file, offset, length)
+        }
     };
-    let (mut file, size) = crate::pathsafe::open_regular_file(&abs, true).map_err(|e| {
+
+    // Magic-byte inline safety (the C `fd_inline_safe`), read from where the
+    // logical object actually starts.
+    let inline = is_inline_allowed(&media.mime) && magic_safe(&mut file, base, &media.mime);
+
+    Ok(MediaResource {
+        file,
+        size,
+        base,
+        mime: c_mime_truncate(&media.mime),
+        sha256: media.sha256.clone(),
+        filename: disposition_name(&media.relative_path),
+        inline,
+    })
+}
+
+/// Opens a served file under the media layer's discipline, mapping the failures
+/// onto the reference's fixed messages.
+fn open_servable(abs: &std::path::Path) -> Result<(File, u64), MediaError> {
+    crate::pathsafe::open_regular_file(abs, true).map_err(|e| {
         use crate::pathsafe::OpenRegularError as E;
         match e {
             E::Missing => MediaError::Unavailable("source file missing"),
             E::NotRegularFile => MediaError::Unavailable("source file is not a regular file"),
             E::Io(_) => MediaError::Internal("cannot stat source file"),
         }
-    })?;
-
-    // Magic-byte inline safety (the C `fd_inline_safe`).
-    let inline = is_inline_allowed(&media.mime) && magic_safe(&mut file, &media.mime);
-
-    Ok(MediaResource {
-        file,
-        size,
-        mime: c_mime_truncate(&media.mime),
-        sha256: media.sha256.clone(),
-        filename: disposition_name(&media.relative_path),
-        inline,
     })
 }
 
@@ -175,19 +227,27 @@ pub fn is_inline_allowed(mime: &str) -> bool {
 /// serving is allowed only when the leading bytes match the declared
 /// image type. Audio (and non-image MIMEs) are exempt — media cannot
 /// execute active content. The file position is restored.
-fn magic_safe(file: &mut File, mime: &str) -> bool {
+///
+/// `base` is where the logical object starts inside the file (`0` for a
+/// directory object, the member's offset for a container member), so an
+/// image member is judged on *its* leading bytes and never on the container
+/// header that precedes it.
+fn magic_safe(file: &mut File, base: u64, mime: &str) -> bool {
     if !matches!(
         mime,
         "image/jpeg" | "image/png" | "image/gif" | "image/webp" | "image/bmp"
     ) {
         return true;
     }
+    if file.seek(SeekFrom::Start(base)).is_err() {
+        return false;
+    }
     let mut header = [0u8; 16];
     let bytes = match file.read(&mut header) {
         Ok(n) => n,
         Err(_) => return false,
     };
-    let _ = file.seek(SeekFrom::Start(0));
+    let _ = file.seek(SeekFrom::Start(base));
     if bytes == 0 {
         return false;
     }

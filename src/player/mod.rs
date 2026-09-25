@@ -46,6 +46,7 @@ pub mod order;
 pub mod player;
 pub mod queue;
 pub mod snapshot;
+pub mod source_url;
 pub mod transition;
 pub mod types;
 
@@ -64,6 +65,11 @@ pub use queue::{QueueModel, QueueState};
 pub use snapshot::{
     SNAPSHOT_VERSION, SNAPSHOT_VERSION_V1, SessionSnapshot, clamp_index, decode_snapshot,
     encode_snapshot,
+};
+pub use source_url::{
+    CONTAINER_PREFIX, CONTAINER_SEPARATOR, ContainerSourceUrl, SourceUrlError,
+    container_playback_source, format_container_source, is_container_source,
+    parse_container_source, transport_url,
 };
 pub use transition::{
     BoundaryProfile, FADE_BASE_SECONDS, FADE_MIN_SECONDS, LOUD_FRACTION,

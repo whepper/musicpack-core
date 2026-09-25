@@ -18,6 +18,7 @@
 //! A probe never fails ingestion: unresolvable or unreadable objects yield
 //! an empty codec (the sync falls back to the extension codec) and size 0.
 
+use std::io::Read;
 use std::path::Path;
 
 use crate::store::TrackProbe;
@@ -97,6 +98,15 @@ fn extension(path: &str) -> &str {
     }
 }
 
+/// The codec facts a probe recovered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodecFacts {
+    pub codec: String,
+    pub stream_version: i64,
+    pub sample_rate: i64,
+    pub channels: i64,
+}
+
 /// Probes one manifest audio object. `root` is the package directory,
 /// `rel` the canonical relative path. The returned probe always carries
 /// the absolute path when the object resolved (even when the codec probe
@@ -106,27 +116,29 @@ pub fn probe_track(root: &Path, rel: &str) -> TrackProbe {
     if !is_regular_file(&abs) {
         return TrackProbe {
             abs_path: None,
+            size: 0,
             codec: String::new(),
             stream_version: 0,
             sample_rate: 0,
             channels: 0,
         };
     }
-    let probed = match codec_for_path(rel) {
-        "musepack" => probe_musepack(&abs),
-        "flac" => probe_flac(&abs),
-        _ => None,
-    };
-    match probed {
-        Some((codec, version, rate, channels)) => TrackProbe {
+    let size = file_size(&abs);
+    let facts = std::fs::File::open(&abs)
+        .ok()
+        .and_then(|file| probe_reader(rel, Box::new(file)));
+    match facts {
+        Some(facts) => TrackProbe {
             abs_path: Some(abs),
-            codec,
-            stream_version: version,
-            sample_rate: rate,
-            channels,
+            size,
+            codec: facts.codec,
+            stream_version: facts.stream_version,
+            sample_rate: facts.sample_rate,
+            channels: facts.channels,
         },
         None => TrackProbe {
             abs_path: Some(abs),
+            size,
             codec: String::new(),
             stream_version: 0,
             sample_rate: 0,
@@ -135,29 +147,47 @@ pub fn probe_track(root: &Path, rel: &str) -> TrackProbe {
     }
 }
 
-/// Opens the SV8 decoder over the file and reads its stream facts (the
+/// Probes codec facts from an already-open stream over the object's leading
+/// bytes.
+///
+/// Both source kinds funnel through here — a directory file and a container
+/// member are probed by exactly the same code, so a member's facts cannot drift
+/// from the equivalent file's. `rel` supplies the extension that selects the
+/// probe (the reference's `mp_codec_for_path` dispatch); the stream supplies
+/// the bytes. `None` means the codec could not be determined, which the caller
+/// records as an empty codec (the sync then falls back to the extension codec,
+/// like the reference).
+///
+/// The reader is consumed because the SV8 decoder takes ownership of its
+/// stream; both call sites hand over a freshly opened handle.
+pub fn probe_reader(rel: &str, mut reader: Box<dyn Read>) -> Option<CodecFacts> {
+    match codec_for_path(rel) {
+        "musepack" => probe_musepack(reader),
+        "flac" => probe_flac(&mut reader),
+        _ => None,
+    }
+}
+
+/// Opens the SV8 decoder over the stream and reads its stream facts (the
 /// reference's musepack probe arm, minus SV7: the Rust decoder rejects SV7,
 /// so those files take the failed-probe path — see O-S3).
-fn probe_musepack(abs: &Path) -> Option<(String, i64, i64, i64)> {
-    let file = std::fs::File::open(abs).ok()?;
-    let decoder = musicpack_core::audio::musepack::MpcDecoder::from_reader(Box::new(file)).ok()?;
+fn probe_musepack(reader: Box<dyn Read>) -> Option<CodecFacts> {
+    let decoder = musicpack_core::audio::musepack::MpcDecoder::from_reader(reader).ok()?;
     let info = decoder.info();
-    Some((
-        format!("musepack-sv{}", info.stream_version),
-        info.stream_version as i64,
-        info.sample_rate as i64,
-        info.channels as i64,
-    ))
+    Some(CodecFacts {
+        codec: format!("musepack-sv{}", info.stream_version),
+        stream_version: info.stream_version as i64,
+        sample_rate: info.sample_rate as i64,
+        channels: info.channels as i64,
+    })
 }
 
 /// Parses the 42-byte STREAMINFO header (the reference's `flac_probe`):
 /// `fLaC` magic, first metadata block type 0, then the packed
 /// rate/channel bits at `si[10..13]`.
-fn probe_flac(abs: &Path) -> Option<(String, i64, i64, i64)> {
-    use std::io::Read;
-    let mut file = std::fs::File::open(abs).ok()?;
+fn probe_flac(reader: &mut dyn Read) -> Option<CodecFacts> {
     let mut header = [0u8; 42];
-    file.read_exact(&mut header).ok()?;
+    reader.read_exact(&mut header).ok()?;
     if &header[0..4] != b"fLaC" {
         return None;
     }
@@ -167,7 +197,12 @@ fn probe_flac(abs: &Path) -> Option<(String, i64, i64, i64)> {
     let si = &header[8..];
     let rate = ((si[10] as i64) << 12) | ((si[11] as i64) << 4) | ((si[12] as i64) >> 4);
     let channels = (((si[12] & 0x0e) >> 1) + 1) as i64;
-    Some(("flac".to_string(), 0, rate, channels))
+    Some(CodecFacts {
+        codec: "flac".to_string(),
+        stream_version: 0,
+        sample_rate: rate,
+        channels,
+    })
 }
 
 #[cfg(test)]

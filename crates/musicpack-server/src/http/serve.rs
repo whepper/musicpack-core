@@ -22,7 +22,15 @@
 //!    bytes */N`, `Accept-Ranges`, `nosniff` and sandbox CSP — and none of
 //!    `ETag`, `Cache-Control`, `Content-Type` or `Content-Disposition`.
 //!
-//! Sizes always come from the opened file (`fstat`), never the database.
+//! Sizes always come from the opened resource, never the database: the opened
+//! file's `fstat` for a directory-bundle object, and the member's length from
+//! core's container member table for a container member.
+//!
+//! A container member is a **logical** object living at a non-zero offset
+//! inside its container file. The whole range decision above is therefore
+//! computed against the member (so `Content-Range`, `Content-Length` and the
+//! `416` boundary are all member-relative and never leak the container's size),
+//! and `MediaResource::base` is added to the file seek alone.
 
 use std::collections::HashMap;
 
@@ -52,6 +60,7 @@ pub fn serve_media(headers: &HashMap<String, String>, media: MediaResource) -> R
     let MediaResource {
         file,
         size,
+        base,
         mime,
         sha256,
         filename,
@@ -115,7 +124,11 @@ pub fn serve_media(headers: &HashMap<String, String>, media: MediaResource) -> R
     };
 
     let mut response = match slice {
-        Slice::Body(offset, len) => Response::file_body(status, file, offset, len),
+        // The evaluated slice is *logical* — relative to the media object, which
+        // for a container member is the member, not the file. The file seek is
+        // the only place `base` is applied, so a range can never reach outside
+        // `[base, base + size)`; every header above stays member-relative.
+        Slice::Body(offset, len) => Response::file_body(status, file, base + offset, len),
         Slice::Empty416 => Response::new(416, Vec::new()),
     };
     if status == 200 || status == 206 {
@@ -188,6 +201,7 @@ mod tests {
         MediaResource {
             file,
             size,
+            base: 0,
             mime: mime.into(),
             sha256: sha.map(str::to_string),
             filename: "obj.bin".into(),
