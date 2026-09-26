@@ -10,6 +10,13 @@ pub mod sanity;
 pub mod stratified;
 pub mod worksheet;
 
+// Synthetic-fixture regression tests. Compiled only for `cargo test`; the
+// fixture mechanism is never part of the built library.
+#[cfg(test)]
+mod selection_tests;
+#[cfg(test)]
+mod testkit;
+
 use std::error::Error;
 use std::path::PathBuf;
 
