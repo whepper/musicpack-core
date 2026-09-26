@@ -37,3 +37,24 @@ sha2 = "0.10"
 # not leak into the public API.  See docs/architecture.md §6/§8 (D11 and the
 # audio section) for the full rationale and the unsafe audit.
 claxon = "=0.4.3"
+
+# Dev-profile optimization for the DSP path. These crates are pure numeric /
+# decode computation with no debug info worth stepping through, but at the
+# dev default (`opt-level = 0`) a full-album package build is ~15x slower:
+# measured 443 s vs 28.7 s for the same 10-track album through
+# `musicpack-author build`. Only these dependencies are pinned, so
+# incremental `cargo check` / `cargo build` of the server and CLI (whose own
+# code is I/O-bound) stay fast. `author/src-tauri` is excluded above and
+# carries its own mirrored copy.
+#
+# This does not endanger the frozen encoder corpus: Rust enables no
+# FP-contraction and no fast-math, so the numerics are identical at every
+# opt-level, and the corpus suites remain part of the validation gate.
+[profile.dev.package.musicpack-core]
+opt-level = 2
+
+[profile.dev.package.musicpack-musepack-encoder]
+opt-level = 3
+
+[profile.dev.package.claxon]
+opt-level = 3
