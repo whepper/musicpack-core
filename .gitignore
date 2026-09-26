@@ -3,6 +3,8 @@
 
 # Library crate: lockfile is not pinned (dependents generate their own)
 Cargo.lock
+# The isolated experiment is a standalone binary and keeps its own lockfile.
+!experiments/music-similarity-eval/Cargo.lock
 
 # Editor/OS noise
 .DS_Store
