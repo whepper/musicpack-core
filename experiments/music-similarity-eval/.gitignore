@@ -1,0 +1,9 @@
+# Experiment outputs and external artifacts
+/target/
+/out/
+/cache/
+*.onnx
+*.pb
+*.rten
+*.jsonl
+*.json
