@@ -146,6 +146,31 @@ binary as `MUSICPACK_CLI` → `../build/core/musicpack/musicpack` →
 `MUSICPACK_CLI` environment variable. See
 [Backend resolution](#backend-resolution) for the full policy.
 
+### Dev build profile (DSP)
+
+`tauri dev` builds the host with the unoptimized dev profile, but the
+authoring DSP chain — native FLAC/WAV decode (`claxon`), waveform
+accumulation, BS.1770 loudness, and Musepack encoding — is numeric
+dependency code with no debug info worth stepping through. At
+`opt-level = 0` the waveform stage measured **~26x slower** than a release
+build (2.44 s vs 0.10 s for a 120 s 44.1 kHz stereo track; envelopes
+byte-identical either way, and at parity with the reference C
+`waveform-draft`), and a 10-track album measured **~24x slower** to encode
+(250.9 s vs 10.1 s; 20.9–36.4 s per track down to 0.8–1.5 s).
+`src-tauri/Cargo.toml` therefore pins the three hot dependencies
+(`musicpack-core`, `claxon`, `musicpack-musepack-encoder`) to
+`opt-level = 2`/`3` in the dev profile while the host itself stays
+unoptimized, so incremental rebuilds remain fast.
+
+Opt-level cannot move a single output bit: Rust emits no FP contraction and
+no fast-math, so float evaluation order is independent of codegen level. A
+real 302.7 s track encodes to a byte-identical stream (same SHA-256) at
+opt-level 0, 2 and 3. The packaged app is unaffected: it builds with
+`[profile.release]`.
+
+This workspace is excluded from the root Cargo workspace, so it carries its
+own profile block — a dev-profile pin added at the root does not apply here.
+
 Quality commands:
 
 ```sh

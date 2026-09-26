@@ -52,6 +52,28 @@ custom-protocol = ["tauri/custom-protocol"]
 [dev-dependencies]
 tempfile = "3"
 
+# `tauri dev` otherwise runs the whole authoring DSP chain (native FLAC/WAV
+# decode, waveform accumulation, BS.1770 loudness) at opt-level 0, which makes
+# the waveform stage ~26x slower than the release build for no debugging
+# benefit: the hot code is dependency-internal and has no debug info worth
+# stepping through. The host itself stays unoptimized so incremental rebuilds
+# remain fast. See the DSP profile note in `author/README.md`.
+[profile.dev.package.musicpack-core]
+opt-level = 2
+
+[profile.dev.package.claxon]
+opt-level = 3
+
+# The Musepack encoder belongs to the same chain and is by far its most
+# arithmetic-dense crate (the psychoacoustic model alone is ~72% of an
+# encode). Left at the dev default it builds at opt-level 0, which made a
+# 10-track album take ~250 s of encoding instead of ~10 s. Opt-level cannot
+# move a single output bit: Rust emits no FP contraction and no fast-math, so
+# float evaluation order is independent of codegen level (stream SHA-256 is
+# identical at opt-level 0, 2 and 3).
+[profile.dev.package.musicpack-musepack-encoder]
+opt-level = 3
+
 [profile.release]
 panic = "abort"
 codegen-units = 1
