@@ -15,6 +15,53 @@ and changes no production code; it exists to be reviewed as the input to a
 future ADR (it supersedes parts of `docs/adr/0016-audio-analysis-replacement.md`
 and must say so explicitly).
 
+## The similarity document format spike
+
+[`FORMAT_SPEC.md`](FORMAT_SPEC.md) specifies the **MusicPack similarity document
+v1**: a package-level binary file that carries, for one profile, one vector per
+package track with an explicit per-track status. It is the deliverable of ADR
+0017 §14 item 5a, and like the rest of this directory it is **design only**:
+nothing in production reads, writes or indexes it.
+
+It is model-independent, profile-driven, and reviewable without a model, a
+library, or a server. **The format gate is closed**: four decisions were reviewed
+and accepted, ADR 0017 D-3 was amended, and three further rules were made
+normative. [`FORMAT_SIGNOFF.md`](FORMAT_SIGNOFF.md) is the decision record — the
+accepted decisions, the evidence behind them, and an explicit list of the gates
+that remain open. Alongside the specification:
+
+- `fixtures/similarity-doc/` — 26 committed binary fixtures plus `MANIFEST.txt`,
+  which records each one's size, SHA-256, parsed fields and expected validation
+  result. Every fixture is synthetic: no audio, model, library path, filesystem
+  path, artist, album, title or username — and the format has no string field in
+  which one could hide.
+- `src/docfmt.rs` — a **reference codec** for the specification, so that the
+  fixtures are reproducible, determinism is a test, and the validation rules are
+  executable. It is not production code, it is not in the root workspace, and a
+  production reader/writer is still to be written against `FORMAT_SPEC.md`.
+- `src/docfixtures.rs` — the fixture set and the manifest/dump renderers.
+- `src/docfmt_tests.rs`, `src/docfmt_tlv_tests.rs` — the conformance suite
+  (29 tests), including the canonical profile-TLV encoding rules.
+- `src/bin/docfmt.rs` — a review tool: annotated hex dump, fixture regeneration,
+  profile fingerprint recomputation.
+
+```sh
+# annotated hex dump of one fixture, with its validation result
+cargo run --manifest-path experiments/music-similarity-eval/Cargo.toml \
+  --bin docfmt -- dump experiments/music-similarity-eval/fixtures/similarity-doc/minimal-ok.msim
+
+# the fixture profiles' fingerprints, recomputed from their field lists
+cargo run --manifest-path experiments/music-similarity-eval/Cargo.toml \
+  --bin docfmt -- profiles
+
+# the conformance suite (29 tests)
+cargo test --manifest-path experiments/music-similarity-eval/Cargo.toml docfmt
+```
+
+`docfmt emit <dir>` regenerates the fixture set from the reference encoder. It is
+never run by CI: the committed bytes are the contract, and the test suite requires
+the committed bytes and the encoder to agree.
+
 ## Scope
 
 The experiment may:

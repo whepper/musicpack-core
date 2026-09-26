@@ -128,8 +128,8 @@ Four facts from the codebase are load-bearing:
    ```
    Documented at `mod.rs:641-643`: *"`\"sonic\"` is the v1 type; **unknown types
    are forward-compatible and structurally validated only**"*. Parser
-   (`parse.rs:325-347`) requires `kind` + `path` + valid `sha256`, requires
-   `profile` only for `kind == "sonic"`, and bounds the array at
+   (`parse.rs:325-347`) requires `type` + `path` + valid `sha256`, requires
+   `profile` only for `type == "sonic"`, and bounds the array at
    `MAX_ANALYSIS = 32`. **This is the designed extension point, and it costs no
    manifest version bump** (growth rule: `musicpack-v1.md` §7 — new optional
    fields, existing fields never change meaning).
@@ -152,7 +152,7 @@ Four facts from the codebase are load-bearing:
    `INDX`/`TAIL` in the container. There is no signature and no MAC anywhere —
    this design must not pretend otherwise.
 
-Only `analysis[]` with a novel `kind` satisfies all four: it is already
+Only `analysis[]` with a novel `type` value satisfies all four: it is already
 forward-compatible, it is a **package-level** (not nested) reference so it
 survives rewrite by both writers, it inherits the existing hash/containment/budget
 machinery for free, and it needs no format change at all.
@@ -161,7 +161,7 @@ machinery for free, and it needs no format change at all.
 
 ```json
 "analysis": [
-  { "kind": "similarity", "profile": "musicpack-similarity/discogs-effnet@multi",
+  { "type": "similarity", "profile": "musicpack-similarity/discogs-effnet@multi",
     "path": "analysis/similarity/discogs-effnet-multi.bin",
     "sha256": "<64 hex>" }
 ]
@@ -177,7 +177,7 @@ Rationale for **one** document per (package, profile) rather than one per track:
 - **Writer registration sites.** Adding an asset *group* requires editing six
   places in lockstep (`referenced_paths`, `check_dup_paths`, `KNOWN_ROOT_FIELDS`/`build_tree`,
   `canonical_pack_order`, `validation::verify`, `collect_manifest_assets`, plus a
-  `limits.rs` cap). Adding a new `analysis[].kind` requires **none** of them:
+  `limits.rs` cap). Adding a new `analysis[].type` value requires **none** of them:
   the group already exists.
 - **The silent failure mode.** Missing `canonical_pack_order` registration means
   a directory bundle verifies while a `.mpak` of the same package does not.
@@ -747,7 +747,7 @@ profile is activated.
 | --- | --- | --- |
 | 1 | New `profile_id` + `profile_fingerprint` (model sha256, variant, possibly preprocessing) are defined. | §1.2: identity is a tagged TLV hash, not a code path. |
 | 2 | `musicpack-similarity/*` grammar, document layout, and API shape are **unchanged**. | Nothing in §1–§6 names a model family. `discogs-effnet` is one value in a namespace we own. |
-| 3 | `.mpack` v1 is unchanged. No new manifest field, no version bump. `analysis[].kind == "similarity"` already parses; the `profile` string is data. | §2.1: the extension point is pre-existing and already forward-compatible. |
+| 3 | `.mpack` v1 is unchanged. No new manifest field, no version bump. `analysis[].type == "similarity"` already parses; the `profile` string is data. | §2.1: the extension point is pre-existing and already forward-compatible. |
 | 4 | A new build with the new model writes a **second** `analysis[]` entry. | `analysis` is an array bounded at 32 — multi-profile packages are representable today. |
 | 5 | Author cache gets a **new namespace** keyed by the new fingerprint. Old entries are retained, marked inactive. | §3.5/§3.6: cache key contains the fingerprint. |
 | 6 | Server creates a **new `similarity_sets` row** (`state = 'inactive'`) and populates a new partition. | §4.2: partition key is the fingerprint. |

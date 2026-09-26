@@ -1,6 +1,10 @@
 pub mod audio;
 pub mod comparison;
 pub mod corpus;
+// The similarity-document format spike: a reference codec plus the committed
+// fixture set. Design-only, never production; see `FORMAT_SPEC.md`.
+pub mod docfixtures;
+pub mod docfmt;
 pub mod eval;
 pub mod mel;
 pub mod model;
@@ -10,8 +14,12 @@ pub mod sanity;
 pub mod stratified;
 pub mod worksheet;
 
-// Synthetic-fixture regression tests. Compiled only for `cargo test`; the
-// fixture mechanism is never part of the built library.
+// Deterministic regression tests. Compiled only for `cargo test`; the fixture
+// mechanisms are never part of the built library.
+#[cfg(test)]
+mod docfmt_tests;
+#[cfg(test)]
+mod docfmt_tlv_tests;
 #[cfg(test)]
 mod selection_tests;
 #[cfg(test)]

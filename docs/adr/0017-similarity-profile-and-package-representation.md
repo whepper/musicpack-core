@@ -1,6 +1,11 @@
 # ADR 0017: Similarity profile mechanism and optional package representation
 
 - **Status:** Proposed (2026-09-26; design only, nothing implemented)
+- **Format gate:** the similarity document format gate (§14 item 5a) was
+  **closed by sign-off on 2026-09-26**. Decisions A–D were accepted, D-3 was
+  amended, and three further rules were made normative; see §5.5.1 and
+  `experiments/music-similarity-eval/FORMAT_SIGNOFF.md`. **No production code
+  implements any of it**, and §14 items 1 and 2 remain open and blocking.
 - **Decision type:** Architecture boundary, format extension, and licensing gate
 - **Production impact:** None from this document. No dependency, schema, format,
   API, UI, or runtime behaviour is changed by this ADR. It supersedes and
@@ -20,7 +25,7 @@
    participate in `group_key` or `release_key`, which are computed from a closed
    set of stable metadata fields.
 3. **`.mpack` may optionally carry a similarity document** as a
-   `analysis[]` entry with a new `kind`, reusing the existing
+   `analysis[]` entry with a new `type` value, reusing the existing
    forward-compatible extension point. **The package document is portable input
    only and is never authoritative.** The server-local similarity index is
    authoritative for every query.
@@ -107,7 +112,7 @@ These terms are used precisely throughout and must not be conflated.
 | **`profile_id`** | A stable, semantic, human-facing name for a profile. Changes only when the representation is no longer comparable. Displayed by APIs. Never a cache key. |
 | **`profile_fingerprint`** | SHA-256 over a canonical tagged encoding of every profile-defining field. The comparison and cache key. Two fingerprints that differ ⇒ vectors are incomparable. |
 | **Embedding / vector** | One fixed-length numeric vector produced by a profile for one track, or a deterministic aggregate of such vectors for one album. Meaningless without a profile. |
-| **Similarity document** | A package-level referenced asset (`analysis[]` entry with `kind = "similarity"`) containing, for one profile, per-track vectors with explicit per-track status and an optional album aggregate. Portable input. |
+| **Similarity document** | A package-level referenced asset (`analysis[]` entry with `type = "similarity"`) containing, for one profile, per-track vectors with explicit per-track status and an optional album aggregate. Portable input. |
 | **Similarity set** | A server-side row identifying one `profile_id` + `profile_fingerprint` partition of vectors, with lifecycle state. |
 | **Similarity index** | The server-side queryable structure: similarity sets plus their vector rows. Derived, rebuildable, authoritative for queries. |
 | **Package analysis** | A referenced document inside `.mpack`, covered by the normal asset integrity model. Present or absent; never required. |
@@ -139,8 +144,14 @@ derivation, not an identity.
 ### D-3. `.mpack` may optionally carry a similarity document, as portable input only
 
 Adopted as in `PRODUCTION_DESIGN.md` §2, with semantics fixed in §5.3. Summary:
-a package-level `analysis[]` entry with a new `kind`, one document per
+a package-level `analysis[]` entry with a new `type` value, one document per
 (package, profile), per-track explicit status, optional album aggregate.
+
+> **Amended 2026-09-26 at the format gate.** The *optional album aggregate* is
+> **removed from v1.0** and explicitly reserved; the other three properties are
+> unchanged and one was strengthened (full track coverage, §5.5.1). See §5.5.1
+> decision B. The text above is retained as originally adopted so the change is
+> auditable.
 
 **Disabled by default.** Enabled only through an explicit per-build option, and
 released only after licence gate G-2 (§10.4) resolves.
@@ -223,7 +234,7 @@ integrity model, and graph-sync path that already exist.
 
 | | Package similarity document | Server similarity index |
 | --- | --- | --- |
-| Location | Inside `.mpack`, `analysis[]`, `kind = "similarity"` | Server database, `similarity_sets` / `similarity_vectors` |
+| Location | Inside `.mpack`, `analysis[]`, `type = "similarity"` | Server database, `similarity_sets` / `similarity_vectors` |
 | Status | Optional, never required | Derived, rebuildable |
 | Authority | **None.** Input only | **Authoritative for every query** |
 | Integrity | Normal asset model: containment, size budgets, SHA-256 against the manifest declaration | Rebuildable from a scan; not package content |
@@ -326,17 +337,44 @@ Explicitly **not** in the fingerprint: source audio hash (that is the cache key)
 library path, package fingerprint, model download URL, or a dependency lockfile
 hash (ADR 0016 §9.2).
 
+**Canonical encoding (normative, settled at the format gate).** The field list
+above fixes *which* values are identity; the following fix *how they are
+encoded*, so that two independent registries derive the same 32 bytes from the
+same logical profile. Without these rules two registries would encode
+`dimensions` differently and silently create two partitions.
+
+```text
+tlv         := field*                         ascending tag order
+field       := tag:u8 || len:u32be || value   an absent field emits nothing
+fingerprint := SHA-256(tlv)
+```
+
+| Kind of field | Canonical encoding | Applies to |
+| --- | --- | --- |
+| Text | UTF-8 bytes, no terminator | 1, 2, 3, 5, 7, 8, 9, 11, 12, 14 |
+| Digest | the raw 32 bytes, length carried by the framing | 4 |
+| Integer | **exactly four bytes, big-endian** | 6, 10 |
+| Runtime identity | **`runtime_id` ‖ `0x00` ‖ `runtime_version`**, as one field | 13 |
+
+An absent field emits nothing at all; a present-but-empty field is a different
+thing, exactly as in the `src/identity.rs` precedent. The reference codec is
+`experiments/music-similarity-eval/src/docfmt.rs`, and
+`src/docfmt_tlv_tests.rs` contains a second, independent implementation of this
+framing together with golden vectors, so the rules are executable rather than
+prose. Full field table and the golden bytes: `FORMAT_SPEC.md` appendix A.
+
 ### 5.5 Document representation
 
-Placed in the existing `analysis[]` array with a new `kind`. The parser
-(`src/format/manifest/parse.rs:311-349`) already accepts unknown kinds, requiring
+Placed in the existing `analysis[]` array with a new `type` value (the parser
+binds it to the Rust field `Analysis.kind`). The parser
+(`src/format/manifest/parse.rs:311-349`) already accepts unknown types, requiring
 `type`, `path`, and a valid `sha256`, and requiring `profile` only when
-`kind == "sonic"` — so a `similarity` entry parses today with no format change
+`type == "sonic"` — so a `similarity` entry parses today with no format change
 and no manifest version bump, under the `musicpack-v1.md` §7 growth rule.
 
 ```json
 "analysis": [
-  { "kind": "similarity", "profile": "musicpack-similarity-discogs-effnet-multi-v1",
+  { "type": "similarity", "profile": "musicpack-similarity-discogs-effnet-multi-v1",
     "path": "analysis/similarity/discogs-effnet-multi-v1.bin",
     "sha256": "<64 lowercase hex>" }
 ]
@@ -373,6 +411,140 @@ Album aggregate, when present: mean of L2-normalized unit vectors over
 contributing tracks in canonical manifest order, then L2-normalized, with the
 contributor count recorded. No aggregate when the count is zero. A changed
 contributor set invalidates it.
+
+> **Superseded for v1.0 by decision B (§5.5.1).** The paragraph above records the
+> aggregation rule as originally proposed. It is **not normative for v1.0**:
+> v1.0 carries track-level data only, and no album-aggregate semantics are
+> defined. The rule is retained because it remains the natural candidate for
+> fingerprint tag 12 whenever a future decision adopts an aggregate.
+
+### 5.5.1 Format gate outcome (signed off 2026-09-26)
+
+**Status: the §14 item 5a format gate is CLOSED.** Four decisions were reviewed
+and accepted, D-3 was amended, and three further rules were made normative. The
+full argument for each, the alternatives considered, and the trade-offs accepted
+are in `experiments/music-similarity-eval/FORMAT_SIGNOFF.md`; the normative
+container specification is `experiments/music-similarity-eval/FORMAT_SPEC.md`.
+
+**This section does not replace §5.5.** §5.5 above is retained unchanged as the
+record of what was originally proposed, including the reasoning that produced
+it. What follows records what was accepted instead, and why. A reader should be
+able to reconstruct the whole path from the two.
+
+| # | Decision | Outcome |
+| --- | --- | --- |
+| A | Remove per-entry vector offsets, per-entry vector lengths, and the table offset | **ACCEPTED** |
+| B | Defer the album aggregate from v1.0 | **ACCEPTED — this amends and narrows D-3** |
+| C | `MAX_DIMENSIONS = 4096`, as a format validation limit | **ACCEPTED** |
+| D | `profile_id` is not stored in the document | **ACCEPTED** |
+
+#### Decision A — derived vector positions
+
+The v1.0 layout uses a fixed **12-byte** track-table entry and derives every
+vector's position:
+
+```text
+vector[i] = 64 + 12 * track_count + i * dimensions * element_size
+```
+
+There is no `vector_offset`, no `vector_length`, and no `table_offset`, and
+`total_size` is exact.
+
+Rationale as accepted: `dimensions` and `vector_encoding` are document-level
+invariants, so every vector has the same length and the stride is constant;
+vector positions are therefore derivable and offsets would duplicate layout
+information that can disagree with itself. Random access remains O(1) by
+arithmetic. Variable-length payloads are **intentionally not supported in v1.0**;
+a future format version can introduce another representation, and the
+version-based acceptance rule (below) makes that a clean minor-version change
+rather than a redesign.
+
+#### Decision B — album aggregate deferred, D-3 amended
+
+D-3 is **narrowed**: v1.0 carries track-level similarity data only. The reserved
+`flags` bit 0 remains reserved and **MUST remain zero in v1.0**.
+
+No album-aggregate semantics are defined here, and none are to be invented. A
+future decision to add one must cover at least: aggregation semantics; profile
+identity (fingerprint tag 12); contributor set; accumulation and normalization
+rules; stored versus re-derived values; invalidation semantics; and a defined
+consumer. The aggregate is fully derivable from the per-track table, so nothing
+is lost by not storing it.
+
+#### Decision C — `MAX_DIMENSIONS = 4096`
+
+`dimensions` is a `u16` field constrained to `1 ..= 4096`. **This is a format
+validation/safety limit on untrusted input. It is not a claim that MusicPack only
+supports models with dimensions ≤ 4096**, and it must not be read as endorsing
+any model dimension.
+
+- The field is `u16`, so the layout already admits up to 65 535 dimensions with
+  no change to the header, table or vector region.
+- A larger dimension count could be supported by a **future validation-rule
+  change**, not a format revision.
+- Exceeding the limit is **rejected**; there is no truncation or clamping.
+- The limit is deliberately **separate from model and profile capability**.
+
+#### Decision D — `profile_id` is not stored in the document
+
+The document identifies its representation through the 32-byte
+`profile_fingerprint` alone. The distinction is preserved and is the point:
+
+- `profile_id` — stable **semantic** profile identity; display only; never a
+  comparison, partition or cache key (D-4).
+- `profile_fingerprint` — exact **profile representation** identity; the
+  comparison and cache key.
+
+No duplicated profile name is stored for human readability. It is already bound
+by fingerprint tag 1, a duplicated name could disagree with the fingerprint, the
+header stays fixed-width, and a registry maps fingerprint to profile metadata.
+Consequence recorded honestly: a bare document can be compared but not named.
+
+#### Three further normative rules
+
+These were surfaced by the bidirectional review and are necessary for
+deterministic interoperability.
+
+1. **Full track coverage.** A valid v1.0 document contains **exactly one table
+   entry for every track in the package manifest**. Therefore: no track may be
+   omitted; no track may appear twice; ordering is canonical; every track has
+   exactly one status; a non-`ok` status has zero vector payload bytes; and
+   **absence of a track is not a valid representation of "no similarity data"**.
+   This makes the already-required per-track status unambiguous, and it is
+   stronger than D-3 as originally worded.
+
+2. **Canonical profile-fingerprint TLV encoding.** The rules in §5.4 are
+   normative: `tag:u8 ‖ len:u32be ‖ value` in ascending tag order; **integer
+   values are exactly four bytes, big-endian**; **tag 13 is the canonical
+   `id` NUL `version` representation**; tag 4 is the raw 32 digest bytes; and an
+   absent field emits nothing. Pinned by conformance tests and golden vectors, so
+   two independent implementations derive the same fingerprint.
+
+3. **`u32` disc/track identifiers.** The track table uses `u32` for `disc` and
+   `track`, not the `u16` sketched above. The existing manifest integer
+   validation permits values through `i32::MAX`
+   (`src/format/manifest/parse.rs:606`, `:648`, via `require_int` at `:481-492`),
+   so a `u16` field would make some otherwise-valid manifest identities
+   **unrepresentable**. `u32` preserves the representable manifest domain. This is
+   a correction to the earlier illustrative proposal, not a dependency on any
+   production implementation.
+
+#### Version-based acceptance
+
+A reader accepts a document if and only if `format_major` equals a major it
+implements **and** `format_minor` does not exceed the highest minor it
+implements. A minor revision must preserve the v1.0 layout as a byte-identical
+prefix and append new regions; a major revision may redefine anything and must
+change `format_major`. This is what makes decision A's extensibility and decision
+B's reservation safe: a v1.0 reader rejects a v1.1 document on `format_minor`
+before it examines any flag or table content.
+
+#### What closing this gate did not do
+
+It did not authorise implementation, and it closed no licensing, quality or
+product gate. G-1…G-5, G-6 and G-7, ADR 0016 Slice 0, the `.mpak` round-trip
+test (§14 item 5), the production reader location (§14 item 9), the ANN revisit
+threshold and index retention all remain open. See §14.
 
 ### 5.6 Author responsibilities
 
@@ -429,6 +601,10 @@ similarity_vectors: set_id, track_id, dimensions, encoding, vector BLOB
 similarity_album_vectors: set_id, release_id, dimensions, encoding,
                    contributor_count, vector BLOB
 ```
+
+The album row is a **server-side derivation from the track rows**, not a
+carry-over from the document: the v1.0 document carries no album aggregate
+(§5.5.1 decision B), and a server that wants one computes it.
 
 Properties that matter:
 
@@ -567,7 +743,7 @@ descriptors.
 | --- | --- |
 | New `profile_id` + `profile_fingerprint` are defined | Identity is a tagged hash (§5.4), not a code path |
 | Format, document layout, API shape | **Unchanged.** Nothing outside the Author-side analyzer names a model family |
-| `.mpack` v1 | **Unchanged.** No new field, no version bump; `kind = "similarity"` already parses |
+| `.mpack` v1 | **Unchanged.** No new field, no version bump; `type = "similarity"` already parses |
 | Existing package | May carry a second `analysis[]` entry; the array is bounded at `MAX_ANALYSIS = 32` |
 | Author cache | New namespace keyed by the new fingerprint; old entries retained, marked inactive |
 | Server | New `similarity_sets` row (`inactive`) plus a new partition; activated when populated |
@@ -706,7 +882,7 @@ its prohibition on reviving Sonic.
 
 ## 12. Compatibility and migration implications
 
-- **`.mpack` v1 readers.** A `similarity` entry is an unknown `analysis[].kind`,
+- **`.mpack` v1 readers.** A `similarity` entry is an unknown `analysis[].type`,
   already forward-compatible and structurally validated only. Old readers skip
   it. The document travels as an ordinary `DATA` member reached through the
   existing reference; **no new block type** is introduced, so no `TAIL` or
@@ -764,10 +940,15 @@ deferred.
 5. **`.mpak` round-trip proof** that `analysis[]` members pack through the
    existing `canonical_pack_order` with no new block type — a test, not an
    assumption.
-5a. **Similarity document format spec and reference vectors**, reviewable
-   without a model download or a server schema, equivalent to the ADR 0016 §17
-   Slice 1 exit gate. The binary layout in §5.5 is a proposal until this
-   exists; no writer should be written first.
+5a. **CLOSED 2026-09-26 — similarity document format spec and reference
+   vectors**, reviewable without a model download or a server schema, equivalent
+   to the ADR 0016 §17 Slice 1 exit gate. Delivered as
+   `experiments/music-similarity-eval/FORMAT_SPEC.md` with 26 deterministic
+   binary fixtures, 29 conformance tests, and CI enforcement. The binary layout in
+   §5.5 was a proposal until this existed; the accepted layout and its four
+   deviations are recorded in §5.5.1. **Closing this item did not authorise a
+   writer** — items 1 and 2 remain open and blocking, and no production code
+   implements the format.
 6. **Vector encoding** f16 vs f32, decided by a measured ranking-equivalence test
    (G-6).
 7. **ANN revisit threshold** expressed as a measured library size or p99 latency,
@@ -779,4 +960,6 @@ deferred.
    crates. Revisit only behind a separate WASM/transfer/memory policy.
 
 Until items 1 and 2 have owners and answers, the correct implementation is no new
-production similarity code.
+production similarity code. **That remains true after the format gate closed
+(§5.5.1, §14 item 5a): the format is specified and settled, and it is still not
+built.**

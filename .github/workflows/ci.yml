@@ -19,6 +19,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       web: ${{ steps.filter.outputs.web }}
       author: ${{ steps.filter.outputs.author }}
+      similarity: ${{ steps.filter.outputs.similarity }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -40,6 +41,16 @@ jobs:
             author:
               - 'author/**'
               - '.github/workflows/author.yml'
+            # The isolated similarity experiment is its own workspace and is
+            # deliberately excluded from the `rust` filter above, so an
+            # experiment-only change does not trigger the production build.
+            # Note the consequence: a change to `src/**` that broke the
+            # experiment's dependency on musicpack-core would not run this job.
+            # Widening the filter to include `src/**` is a one-line change if
+            # that is preferred over the narrower, cheaper job.
+            similarity:
+              - 'experiments/music-similarity-eval/**'
+              - '.github/workflows/similarity.yml'
 
   test:
     name: build & test (${{ matrix.os }})
@@ -107,3 +118,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.author == 'true'
     uses: ./.github/workflows/author.yml
+
+  similarity:
+    name: similarity format
+    needs: changes
+    if: needs.changes.outputs.similarity == 'true'
+    uses: ./.github/workflows/similarity.yml

@@ -1,0 +1,56 @@
+name: Similarity format CI
+
+# The similarity experiment is an isolated, removable crate that is
+# deliberately NOT a member of the root workspace and has no production
+# consumer. This job runs only its deterministic, model-free format and
+# reference-codec tests.
+#
+# What this job does not do, and must never grow into doing:
+#   - no model download (the experiment verifies a caller-supplied digest and
+#     never fetches anything; there is no model in this repository);
+#   - no audio decoding, no CLAP, no similarity evaluation;
+#   - no human-review tooling (the worksheet/review-set binaries build but are
+#     never invoked, and their tests drive synthetic fixtures only);
+#   - no production crates: nothing here is a workspace member, so the root
+#     `test`/`wasm`/`fuzz-targets` jobs are untouched and unaffected.
+#
+# Network use is limited to the crates.io fetch that any cargo invocation needs,
+# identical in kind to the root Rust job. The committed fixture set is verified
+# against the reference encoder by `cargo test` itself, so no artefact is
+# produced, uploaded or downloaded.
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  similarity-format:
+    name: similarity format fixtures
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: experiments/music-similarity-eval
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      # Separate workspace and target directory from the root build; cached
+      # separately for the same reason the author host is.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: experiments/music-similarity-eval
+      - name: Format
+        run: cargo fmt -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      # 24 format/conformance tests plus the pre-existing synthetic-fixture
+      # suite. Everything is model-free and completes in well under a second
+      # once built; the cost of this job is compiling the dependency graph.
+      - name: Test
+        run: cargo test

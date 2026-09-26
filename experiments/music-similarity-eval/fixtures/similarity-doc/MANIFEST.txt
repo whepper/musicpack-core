@@ -1,0 +1,289 @@
+# MusicPack similarity document v1 — reference fixture manifest
+#
+# Generated from the reference codec in `src/docfmt.rs`; regenerate with
+# `cargo run --manifest-path experiments/music-similarity-eval/Cargo.toml --bin docfmt -- emit fixtures/similarity-doc`
+# and prove it unchanged with `cargo test --manifest-path experiments/music-similarity-eval/Cargo.toml docfmt`.
+# The committed bytes are the contract; this file describes them.
+#
+# Every fixture is synthetic. No audio, model, library path, filesystem path,
+# artist, album, track title or username appears in this directory or in any
+# byte of any fixture.
+#
+# profile_id musicpack-similarity-fixture-v1 (profile A)
+# profile_fingerprint 51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+# profile_id musicpack-similarity-fixture-f16-v1 (profile B)
+# profile_fingerprint daf9588d95002d69c2919989fa81853f53e2793df003d57f082b0190ed931528
+#
+# keys: bytes, sha256, profile_fingerprint, header, entry<N>, result,
+#       package_effect
+# result is `valid` or `invalid code=<code> detail=<detail>`. detail contains
+# spaces; the code is the stable part.
+# package_effect is `none` for every fixture: a document finding never changes
+# whether the *package* verifies (FORMAT_SPEC.md §13).
+
+minimal-ok.msim
+  purpose=minimal valid document: one member, one f32 vector, no album aggregate
+  bytes=92
+  sha256=abab581082ff61b12916d2065d006df89e6592f560f2edcf6cb81004d7cf5a47
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[1, 0, 0, 0]
+  result=valid
+  package_effect=none
+
+multi-track.msim
+  purpose=four members over two discs covering all four status values
+  bytes=128
+  sha256=e68d00a8247352b9ced4aa71292ece83db40f3c9d341aa2542a02b4ae722ae4d
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=4 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[0.5, 0.5, 0.5, 0.5]
+  entry1=disc=1 track=2 status=insufficient_audio vector=none
+  entry2=disc=1 track=3 status=unsupported vector=none
+  entry3=disc=2 track=1 status=failed vector=none
+  result=valid
+  package_effect=none
+
+determinism-ok.msim
+  purpose=two members with vectors; the fixture the determinism test re-encodes
+  bytes=120
+  sha256=9048d2fffde4607c1366242fd7ee66e9ccbfca5f5b865ff885359247eb78bb80
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=2 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[0, 0, 0, 1]
+  entry1=disc=1 track=2 status=ok vector=[0.5, 0.5, 0.5, 0.5]
+  result=valid
+  package_effect=none
+
+f16-encoding.msim
+  purpose=profile B: same logical vectors as determinism-ok in binary16
+  bytes=104
+  sha256=bd75bac50aca98f9e21ab7b1eb73af60c6c41d84ecf8d06629f50bd1cd0cd18b
+  profile_fingerprint=daf9588d95002d69c2919989fa81853f53e2793df003d57f082b0190ed931528
+  header=major=1 minor=0 dimensions=4 encoding=f16le track_count=2 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[0, 0, 0, 1]
+  entry1=disc=1 track=2 status=ok vector=[0.5, 0.5, 0.5, 0.5]
+  result=valid
+  package_effect=none
+
+all-zero-vector.msim
+  purpose=TRAP: status=ok with an all-zero vector. format-valid, profile-invalid
+  bytes=92
+  sha256=14e534f9d9a354752a1cfc1fe9388db0566a1aad783608f2e76982ff083da131
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[0, 0, 0, 0]
+  result=valid
+  package_effect=none
+
+bad-magic.msim
+  purpose=magic[2] is not 'I'
+  bytes=92
+  sha256=38beb73ae9af65df951c9e104c053d7d457de7e191744786dd51f51b834cc75a
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[1, 0, 0, 0]
+  result=invalid code=magic_invalid detail=[4d, 53, 58, 4d]
+  package_effect=none
+
+unsupported-major.msim
+  purpose=format_major=2
+  bytes=92
+  sha256=e15442e65b18c9ea3c0e1376ae0366614d6650fedbfb5d23296d4027860581f8
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=2 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[1, 0, 0, 0]
+  result=invalid code=unsupported_version detail=format_major=2 (reader implements 1)
+  package_effect=none
+
+unsupported-minor.msim
+  purpose=format_minor=1, which this specification does not define
+  bytes=92
+  sha256=3b2bf5c6b87c7d815a8871002abb1aa2a392f88bef591fd5971cdb152b57d302
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=1 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[1, 0, 0, 0]
+  result=invalid code=unsupported_version detail=format_minor=1 (reader implements up to 0)
+  package_effect=none
+
+zero-fingerprint.msim
+  purpose=profile_fingerprint is 32 zero bytes
+  bytes=92
+  sha256=fc00a92fb66f46b03e932e0cb13a9f227659e774fe3b39dc0e8472f2716ebbf6
+  profile_fingerprint=0000000000000000000000000000000000000000000000000000000000000000
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[1, 0, 0, 0]
+  result=invalid code=zero_fingerprint detail=all 32 bytes are zero
+  package_effect=none
+
+dimensions-zero.msim
+  purpose=dimensions=0
+  bytes=92
+  sha256=6fd3bbc783dbff1eba943ca2728da2fb0a54d2640b4b61b1e885c13e6c09b517
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=0 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[]
+  result=invalid code=dimensions_zero detail=dimensions=0
+  package_effect=none
+
+dimensions-too-large.msim
+  purpose=dimensions=4097, one over the maximum
+  bytes=92
+  sha256=cd8a8b11e2a08be7cb63c8e04c8bb8737529a6a35e3be4b96a45c3922afe3bc8
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4097 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=none
+  result=invalid code=dimensions_too_large detail=dimensions=4097 (max 4096)
+  package_effect=none
+
+unsupported-encoding.msim
+  purpose=vector_encoding=3, which is not assigned
+  bytes=92
+  sha256=1f9a6674a6502dd0ffd0b19a01aeb6db22a91e11affbaa7d2a3a159a452fe9bb
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=undefined:3 track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=unreadable (no decodable encoding, or zero dimensions)
+  result=invalid code=unsupported_encoding detail=vector_encoding=3 (undefined; reader implements 1, 2)
+  package_effect=none
+
+reserved-flag-set.msim
+  purpose=flags bit 0 set: the reserved album-aggregate bit is not defined in v1.0
+  bytes=92
+  sha256=f2a5e39eccd7dac07f888b71fcddcbc09c0c112359e67fa00973b9023930cc76
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x01
+  entry0=disc=1 track=1 status=ok vector=[1, 0, 0, 0]
+  result=invalid code=reserved_nonzero detail=header.flags=0x01
+  package_effect=none
+
+header-reserved-nonzero.msim
+  purpose=the first byte of the 16-byte header reserved region is non-zero
+  bytes=92
+  sha256=05a93345dbd4bf4d779dd22437a03a20645376e82ca99f7bcb13bafd3763f3fd
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[1, 0, 0, 0]
+  result=invalid code=reserved_nonzero detail=header.reserved byte 48
+  package_effect=none
+
+entry-reserved-nonzero.msim
+  purpose=the first reserved byte of entry[0] is non-zero
+  bytes=92
+  sha256=398e3abb9e90eb2589c23c6b84c5534a128669410c5e9e407ae796445cb400e9
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[1, 0, 0, 0]
+  result=invalid code=reserved_nonzero detail=entry[0].reserved byte 73
+  package_effect=none
+
+track-count-zero.msim
+  purpose=track_count=0
+  bytes=92
+  sha256=59483c1343647f87ba57808e7ef216f3f49e32c495b6a4c8892cb9ca2eda1dcc
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=0 flags=0x00
+  result=invalid code=track_count_zero detail=track_count=0
+  package_effect=none
+
+track-count-too-large.msim
+  purpose=track_count=16385, one over MAX_DISCS*MAX_TRACKS_PER_DISC
+  bytes=92
+  sha256=de7c254192a40e634a75009ba39f760ce8e70722d9cd93fefb965fb8831fa29c
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=16385 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=none
+  entry1=disc=32831 track=0 status=ok vector=none
+  table_note=track_count declares 16385 entries; the bytes end at 92
+  result=invalid code=track_count_too_large detail=track_count=16385 (max 16384)
+  package_effect=none
+
+unknown-status.msim
+  purpose=entry[0].status=4, one past the last defined value
+  bytes=92
+  sha256=4303149a2e72f204684f0493256a55f41130e14de53c05bc2eb384e551a05266
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=undefined:4 vector=none
+  result=invalid code=unknown_status detail=entry[0] status=4 (max defined 3)
+  package_effect=none
+
+invalid-member.msim
+  purpose=entry[0].disc=0, which no manifest track can have
+  bytes=92
+  sha256=2804b3220afba3e2b4b75bd612b46a20079ac258dde6c7ed48da11bf9ae59fbc
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=0 track=1 status=ok vector=[1, 0, 0, 0]
+  result=invalid code=invalid_member detail=entry[0] disc=0 track=1 (both must be >= 1)
+  package_effect=none
+
+unsorted-table.msim
+  purpose=entry[0] is (2,1) and entry[1] is (1,2): the table is not ascending
+  bytes=120
+  sha256=b63a54af334176e394ecfded7e563cee90e4e9b18aa88bccb4a5fdee9f5a673b
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=2 flags=0x00
+  entry0=disc=2 track=1 status=ok vector=[0, 0, 0, 1]
+  entry1=disc=1 track=2 status=ok vector=[0.5, 0.5, 0.5, 0.5]
+  result=invalid code=unsorted_table detail=disc=2 track=1 precedes disc=1 track=2
+  package_effect=none
+
+duplicate-member.msim
+  purpose=entry[1] repeats entry[0]'s (disc, track)
+  bytes=120
+  sha256=34f29389f05fa08bc0f9e293d615afbf44f9232e4c720a1ace9ceed43499d9c0
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=2 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[0, 0, 0, 1]
+  entry1=disc=1 track=1 status=ok vector=[0.5, 0.5, 0.5, 0.5]
+  result=invalid code=duplicate_member detail=disc=1 track=1 appears twice
+  package_effect=none
+
+truncated-header.msim
+  purpose=40 bytes: the header is not complete
+  bytes=40
+  sha256=320c1ae07a60c477778d1fc5e0637bb0592d6a574e0da332386e164616f6870f
+  profile_fingerprint=absent
+  result=invalid code=truncated_header detail=40 bytes, need at least 64
+  package_effect=none
+
+truncated-table.msim
+  purpose=header plus six bytes of a twelve-byte entry
+  bytes=70
+  sha256=67bf26bac770b5c3e25ff77b04a159f30a2ecc918e76e2f3626b7d41fe5afb07
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  table_note=track_count declares 1 entries; the bytes end at 70
+  result=invalid code=truncated_table detail=70 bytes, table for 1 members ends at 76
+  package_effect=none
+
+truncated.msim
+  purpose=one f32 element short of the declared layout
+  bytes=88
+  sha256=4882ba93f7b1c6206a718b3530aa77d2eebbc48fd21a2866a4974a09d5a4e51a
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=none
+  result=invalid code=truncated detail=88 bytes, declared layout needs 92
+  package_effect=none
+
+trailing-bytes.msim
+  purpose=one byte after the declared layout
+  bytes=93
+  sha256=bf4367d66e38513da31fba5aac85358f298164051bca1b9d19137129109ac9a0
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[1, 0, 0, 0]
+  result=invalid code=trailing_bytes detail=93 bytes, declared layout needs 92
+  package_effect=none
+
+non-finite-vector.msim
+  purpose=the first element of the only vector is a binary32 NaN
+  bytes=92
+  sha256=c7fc1d55b228d4080a7cf00ab38856a27479e2614bd238ded897d5facd8673a0
+  profile_fingerprint=51d0d4b1997b7578fa290dcc2b89858f255b4493022282a4373b73ca6c2cbeee
+  header=major=1 minor=0 dimensions=4 encoding=f32le track_count=1 flags=0x00
+  entry0=disc=1 track=1 status=ok vector=[NaN, 0, 0, 0]
+  result=invalid code=non_finite_vector detail=entry[0] element 0 is not finite
+  package_effect=none
+
