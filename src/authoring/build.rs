@@ -123,6 +123,35 @@ fn invalid(detail: impl Into<String>) -> Error {
     }
 }
 
+/// A stage of the package build, reported by [`build_directory_with`].
+///
+/// The variants are the builder's own steps, not UI strings: hosts map them
+/// to their own labels. Ordering follows execution order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildStage {
+    /// Copying every manifest-referenced asset into staging and hashing it.
+    Assets,
+    /// Decoding each track for duration and BS.1770 loudness.
+    Loudness,
+    /// Running the authoritative verifier over the staged package.
+    Verify,
+}
+
+/// Progress reported by [`build_directory_with`].
+///
+/// `Assets` and `Loudness` count their own units (assets and tracks
+/// respectively) and are reported once per unit; `Verify` is a single step,
+/// reported as `0/1` on entry and `1/1` when it completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BuildProgress {
+    /// The stage being entered or advanced within.
+    pub stage: BuildStage,
+    /// Units completed within this stage.
+    pub done: usize,
+    /// Units in this stage.
+    pub total: usize,
+}
+
 /// Builds a `.mpack` directory from `draft`, reading source files relative
 /// to `source_root` and publishing the verified package at `output`.
 ///
@@ -133,6 +162,22 @@ pub fn build_directory(
     source_root: &Path,
     output: &Path,
     options: &BuildOptions,
+) -> Result<BuildOutcome, Error> {
+    build_directory_with(draft, source_root, output, options, &mut |_| {})
+}
+
+/// [`build_directory`] with a progress callback, invoked per unit of work in
+/// each stage (see [`BuildProgress`]).
+///
+/// The callback is an observer only: a partially built package is never
+/// published, so there is nothing meaningful to cancel mid-build. A caller
+/// that wants a cancellable build owns that decision above this layer.
+pub fn build_directory_with(
+    draft: &AuthoringDraft,
+    source_root: &Path,
+    output: &Path,
+    options: &BuildOptions,
+    on_progress: &mut dyn FnMut(&BuildProgress),
 ) -> Result<BuildOutcome, Error> {
     validate_draft(draft)?;
 
@@ -171,14 +216,19 @@ pub fn build_directory(
 
     // Materialize every asset, deriving hashes and sizes.
     let mut hashes: HashMap<String, (String, u64)> = HashMap::new();
+    let mut assets = AssetProgress::new(asset_total(draft), on_progress);
+    assets.enter();
     for disc in &draft.media {
         for track in &disc.tracks {
             materialize(&staging, &root, &track.audio, &mut hashes)?;
+            assets.step();
             if let Some(waveform) = &track.waveform {
                 materialize(&staging, &root, &waveform_asset(waveform), &mut hashes)?;
+                assets.step();
             }
             for lyrics in &track.lyrics {
                 materialize(&staging, &root, &lyrics_asset(lyrics), &mut hashes)?;
+                assets.step();
             }
             for representation in &track.representations {
                 materialize(
@@ -187,11 +237,13 @@ pub fn build_directory(
                     &representation_asset(representation),
                     &mut hashes,
                 )?;
+                assets.step();
             }
         }
     }
     for artwork in &draft.artwork {
         materialize(&staging, &root, &artwork.asset, &mut hashes)?;
+        assets.step();
     }
     for asset in draft
         .booklet
@@ -200,14 +252,16 @@ pub fn build_directory(
         .chain(&draft.extras)
     {
         materialize(&staging, &root, asset, &mut hashes)?;
+        assets.step();
     }
     for analysis in &draft.analysis {
         materialize(&staging, &root, &analysis.asset, &mut hashes)?;
+        assets.step();
     }
 
     // Optional loudness/duration measurement, over the staged audio.
     let (measurements, album_loudness) = match options.loudness {
-        LoudnessMode::Measure => measure(&staging, draft)?,
+        LoudnessMode::Measure => measure(&staging, draft, on_progress)?,
         LoudnessMode::Omit => (HashMap::new(), None),
     };
 
@@ -219,7 +273,17 @@ pub fn build_directory(
     })?;
 
     // The existing verifier is authoritative for final validity.
+    on_progress(&BuildProgress {
+        stage: BuildStage::Verify,
+        done: 0,
+        total: 1,
+    });
     let report = verify_staged(&staging)?;
+    on_progress(&BuildProgress {
+        stage: BuildStage::Verify,
+        done: 1,
+        total: 1,
+    });
     if !report.is_ok() {
         let mut findings: Vec<String> = report
             .findings()
@@ -255,6 +319,72 @@ pub fn build_directory(
 // ---------------------------------------------------------------------
 // staging lifecycle
 // ---------------------------------------------------------------------
+
+// ---------------------------------------------------------------------
+// progress reporting
+// ---------------------------------------------------------------------
+
+/// Counts the manifest-referenced assets [`build_directory_with`] copies and
+/// hashes: every track's primary audio plus its waveform, track lyrics and
+/// representations, then the package-level assets.
+fn asset_total(draft: &AuthoringDraft) -> usize {
+    let mut total = 0usize;
+    for disc in &draft.media {
+        for track in &disc.tracks {
+            // The track's primary audio.
+            total += 1;
+            if track.waveform.is_some() {
+                total += 1;
+            }
+            total += track.lyrics.len();
+            total += track.representations.len();
+        }
+    }
+    total
+        + draft.artwork.len()
+        + draft.booklet.len()
+        + draft.lyrics.len()
+        + draft.extras.len()
+        + draft.analysis.len()
+}
+
+/// Per-asset progress counter for the materialization stage. Holds the
+/// borrowed sink so the call sites stay a single `step()` after each
+/// `materialize` rather than re-building the report by hand.
+struct AssetProgress<'a> {
+    done: usize,
+    total: usize,
+    sink: &'a mut dyn FnMut(&BuildProgress),
+}
+
+impl<'a> AssetProgress<'a> {
+    fn new(total: usize, sink: &'a mut dyn FnMut(&BuildProgress)) -> Self {
+        Self {
+            done: 0,
+            total,
+            sink,
+        }
+    }
+
+    /// Reports the stage entry, before the first asset.
+    fn enter(&mut self) {
+        (self.sink)(&BuildProgress {
+            stage: BuildStage::Assets,
+            done: self.done,
+            total: self.total,
+        });
+    }
+
+    /// Reports one more materialized asset.
+    fn step(&mut self) {
+        self.done += 1;
+        (self.sink)(&BuildProgress {
+            stage: BuildStage::Assets,
+            done: self.done,
+            total: self.total,
+        });
+    }
+}
 
 /// Removes the staging tree on drop unless the build published it.
 struct StagingGuard {
@@ -575,11 +705,20 @@ struct Measurement {
 fn measure(
     staging: &Path,
     draft: &AuthoringDraft,
+    on_progress: &mut dyn FnMut(&BuildProgress),
 ) -> Result<(HashMap<String, Measurement>, Option<AlbumLoudness>), Error> {
     let mut per_track: HashMap<String, Measurement> = HashMap::new();
     let mut album: Option<LoudnessMeter> = None;
     let mut album_rate: u32 = 0;
     let mut album_channels: u8 = 0;
+
+    let track_total: usize = draft.media.iter().map(|d| d.tracks.len()).sum();
+    on_progress(&BuildProgress {
+        stage: BuildStage::Loudness,
+        done: 0,
+        total: track_total,
+    });
+    let mut done = 0usize;
 
     for disc in &draft.media {
         for track in &disc.tracks {
@@ -647,6 +786,12 @@ fn measure(
                     duration: frames as f64 / rate as f64,
                 },
             );
+            done += 1;
+            on_progress(&BuildProgress {
+                stage: BuildStage::Loudness,
+                done,
+                total: track_total,
+            });
         }
     }
 

@@ -28,7 +28,10 @@
 mod build;
 mod draft;
 
-pub use build::{BuildOptions, BuildOutcome, LoudnessMode, build_directory};
+pub use build::{
+    BuildOptions, BuildOutcome, BuildProgress, BuildStage, LoudnessMode, build_directory,
+    build_directory_with,
+};
 pub use draft::{
     AuthoringDraft, DraftAnalysis, DraftArtwork, DraftAsset, DraftDisc, DraftLyrics,
     DraftRepresentation, DraftTrack, DraftWaveform,

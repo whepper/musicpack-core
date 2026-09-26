@@ -354,6 +354,26 @@ export interface WaveformProgress {
   message?: string;
 }
 
+/** A build-progress event emitted while a package is created (`.mpack`
+ * directory or `.mpak` container). Phase-granular: one event per pipeline
+ * phase plus one per track inside the track-granular phases. `phase` is a
+ * stable id (`BuildPhase::id` in the authoring pipeline) so the UI owns the
+ * labels. `done`/`total` count tracks and are 0 in phases that are not
+ * track-granular. */
+export interface BuildProgress {
+  phase: 'audio' | 'waveform' | 'assets' | 'draft' | 'package' | 'mpak';
+  step: number;
+  steps: number;
+  done: number;
+  total: number;
+  /** Sub-stage within the `package` phase (the core builder's own stages),
+   * else undefined. The package phase is the longest one, so it reports
+   * movement here rather than as separate phases. */
+  detail?: 'assets' | 'loudness' | 'verify';
+  /** What `done`/`total` counts, else undefined. */
+  unit?: 'tracks' | 'assets';
+}
+
 /** Typed error rejection from the sonic commands: `{ code, message }`. */
 export interface SonicError {
   code?:

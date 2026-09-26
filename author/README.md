@@ -373,7 +373,19 @@ intentionally not identical to the stage order.
 8. **Create MusicPack** — choose the packaging form (**`.mpack`** directory
    package or **`.mpak`** single-file container) and an output location (the
    package name is pre-filled from the album metadata, e.g. `Artist - Album`,
-   and the extension follows the chosen form). For `.mpack`,
+   and the extension follows the chosen form). The build narrates itself: the
+   dialog shows a live `build-progress` line (phase, step *n* of 6, plus a
+   counter) for the whole build, because a full album takes long enough that
+   a bare "Creating…" reads as a hang. The phases are `audio`, `waveform`,
+   `assets`, `draft`, `package` and `mpak`; `audio` and `waveform` count
+   tracks. The `package` phase is the long one (~80% of a typical build), so
+   the core builder reports its own sub-stages through it — as `detail` +
+   `unit` rather than as separate phases: `assets` (copying and hashing every
+   referenced asset, counted in assets), `loudness` (per-track BS.1770 and
+   duration, counted in tracks) and `verify` (the authoritative verifier, one
+   step, no counter). Progress is an observer only: cancelling a build would
+   need a hook inside the core builder, so the encode and waveform stages stay
+   the cancellable ones. For `.mpack`,
     `build-draft` copies and hashes every manifest-referenced asset (audio,
     artwork, booklet, lyrics, extras, and analysis), measures BS.1770-5
     loudness (album as one concatenated program), writes `manifest.json`, then
@@ -610,7 +622,7 @@ here. Every registered command, classified:
 | command | class | notes |
 |---|---|---|
 | `backend_info` | UI capability probe | reports CLI/sidecar availability |
-| `inspect_album`, `validate_draft`, `identify_draft`, `create_package`, `verify_package`, `create_mpak`, `pack_package` | **package authoring** (delegated) | shell out to the `musicpack` CLI sidecar in JSON mode via `author_service.rs`; no parsing of human CLI text. R3.5: `create_package`/`create_mpak` additionally attach the draft's track-linked lyrics through `musicpack-core` after the sidecar build (the sidecar predates the concept); `validate_draft` returns the C verdict with host-side lyric findings merged, so invalid drafts surface structured `{ok:false,…}` verdicts instead of a bare CLI error |
+| `inspect_album`, `validate_draft`, `identify_draft`, `create_package`, `verify_package`, `create_mpak`, `pack_package` | **package authoring** (delegated) | shell out to the `musicpack` CLI sidecar in JSON mode via `author_service.rs`; no parsing of human CLI text. R3.5: `create_package`/`create_mpak` additionally attach the draft's track-linked lyrics through `musicpack-core` after the sidecar build (the sidecar predates the concept); `validate_draft` returns the C verdict with host-side lyric findings merged, so invalid drafts surface structured `{ok:false,…}` verdicts instead of a bare CLI error. `create_package`/`create_mpak` take an `AppHandle` and emit a `build-progress` event per pipeline phase (plus per track in the track-granular phases) so a long build is observable — see the workflow's step 8 |
 | `encode_tracks`, `encode_cancel` | **audio/media** (delegated) | `mpcenc` sidecar; progress events |
 | `waveform_analyze`, `waveform_cancel` | **audio/media** (in-host) | envelope computation over the native decoder |
 | `sonic_analyze`, `sonic_cancel`, `sonic_model_status` | **audio/media** (in-host) | ONNX Runtime model host (`sonic_model.rs`) |

@@ -192,6 +192,51 @@ describe('AuthorApi command surface', () => {
     expect(calls[0]).toEqual({ cmd: 'lyrics_probe', args: { path: '/music/lyrics/a.lrc' } });
   });
 
+  it('forwards build-progress events while a build command runs', async () => {
+    // The create/export flow is the one long operation with no other
+    // feedback, so the api layer must subscribe for the duration of the
+    // command and forward every payload to the caller.
+    const calls: unknown[] = [];
+    const handlers: Record<string, (e: { payload: unknown }) => void> = {};
+    const unlisten = vi.fn(async () => {});
+    const api = new AuthorApi(
+      async (cmd, args) => {
+        calls.push({ cmd, args });
+        return {};
+      },
+      undefined,
+      (async (event: string, handler: (e: { payload: unknown }) => void) => {
+        handlers[event] = handler;
+        return unlisten;
+      }) as never,
+    );
+
+    const seen: unknown[] = [];
+    const build = api.createPackage(draft(), '/out/A.mpack', { quality: '6.0' }, (p) => {
+      seen.push(p);
+    });
+    await vi.waitFor(() => {
+      expect(Object.keys(handlers)).toContain('build-progress');
+    });
+
+    const emit = handlers['build-progress'];
+    if (!emit) throw new Error('no build-progress handler registered');
+    emit({
+      payload: { phase: 'waveform', step: 2, steps: 6, done: 1, total: 3 },
+    });
+    emit({
+      payload: { phase: 'package', step: 5, steps: 6, done: 0, total: 0 },
+    });
+    await build;
+
+    expect(seen).toEqual([
+      { phase: 'waveform', step: 2, steps: 6, done: 1, total: 3 },
+      { phase: 'package', step: 5, steps: 6, done: 0, total: 0 },
+    ]);
+    // The listener is scoped to the command, never left behind.
+    expect(unlisten).toHaveBeenCalledOnce();
+  });
+
   it('delegates lyric file picking to the plugin facade (R3.5)', async () => {
     const calls: unknown[] = [];
     const { api, plugins } = makeApi(calls);

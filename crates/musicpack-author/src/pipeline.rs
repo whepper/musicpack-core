@@ -98,6 +98,83 @@ pub enum IdentifyRequest<'a> {
     },
 }
 
+/// One stage of the build, reported by [`run_with`].
+///
+/// The variants are the pipeline's own stage boundaries (the `// ----`
+/// sections in [`run_with`]), not UI strings: hosts map them to their own
+/// labels. Ordering follows execution order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuildPhase {
+    /// Preparing audio: encoding lossless sources, or passing through.
+    Audio,
+    /// Per-track waveform envelopes from the packaged audio.
+    Waveform,
+    /// Staging artwork, booklet, lyrics, extras and analysis assets.
+    Assets,
+    /// Assembling the core authoring draft.
+    Draft,
+    /// The core builder: hashing assets, measuring loudness, writing the
+    /// manifest, verifying the package. The longest phase; it is a single
+    /// core call, so it reports no finer granularity.
+    Package,
+    /// Packing the `.mpak` container, when one was requested.
+    Mpak,
+}
+
+impl BuildPhase {
+    /// A stable machine-readable id (host/UI label mapping key).
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Audio => "audio",
+            Self::Waveform => "waveform",
+            Self::Assets => "assets",
+            Self::Draft => "draft",
+            Self::Package => "package",
+            Self::Mpak => "mpak",
+        }
+    }
+
+    /// Every phase, in execution order. The count is what a host reports as
+    /// the total, so the progress protocol needs no duplicated constant.
+    pub const ALL: [Self; 6] = [
+        Self::Audio,
+        Self::Waveform,
+        Self::Assets,
+        Self::Draft,
+        Self::Package,
+        Self::Mpak,
+    ];
+}
+
+/// Progress emitted by [`run_with`].
+///
+/// Reported at phase granularity: one event per phase boundary, plus one per
+/// track inside the track-granular phases ([`BuildPhase::Audio`] and
+/// [`BuildPhase::Waveform`]) so a long album shows movement. `done`/`total`
+/// count tracks and are `0` for phases that are not track-granular.
+///
+/// [`BuildPhase::Package`] delegates to the core builder, which reports its
+/// own sub-stages (hashing assets, measuring loudness, verifying). Those
+/// arrive as `detail` + `unit` instead of a phase change, so a host shows one
+/// phase with a moving counter instead of three near-instant phase flips.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildProgress {
+    /// The phase being entered (or advanced within).
+    pub phase: BuildPhase,
+    /// 1-based position of `phase` in [`BuildPhase::ALL`].
+    pub step: usize,
+    /// Total phases ([`BuildPhase::ALL`] length).
+    pub steps: usize,
+    /// Tracks (or `unit`s) completed within this phase so far.
+    pub done: usize,
+    /// Total tracks (or `unit`s) in this phase; 0 when not counted.
+    pub total: usize,
+    /// Sub-stage within [`BuildPhase::Package`] (a stable id), else `None`.
+    pub detail: Option<&'static str>,
+    /// What `done`/`total` counts (a stable id), else `None`.
+    pub unit: Option<&'static str>,
+}
+
 /// A complete authoring request.
 pub struct AuthorRequest<'a> {
     /// The draft JSON bytes.
@@ -177,8 +254,50 @@ pub fn validate_json(draft_json: &[u8]) -> Result<ValidationReport> {
     Ok(draft::validate(&parsed))
 }
 
+/// Builds the progress record for a phase, deriving `step`/`steps` from
+/// [`BuildPhase::ALL`] so the protocol carries no duplicated constant.
+fn progress(
+    phase: BuildPhase,
+    done: usize,
+    total: usize,
+    detail: Option<&'static str>,
+    unit: Option<&'static str>,
+) -> BuildProgress {
+    let steps = BuildPhase::ALL.len();
+    let step = BuildPhase::ALL
+        .iter()
+        .position(|p| *p == phase)
+        .map(|i| i + 1)
+        .unwrap_or(steps);
+    BuildProgress {
+        phase,
+        step,
+        steps,
+        done,
+        total,
+        detail,
+        unit,
+    }
+}
+
 /// Runs the full pipeline.
 pub fn run(request: &AuthorRequest<'_>) -> Result<AuthorOutcome> {
+    run_with(request, &mut |_| {})
+}
+
+/// [`run`] with a progress callback, invoked at every phase boundary and per
+/// track inside the track-granular phases (see [`BuildProgress`]).
+///
+/// The callback is an observer only: unlike the split-stage callbacks
+/// ([`encode_stage_with`], [`waveform_stage_with`]) its return value is
+/// ignored, because cancelling mid-build would need a hook inside the core
+/// builder. A host that wants a cancellable build should drive
+/// [`encode_stage_with`] and [`waveform_stage_with`] first (as the Author UI
+/// does) and treat this call as the final atomic step.
+pub fn run_with(
+    request: &AuthorRequest<'_>,
+    on_progress: &mut dyn FnMut(&BuildProgress),
+) -> Result<AuthorOutcome> {
     let mut draft = draft::parse(request.draft_json)?;
 
     if let Some(identify) = &request.identify {
@@ -213,8 +332,17 @@ pub fn run(request: &AuthorRequest<'_>) -> Result<AuthorOutcome> {
     let mut namer = UniqueNamer::default();
 
     // ---- audio: encode or pass through ----
+    let total_tracks: usize = draft.media.iter().map(|d| d.tracks.len()).sum();
+    on_progress(&progress(
+        BuildPhase::Audio,
+        0,
+        total_tracks,
+        None,
+        Some("tracks"),
+    ));
     let mut audio: Vec<Vec<StagedAudio>> = Vec::new();
     let multi_disc = draft.media.len() > 1;
+    let mut done = 0usize;
     for disc in &draft.media {
         let mut per_track = Vec::new();
         for track in &disc.tracks {
@@ -228,6 +356,14 @@ pub fn run(request: &AuthorRequest<'_>) -> Result<AuthorOutcome> {
                 request.options.quality,
             )?;
             per_track.push(staged);
+            done += 1;
+            on_progress(&progress(
+                BuildPhase::Audio,
+                done,
+                total_tracks,
+                None,
+                Some("tracks"),
+            ));
         }
         audio.push(per_track);
     }
@@ -235,6 +371,14 @@ pub fn run(request: &AuthorRequest<'_>) -> Result<AuthorOutcome> {
     // ---- waveform envelopes from the packaged audio ----
     let mut waveforms: Vec<Vec<Option<StagedWaveform>>> = Vec::new();
     if request.options.waveform {
+        on_progress(&progress(
+            BuildPhase::Waveform,
+            0,
+            total_tracks,
+            None,
+            Some("tracks"),
+        ));
+        let mut done = 0usize;
         for (di, disc) in draft.media.iter().enumerate() {
             let mut per_track = Vec::new();
             for (ti, track) in disc.tracks.iter().enumerate() {
@@ -247,6 +391,14 @@ pub fn run(request: &AuthorRequest<'_>) -> Result<AuthorOutcome> {
                     package: pkg_path,
                     work: work_path,
                 }));
+                done += 1;
+                on_progress(&progress(
+                    BuildPhase::Waveform,
+                    done,
+                    total_tracks,
+                    None,
+                    Some("tracks"),
+                ));
             }
             waveforms.push(per_track);
         }
@@ -257,6 +409,7 @@ pub fn run(request: &AuthorRequest<'_>) -> Result<AuthorOutcome> {
     }
 
     // ---- artwork + document assets ----
+    on_progress(&progress(BuildPhase::Assets, 0, 0, None, None));
     let artwork = stage_artwork(&draft, &works, &mut namer)?;
     let booklet = stage_plain(&draft, &draft.booklet, "booklet", &works, &mut namer)?;
     let root_lyrics = stage_plain(&draft, &draft.lyrics, "lyrics", &works, &mut namer)?;
@@ -264,6 +417,7 @@ pub fn run(request: &AuthorRequest<'_>) -> Result<AuthorOutcome> {
     let analysis = stage_analysis(&draft, &works, &mut namer)?;
 
     // ---- assemble the core authoring draft ----
+    on_progress(&progress(BuildPhase::Draft, 0, 0, None, None));
     let assembled = assemble(
         &draft,
         &audio,
@@ -278,6 +432,9 @@ pub fn run(request: &AuthorRequest<'_>) -> Result<AuthorOutcome> {
     )?;
 
     // ---- build through the core (the sole package constructor) ----
+    // The core builder reports its own sub-stages (asset hashing, loudness,
+    // verification); they surface as this phase's detail + counter.
+    on_progress(&progress(BuildPhase::Package, 0, 0, None, None));
     let build_options = BuildOptions {
         loudness: request.options.loudness,
     };
@@ -287,11 +444,25 @@ pub fn run(request: &AuthorRequest<'_>) -> Result<AuthorOutcome> {
         std::process::id()
     ));
     let _ = fs::remove_dir_all(&staging);
-    let build: BuildOutcome = musicpack_core::authoring::build_directory(
+    let build: BuildOutcome = musicpack_core::authoring::build_directory_with(
         &assembled,
         works.path(),
         &staging,
         &build_options,
+        &mut |p: &musicpack_core::authoring::BuildProgress| {
+            let (detail, unit) = match p.stage {
+                musicpack_core::authoring::BuildStage::Assets => ("assets", Some("assets")),
+                musicpack_core::authoring::BuildStage::Loudness => ("loudness", Some("tracks")),
+                musicpack_core::authoring::BuildStage::Verify => ("verify", None),
+            };
+            on_progress(&progress(
+                BuildPhase::Package,
+                p.done,
+                p.total,
+                Some(detail),
+                unit,
+            ));
+        },
     )?;
     publish(&staging, request.output, request.options.replace)?;
 
@@ -299,6 +470,7 @@ pub fn run(request: &AuthorRequest<'_>) -> Result<AuthorOutcome> {
     let mpak = match &request.options.mpak {
         None => None,
         Some(path) => {
+            on_progress(&progress(BuildPhase::Mpak, 0, 0, None, None));
             directory::pack_directory(request.output, path).map_err(|e| AuthorError::Pack {
                 detail: e.to_string(),
             })?;

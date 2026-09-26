@@ -19,8 +19,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use musicpack_core::authoring::{
-    AuthoringDraft, BuildOptions, DraftAnalysis, DraftArtwork, DraftAsset, DraftDisc, DraftLyrics,
-    DraftRepresentation, DraftTrack, DraftWaveform, LoudnessMode, build_directory,
+    AuthoringDraft, BuildOptions, BuildProgress, BuildStage, DraftAnalysis, DraftArtwork,
+    DraftAsset, DraftDisc, DraftLyrics, DraftRepresentation, DraftTrack, DraftWaveform,
+    LoudnessMode, build_directory, build_directory_with,
 };
 use musicpack_core::error::Error;
 use musicpack_core::format::checksum;
@@ -125,6 +126,67 @@ fn read_manifest(dir: &Path) -> (Vec<u8>, ParsedManifest) {
     let bytes = fs::read(dir.join("manifest.json")).unwrap();
     let parsed = ParsedManifest::parse(&bytes).unwrap();
     (bytes, parsed)
+}
+
+#[test]
+fn build_directory_reports_every_stage_in_order() {
+    // The Author UI shows one progress line for the whole package build, so
+    // the stages must arrive in execution order, count the right units, and
+    // never report a count beyond their total.
+    let temp = TempDir::new("progress");
+    let root = source_root(&temp);
+    fs::copy(fixture("flac-mono-44k.flac"), root.join("one.flac")).unwrap();
+    fs::copy(fixture("flac-mono-44k.flac"), root.join("two.flac")).unwrap();
+    fs::write(root.join("one.wfm"), [0u8; 20]).unwrap();
+    fs::write(root.join("front.jpg"), b"cover").unwrap();
+    let out = temp.path().join("Album.mpack");
+
+    let mut first = track(1, "One", "audio/01 - One.flac", "one.flac");
+    first.waveform = Some(DraftWaveform {
+        path: "analysis/waveform/01-01.wfm".to_string(),
+        source: "one.wfm".to_string(),
+    });
+    let mut draft = draft_with(vec![DraftDisc {
+        number: 1,
+        format: Some(MediumFormat::Digital),
+        title: None,
+        tracks: vec![first, track(2, "Two", "audio/02 - Two.flac", "two.flac")],
+    }]);
+    draft.artwork = vec![DraftArtwork {
+        role: "front".to_string(),
+        asset: DraftAsset::new("artwork/front.jpg", "front.jpg"),
+    }];
+
+    let mut stages: Vec<(BuildStage, usize, usize)> = Vec::new();
+    let outcome = build_directory_with(
+        &draft,
+        &root,
+        &out,
+        &BuildOptions::default(),
+        &mut |p: &BuildProgress| {
+            assert!(p.done <= p.total, "done {} > total {}", p.done, p.total);
+            match stages.last_mut() {
+                Some((stage, done, total)) if *stage == p.stage => {
+                    *done = p.done;
+                    *total = p.total;
+                }
+                _ => stages.push((p.stage, p.done, p.total)),
+            }
+        },
+    )
+    .unwrap();
+    assert!(outcome.report.is_ok(), "{:?}", outcome.report.findings());
+
+    // Three stages in order. This draft references 4 assets (two audio, one
+    // waveform, one artwork) and two tracks.
+    let order: Vec<BuildStage> = stages.iter().map(|(stage, _, _)| *stage).collect();
+    assert_eq!(
+        order,
+        vec![BuildStage::Assets, BuildStage::Loudness, BuildStage::Verify]
+    );
+    assert_eq!(stages[0], (BuildStage::Assets, 4, 4));
+    assert_eq!(stages[1], (BuildStage::Loudness, 2, 2));
+    assert_eq!(stages[2], (BuildStage::Verify, 1, 1));
 }
 
 // ---------------------------------------------------------------------

@@ -19,6 +19,7 @@ mod track_lyrics;
 
 use author_service::{AuthorService, BackendInfo};
 use base64::Engine as _;
+use musicpack_author_pipeline as author;
 use rust_backend::{HostError, RustBackend};
 use serde::Serialize;
 use serde_json::json;
@@ -28,6 +29,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tauri::async_runtime::spawn_blocking;
 use tauri::{Emitter, Manager, State};
 
 struct AppState {
@@ -35,8 +37,13 @@ struct AppState {
     /// (the default). The legacy C-CLI service is used only when
     /// `MUSICPACK_AUTHOR_LEGACY=1` (development escape hatch).
     rust: bool,
-    rust_backend: Mutex<RustBackend>,
-    service: Mutex<AuthorService>,
+    // `Arc` so a long build can take the lock *inside* `spawn_blocking`: a
+    // `MutexGuard` is not `Send` and cannot cross into a blocking task, and
+    // holding it across an `.await` would stall every other command. The
+    // `Arc` derefs to `Mutex`, so `state.rust_backend.lock()` is unchanged
+    // at every existing call site.
+    rust_backend: Arc<Mutex<RustBackend>>,
+    service: Arc<Mutex<AuthorService>>,
     running: Mutex<Option<Child>>,
     encode_running: Mutex<Option<(Child, PathBuf)>>,
     waveform_running: Mutex<Option<(Child, PathBuf, PathBuf)>>,
@@ -398,37 +405,84 @@ fn identify_draft(
     }
 }
 
+/// Streams `build-progress` events for one build. The build itself runs off
+/// the UI thread (Tauri dispatches commands to the async runtime), so
+/// emitting from the pipeline callback keeps the window responsive and gives
+/// the user something to look at during the long core-builder phase.
+fn build_progress_emitter(app: &tauri::AppHandle) -> impl FnMut(&author::BuildProgress) {
+    let app = app.clone();
+    move |p: &author::BuildProgress| {
+        let payload = json!({
+            "phase": p.phase.id(),
+            "step": p.step,
+            "steps": p.steps,
+            "done": p.done,
+            "total": p.total,
+            "detail": p.detail,
+            "unit": p.unit,
+        });
+        // The emit result is deliberately not discarded: a delivery failure
+        // here is otherwise indistinguishable from a missing listener, and
+        // this is the only producer of the progress stream. A failed emit is
+        // reported but never aborts the build — the package is still correct,
+        // it just will not narrate itself.
+        if let Err(e) = app.emit("build-progress", payload) {
+            eprintln!("musicpack-author: build-progress emit failed: {e}");
+        }
+    }
+}
+
+/// Builds the package off the UI thread.
+///
+/// The pipeline encodes, decodes, meters, hashes and verifies — minutes of
+/// saturating float work. Tauri runs a *synchronous* command body on the
+/// thread that dispatches IPC, which on macOS is the main thread: the
+/// psychoacoustic encoder then owns the event loop, the window stops
+/// painting and the UI looks hung. Confirmed by sampling a live build, where
+/// 100% of main-thread samples sat inside `PsychoacousticModel::analyse_frame`.
+/// `spawn_blocking` moves that work to a pool thread, so the window stays
+/// live and the `build-progress` events render as they arrive.
 #[tauri::command]
-fn create_package(
-    state: State<AppState>,
+async fn create_package(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
     draft_json: String,
     output_dir: String,
     replace: Option<bool>,
     sync_tags: Option<bool>,
     quality: String,
 ) -> Result<serde_json::Value, HostError> {
+    let quality = parse_quality(&quality)?;
+    let replace = replace.unwrap_or(false);
+    let sync_tags = sync_tags.unwrap_or(false);
     if state.rust {
-        state.rust_backend.lock().unwrap().create_package(
-            &draft_json,
-            &output_dir,
-            replace.unwrap_or(false),
-            sync_tags.unwrap_or(false),
-            parse_quality(&quality)?,
-        )
+        let mut on_progress = build_progress_emitter(&app);
+        let backend = state.rust_backend.clone();
+        spawn_blocking(move || {
+            backend.lock().unwrap().create_package_with(
+                &draft_json,
+                &output_dir,
+                replace,
+                sync_tags,
+                quality,
+                &mut on_progress,
+            )
+        })
+        .await
+        .map_err(|e| HostError::new("build_failed", format!("build task failed: {e}")))?
     } else {
         // Legacy: `build-draft` never encodes (quality lives only on
         // `encode-draft`), so the selected quality has no effect here.
-        state
-            .service
-            .lock()
-            .unwrap()
-            .create_package(
-                &draft_json,
-                &output_dir,
-                replace.unwrap_or(false),
-                sync_tags.unwrap_or(false),
-            )
-            .map_err(HostError::from)
+        let service = state.service.clone();
+        spawn_blocking(move || {
+            service
+                .lock()
+                .unwrap()
+                .create_package(&draft_json, &output_dir, replace, sync_tags)
+                .map_err(HostError::from)
+        })
+        .await
+        .map_err(|e| HostError::new("build_failed", format!("build task failed: {e}")))?
     }
 }
 
@@ -442,63 +496,100 @@ fn parse_quality(quality: &str) -> Result<f32, HostError> {
         .map_err(|_| HostError::new("invalid_quality", format!("invalid quality '{quality}'")))
 }
 
+/// Verifies a package off the UI thread: verification re-reads and re-hashes
+/// every referenced asset, so it is I/O- and CPU-heavy on a full album.
 #[tauri::command]
-fn verify_package(state: State<AppState>, path: String) -> Result<serde_json::Value, HostError> {
+async fn verify_package(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<serde_json::Value, HostError> {
     if state.rust {
-        state.rust_backend.lock().unwrap().verify_package(&path)
+        let backend = state.rust_backend.clone();
+        spawn_blocking(move || backend.lock().unwrap().verify_package(&path))
+            .await
+            .map_err(|e| HostError::new("verify_failed", format!("verify task failed: {e}")))?
     } else {
-        state
-            .service
-            .lock()
-            .unwrap()
-            .verify_package(&path)
-            .map_err(HostError::from)
+        let service = state.service.clone();
+        spawn_blocking(move || {
+            service
+                .lock()
+                .unwrap()
+                .verify_package(&path)
+                .map_err(HostError::from)
+        })
+        .await
+        .map_err(|e| HostError::new("verify_failed", format!("verify task failed: {e}")))?
     }
 }
 
+/// Builds and packs the package off the UI thread, for the same reason as
+/// [`create_package`].
 #[tauri::command]
-fn create_mpak(
-    state: State<AppState>,
+async fn create_mpak(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
     draft_json: String,
     output_mpak: String,
     quality: String,
 ) -> Result<serde_json::Value, HostError> {
+    let quality = parse_quality(&quality)?;
     if state.rust {
-        state
-            .rust_backend
-            .lock()
-            .unwrap()
-            .create_mpak(&draft_json, &output_mpak, parse_quality(&quality)?)
+        let mut on_progress = build_progress_emitter(&app);
+        let backend = state.rust_backend.clone();
+        spawn_blocking(move || {
+            backend.lock().unwrap().create_mpak_with(
+                &draft_json,
+                &output_mpak,
+                quality,
+                &mut on_progress,
+            )
+        })
+        .await
+        .map_err(|e| HostError::new("build_failed", format!("build task failed: {e}")))?
     } else {
         // Legacy: `build-draft` never encodes; see `create_package`.
-        state
-            .service
-            .lock()
-            .unwrap()
-            .create_mpak(&draft_json, &output_mpak)
-            .map_err(HostError::from)
+        let service = state.service.clone();
+        spawn_blocking(move || {
+            service
+                .lock()
+                .unwrap()
+                .create_mpak(&draft_json, &output_mpak)
+                .map_err(HostError::from)
+        })
+        .await
+        .map_err(|e| HostError::new("build_failed", format!("build task failed: {e}")))?
     }
 }
 
+/// Converts an existing package into a `.mpak` off the UI thread: it
+/// re-verifies the source (hashing every asset) before packing.
 #[tauri::command]
-fn pack_package(
-    state: State<AppState>,
+async fn pack_package(
+    state: State<'_, AppState>,
     input_dir: String,
     output_mpak: String,
 ) -> Result<serde_json::Value, HostError> {
     if state.rust {
-        state
-            .rust_backend
-            .lock()
-            .unwrap()
-            .pack_package(&input_dir, &output_mpak)
+        let backend = state.rust_backend.clone();
+        spawn_blocking(move || {
+            backend
+                .lock()
+                .unwrap()
+                .pack_package(&input_dir, &output_mpak)
+        })
+        .await
+        .map_err(|e| HostError::new("pack_failed", format!("pack task failed: {e}")))?
     } else {
-        state
-            .service
-            .lock()
-            .unwrap()
-            .pack_package(&input_dir, &output_mpak)
-            .map_err(HostError::from)
+        let service = state.service.clone();
+        spawn_blocking(move || {
+            service
+                .lock()
+                .unwrap()
+                .pack_package(&input_dir, &output_mpak)
+                .map_err(HostError::from)
+        })
+        .await
+        .map_err(|e| HostError::new("pack_failed", format!("pack task failed: {e}")))?
     }
 }
 
@@ -1361,8 +1452,8 @@ pub fn run() {
             };
             app.manage(AppState {
                 rust: !legacy,
-                rust_backend: Mutex::new(RustBackend::new()),
-                service: Mutex::new(AuthorService::new(location)),
+                rust_backend: Arc::new(Mutex::new(RustBackend::new())),
+                service: Arc::new(Mutex::new(AuthorService::new(location))),
                 running: Mutex::new(None),
                 encode_running: Mutex::new(None),
                 waveform_running: Mutex::new(None),

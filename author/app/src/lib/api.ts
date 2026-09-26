@@ -14,6 +14,7 @@ import { open } from '@tauri-apps/plugin-dialog';
 import { revealItemInDir } from '@tauri-apps/plugin-opener';
 import type {
   BackendInfo,
+  BuildProgress,
   CreateResult,
   Draft,
   EncodeProgress,
@@ -115,31 +116,63 @@ export class AuthorApi {
 
   /** Creates the package. `opts.quality` is the selected Musepack quality
    * and is threaded through to any build-time encoding, so the package can
-   * never be built at a quality different from the one the user selected. */
+   * never be built at a quality different from the one the user selected.
+   * Build progress arrives as `build-progress` Tauri events (forwarded to
+   * `onProgress`). */
   async createPackage(
     draft: Draft,
     outputDir: string,
     opts: { replace?: boolean; syncTags?: boolean; quality: string },
+    onProgress?: (p: BuildProgress) => void,
   ): Promise<CreateResult> {
-    return (await this.invokeFn('create_package', {
-      draftJson: JSON.stringify(draft),
-      outputDir,
-      replace: opts.replace ?? false,
-      syncTags: opts.syncTags ?? false,
-      quality: opts.quality,
-    })) as CreateResult;
+    return this.withBuildProgress(onProgress, () =>
+      this.invokeFn('create_package', {
+        draftJson: JSON.stringify(draft),
+        outputDir,
+        replace: opts.replace ?? false,
+        syncTags: opts.syncTags ?? false,
+        quality: opts.quality,
+      }),
+    ) as Promise<CreateResult>;
   }
 
   /** Builds the draft and packs it into a single-file `.mpak` container.
    * The backend builds to a private staging `.mpack`, packs it via the
    * authoritative `musicpack pack`, and removes the staging directory.
-   * `quality` is threaded through like `createPackage`. */
-  async createMpak(draft: Draft, outputMpak: string, quality: string): Promise<PackResult> {
-    return (await this.invokeFn('create_mpak', {
-      draftJson: JSON.stringify(draft),
-      outputMpak,
-      quality,
-    })) as PackResult;
+   * `quality` is threaded through like `createPackage`; build progress
+   * arrives like `createPackage`. */
+  async createMpak(
+    draft: Draft,
+    outputMpak: string,
+    quality: string,
+    onProgress?: (p: BuildProgress) => void,
+  ): Promise<PackResult> {
+    return this.withBuildProgress(onProgress, () =>
+      this.invokeFn('create_mpak', {
+        draftJson: JSON.stringify(draft),
+        outputMpak,
+        quality,
+      }),
+    ) as Promise<PackResult>;
+  }
+
+  /** Subscribes to `build-progress` for the duration of one build command.
+   * The build is the one long operation with no other feedback, so the
+   * listener is scoped to the call and always removed. */
+  private async withBuildProgress<T>(
+    onProgress: ((p: BuildProgress) => void) | undefined,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    const unlisten = onProgress
+      ? await this.eventListen<BuildProgress>('build-progress', (event) =>
+          onProgress(event.payload),
+        )
+      : null;
+    try {
+      return await run();
+    } finally {
+      unlisten?.();
+    }
   }
 
   async verifyPackage(path: string): Promise<ValidationResult> {

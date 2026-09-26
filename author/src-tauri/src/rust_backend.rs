@@ -285,6 +285,27 @@ impl RustBackend {
         _sync_tags: bool,
         quality: f32,
     ) -> Result<Value, HostError> {
+        self.create_package_with(
+            draft_json,
+            output_dir,
+            replace,
+            _sync_tags,
+            quality,
+            &mut |_| {},
+        )
+    }
+
+    /// [`Self::create_package`] with a build-progress callback (phase
+    /// granularity; see [`author::BuildProgress`]).
+    pub fn create_package_with(
+        &mut self,
+        draft_json: &str,
+        output_dir: &str,
+        replace: bool,
+        _sync_tags: bool,
+        quality: f32,
+        on_progress: &mut dyn FnMut(&author::BuildProgress),
+    ) -> Result<Value, HostError> {
         stage_lyrics_validation(draft_json)?;
         let options = author::PipelineOptions {
             quality,
@@ -299,7 +320,7 @@ impl RustBackend {
             options,
             identify: None,
         };
-        let outcome = author::run(&request)?;
+        let outcome = author::run_with(&request, on_progress)?;
         Ok(json!({
             "ok": true,
             "outputPath": outcome.output.to_string_lossy(),
@@ -316,6 +337,18 @@ impl RustBackend {
         draft_json: &str,
         output_mpak: &str,
         quality: f32,
+    ) -> Result<Value, HostError> {
+        self.create_mpak_with(draft_json, output_mpak, quality, &mut |_| {})
+    }
+
+    /// [`Self::create_mpak`] with a build-progress callback (phase
+    /// granularity; see [`author::BuildProgress`]).
+    pub fn create_mpak_with(
+        &mut self,
+        draft_json: &str,
+        output_mpak: &str,
+        quality: f32,
+        on_progress: &mut dyn FnMut(&author::BuildProgress),
     ) -> Result<Value, HostError> {
         stage_lyrics_validation(draft_json)?;
         if Path::new(output_mpak).exists() {
@@ -338,7 +371,7 @@ impl RustBackend {
             options,
             identify: None,
         };
-        let result = author::run(&request);
+        let result = author::run_with(&request, on_progress);
         let _ = std::fs::remove_dir_all(&staging);
         result?;
         Ok(json!({ "ok": true, "outputPath": output_mpak }))

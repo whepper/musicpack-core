@@ -61,6 +61,7 @@ pub use identify::{
     identify_mbid_json,
 };
 pub use pipeline::{
-    AuthorOutcome, AuthorRequest, IdentifyRequest, PipelineOptions, WaveformEntry, encode_stage,
-    encode_stage_with, run, validate_json, waveform_stage, waveform_stage_with,
+    AuthorOutcome, AuthorRequest, BuildPhase, BuildProgress, IdentifyRequest, PipelineOptions,
+    WaveformEntry, encode_stage, encode_stage_with, run, run_with, validate_json, waveform_stage,
+    waveform_stage_with,
 };

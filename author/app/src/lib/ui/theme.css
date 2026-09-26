@@ -702,6 +702,14 @@ progress {
   font-family: var(--mono);
 }
 
+/* Live build progress: the package build is the one long authoring step
+ * with no other feedback, so it narrates its phase in place. */
+.build-progress {
+  font-size: var(--fs-sm);
+  color: var(--text-soft);
+  margin: var(--space-4) 0;
+}
+
 .result-panel.ok {
   border-color: rgba(99, 185, 124, 0.45);
 }

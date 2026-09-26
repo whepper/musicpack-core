@@ -8,7 +8,7 @@ SPDX-License-Identifier: BSD-3-Clause
   import { api, draft, draftStore } from '../bootstrap';
   import { createOpen, createResult, encodeQuality, encodeStaging } from '../authoring-state';
   import { defaultPackageName } from '../format';
-  import type { CreateResult, PackageFormat, ValidationResult } from '../types';
+  import type { BuildProgress, CreateResult, PackageFormat, ValidationResult } from '../types';
 
 
   let outputParent = $state<string | null>(null);
@@ -16,6 +16,34 @@ SPDX-License-Identifier: BSD-3-Clause
   let creating = $state(false);
   let reVerifying = $state(false);
   let exporting = $state(false);
+  /** Live build progress. The build is the one long authoring operation
+   * with no other feedback, so the dialog narrates it instead of sitting on
+   * a disabled "Creating…" button. */
+  let progress = $state<BuildProgress | null>(null);
+  /** Phases are stable ids from the pipeline; labels live here so the host
+   * never sends UI strings. */
+  const phaseLabel: Record<BuildProgress['phase'], string> = {
+    audio: 'Preparing audio',
+    waveform: 'Generating waveforms',
+    assets: 'Staging artwork and extras',
+    draft: 'Assembling the package',
+    package: 'Building the package',
+    mpak: 'Packing the .mpak container',
+  };
+  /** The package phase is the long one and reports the core builder's own
+   * stages as a sub-stage rather than as separate phases. */
+  const detailLabel: Record<NonNullable<BuildProgress['detail']>, string> = {
+    assets: 'Copying and hashing assets',
+    loudness: 'Measuring loudness',
+    verify: 'Verifying the package',
+  };
+
+  /** The line the user reads while a build runs. */
+  function progressText(p: BuildProgress): string {
+    const label = p.detail ? detailLabel[p.detail] : phaseLabel[p.phase];
+    const step = `step ${p.step} of ${p.steps}`;
+    return p.total > 0 ? `${label} — ${step} · ${p.done} / ${p.total} ${p.unit ?? 'tracks'}` : `${label} — ${step}`;
+  }
   /** Output packaging form. `.mpack` keeps the classic directory package;
    * `.mpak` builds a verified single-file container from it. */
   let format = $state<PackageFormat>('mpack');
@@ -85,6 +113,11 @@ SPDX-License-Identifier: BSD-3-Clause
     }
   }
 
+  /** Forwards a build-progress event into the dialog's status line. */
+  function onBuildProgress(p: BuildProgress): void {
+    progress = p;
+  }
+
   async function runCreate(): Promise<void> {
     const d = draft.get();
     if (!d) return;
@@ -92,16 +125,22 @@ SPDX-License-Identifier: BSD-3-Clause
     const out = inPlace ? editingPackage : outputPath();
     if (!out) return;
     creating = true;
+    progress = null;
     let result: CreateResult;
     try {
       if (inPlace) {
-        result = await api.createPackage(d, out, {
-          replace: true,
-          syncTags: true,
-          quality: $encodeQuality,
-        });
+        result = await api.createPackage(
+          d,
+          out,
+          {
+            replace: true,
+            syncTags: true,
+            quality: $encodeQuality,
+          },
+          onBuildProgress,
+        );
       } else if (format === 'mpak') {
-        const p = await api.createMpak(d, out, $encodeQuality);
+        const p = await api.createMpak(d, out, $encodeQuality, onBuildProgress);
         result = p.ok
           ? {
               ok: true,
@@ -114,11 +153,16 @@ SPDX-License-Identifier: BSD-3-Clause
               error: p.error ?? { code: 'pack_failed', message: 'Pack failed.' },
             };
       } else {
-        result = await api.createPackage(d, out, {
-          replace: false,
-          syncTags: false,
-          quality: $encodeQuality,
-        });
+        result = await api.createPackage(
+          d,
+          out,
+          {
+            replace: false,
+            syncTags: false,
+            quality: $encodeQuality,
+          },
+          onBuildProgress,
+        );
       }
     } catch (e) {
       result = {
@@ -230,6 +274,7 @@ SPDX-License-Identifier: BSD-3-Clause
     creating = false;
     reVerifying = false;
     exporting = false;
+    progress = null;
     format = 'mpack';
     copyFlow = false;
   }
@@ -283,6 +328,12 @@ SPDX-License-Identifier: BSD-3-Clause
           from the manifest where they differ.
         </p>
         <p class="path">{editingPackage}</p>
+        {#if progress}
+          <p class="build-progress" role="status" aria-live="polite">
+            <span class="chip idle">◐</span>
+            {progressText(progress)}
+          </p>
+        {/if}
         <div class="artwork-row">
           <button class="btn" onclick={runCreate} disabled={creating}>
             {creating ? 'Saving…' : 'Save changes'}
@@ -322,6 +373,12 @@ SPDX-License-Identifier: BSD-3-Clause
           <p class="muted">
             Choose where to write the <span class="smallcaps">.{format}</span>
             {format === 'mpak' ? 'container' : 'directory'}.
+          </p>
+        {/if}
+        {#if progress}
+          <p class="build-progress" role="status" aria-live="polite">
+            <span class="chip idle">◐</span>
+            {progressText(progress)}
           </p>
         {/if}
         <div class="artwork-row">

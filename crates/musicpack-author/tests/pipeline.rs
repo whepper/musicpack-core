@@ -17,8 +17,8 @@ use std::process::Command;
 use musicpack_author::draft::{self, ValidationReport};
 use musicpack_author::identify::{self, Confidence, MusicBrainzProvider};
 use musicpack_author::pipeline::{
-    AuthorRequest, IdentifyRequest, PipelineOptions, encode_stage, run, validate_json,
-    waveform_stage,
+    AuthorRequest, BuildPhase, BuildProgress, IdentifyRequest, PipelineOptions, encode_stage, run,
+    run_with, validate_json, waveform_stage,
 };
 use musicpack_author::{AuthorError, encode, waveform};
 use musicpack_core::authoring::LoudnessMode;
@@ -426,6 +426,102 @@ fn full_pipeline_builds_verifies_and_packs() {
             String::from_utf8_lossy(&result.stderr)
         );
     }
+}
+
+#[test]
+fn run_with_reports_every_phase_in_order() {
+    let temp = TempDir::new("progress");
+    let root = album_root(&temp, false);
+    let bytes = draft_json(&root, false);
+    let output = temp.path().join("Progress.mpack");
+    let mpak = temp.path().join("Progress.mpak");
+    let options = PipelineOptions {
+        mpak: Some(mpak),
+        ..PipelineOptions::default()
+    };
+
+    let mut seen: Vec<BuildPhase> = Vec::new();
+    let mut steps: Vec<(usize, usize)> = Vec::new();
+    let mut track_events = 0usize;
+    let mut expected_done = 0usize;
+    let mut details: Vec<(&'static str, usize, usize)> = Vec::new();
+    let outcome = run_with(
+        &AuthorRequest {
+            draft_json: &bytes,
+            output: &output,
+            options,
+            identify: None,
+        },
+        &mut |p: &BuildProgress| {
+            if let Some(detail) = p.detail.filter(|_| p.phase == BuildPhase::Package) {
+                // The core builder's sub-stages arrive as one phase with a
+                // moving counter, not as separate phases.
+                assert_eq!(p.step, 5);
+                details.push((detail, p.done, p.total));
+                return;
+            }
+            if seen.last() != Some(&p.phase) {
+                seen.push(p.phase);
+                steps.push((p.step, p.steps));
+                expected_done = 0;
+            }
+            if p.total > 0 {
+                // A track-granular phase opens with done = 0 and then advances
+                // by exactly one per track.
+                assert_eq!(p.done, expected_done, "track counts advance by one");
+                assert!(p.done <= p.total);
+                expected_done += 1;
+                track_events += 1;
+            }
+            assert_eq!(p.steps, BuildPhase::ALL.len());
+        },
+    )
+    .unwrap();
+    assert!(outcome.report.is_ok(), "{:?}", outcome.report.findings());
+
+    // Phases appear exactly once each, in execution order, and `step` is the
+    // 1-based position within BuildPhase::ALL. The package phase is entered
+    // once and then reports through `detail` instead of re-entering.
+    assert_eq!(
+        seen,
+        vec![
+            BuildPhase::Audio,
+            BuildPhase::Waveform,
+            BuildPhase::Assets,
+            BuildPhase::Draft,
+            BuildPhase::Package,
+            BuildPhase::Mpak,
+        ]
+    );
+    assert_eq!(steps, vec![(1, 6), (2, 6), (3, 6), (4, 6), (5, 6), (6, 6)]);
+
+    // One track in the fixture: the audio and waveform phases each report the
+    // phase entry plus that one track.
+    assert_eq!(track_events, 4);
+
+    // The core builder reports assets, loudness and verification under the
+    // package phase, in that order, with the last event of each stage giving
+    // its final count. One track, one audio asset, one waveform asset.
+    let mut stage_order: Vec<&str> = Vec::new();
+    for (name, _, _) in &details {
+        if stage_order.last() != Some(name) {
+            stage_order.push(name);
+        }
+    }
+    assert_eq!(stage_order, vec!["assets", "loudness", "verify"]);
+
+    let final_count = |name: &str| -> (usize, usize) {
+        details
+            .iter()
+            .rev()
+            .find(|(n, _, _)| *n == name)
+            .map(|(_, done, total)| (*done, *total))
+            .unwrap()
+    };
+    // 2 assets: the track's audio and its waveform envelope.
+    assert_eq!(final_count("assets"), (2, 2));
+    assert_eq!(final_count("loudness"), (1, 1));
+    assert_eq!(final_count("verify"), (1, 1));
 }
 
 #[test]
