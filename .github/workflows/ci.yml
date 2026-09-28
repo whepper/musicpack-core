@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
 
+# Default read-only GitHub token for every job; the `changes` job adds the
+# `pull-requests: read` it needs to run the path filter on PRs.
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 

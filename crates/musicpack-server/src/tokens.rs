@@ -137,7 +137,7 @@ mod tests {
             secret
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'),
-            "session secret must be base64url: {secret}"
+            "session secret must be base64url"
         );
     }
 
