@@ -53,6 +53,7 @@ pub mod inspect;
 pub mod pipeline;
 pub mod scan;
 pub mod similarity;
+pub mod similarity_effnet;
 pub mod waveform;
 
 pub use draft::{Draft, ValidationReport};
@@ -73,3 +74,12 @@ pub use similarity::{
     SimilarityProfile, TrackResults, TrackSimilarity, VectorEncoding, fingerprint_hex,
     profile_slug, status_name, write_msim,
 };
+pub use similarity_effnet::{
+    BATCH_SIZE, FRAME_HOP, FRAME_SIZE, INPUT_FRAMES, INPUT_TENSOR_NAME, MEL_BANDS,
+    MULTI_MODEL_SHA256, ModelError, PATCH_HOP, PREPROCESSING_VERSION, RELEASE_MODEL_SHA256,
+    multi_fields, multi_profile, release_fields, release_profile, verify_artifact_sha,
+};
+/// Inference-gated re-exports: only available with the `discogs-effnet`
+/// feature (model loading needs the rten runtime).
+#[cfg(feature = "discogs-effnet")]
+pub use similarity_effnet::{EffNetProducer, VerifiedModel, verify_model_artifact};

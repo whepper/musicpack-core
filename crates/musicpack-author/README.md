@@ -31,6 +31,9 @@ scan (album dir) ─► draft JSON ─► validate ─► identify ─► encode
   (`SimilarityProducer`, `SimilarityProfile`, `TrackSimilarity`,
   `.msim` writer, `SimilarityCache` contract): a future concrete model
   plugs in here; no model, runtime, or download lives in this crate.
+* `similarity_effnet` — the Discogs-EffNet concrete profiles (multi
+  1280-D, release 512-D): exact model identities, ported DSP, rten
+  inference. Operator-supplied weights only; see below.
 * `cli` / `main` — `validate` / `identify` / `build` / `inspect`.
 
 Package semantics (path validation, hashing, canonical manifest,
@@ -78,6 +81,36 @@ result as the package's optional `similarity` analysis document:
   may be supported — and whether generated embeddings are legally
   unrestricted — is unresolved (ADR 0017 G-1…G-4). No claim is made here
   either way.
+
+## Discogs-EffNet profiles (experimental, licensing-restricted)
+
+`similarity_effnet` implements two concrete profiles over the generic
+boundary above — multi / 1280-D
+(`musicpack-similarity-discogs-effnet-multi-v1`) and release / 512-D
+(`musicpack-similarity-discogs-effnet-release-v1`) — with exact model
+artifact identities, ported preprocessing, and rten 0.26.0 inference.
+`EffNetProducer::{multi,release}` take an operator-supplied model path,
+verify its SHA-256 before opening it, and never download, fetch, or
+resolve anything over the network.
+
+Licensing posture, stated plainly because it constrains use:
+
+- The model source/rightsholder evidence is the Essentia Discogs-EffNet
+  release (`EffnetDiscogs` v1, 2022-06-15); the research records
+  conflicting license notices on MTG's public pages and an unconfirmed
+  artifact-level governing license.
+- Generated-embedding licensing status is unresolved. Nothing here claims
+  embeddings are unrestricted, commercially usable, or open source.
+- Commercial use is not cleared. Model weights are operator-supplied and
+  never committed, bundled, downloaded, or redistributed by this
+  repository. Users are responsible for complying with the applicable
+  model license.
+- G-1…G-4 remain explicitly open until qualified review or written
+  clarification resolves them. This profile is optional and experimental;
+  similarity stays optional end to end.
+- Precision: deterministic `f32le` output (G-6 closed as KEEP F32LE).
+  G-7 (human listening review) remains open: technical completeness claims
+  nothing about musical usefulness.
 
 ## Toolchain scope (G-5: PASS WITH SCOPED EXCEPTION)
 
