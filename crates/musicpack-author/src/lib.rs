@@ -52,6 +52,7 @@ pub mod identify;
 pub mod inspect;
 pub mod pipeline;
 pub mod scan;
+pub mod similarity;
 pub mod waveform;
 
 pub use draft::{Draft, ValidationReport};
@@ -62,6 +63,13 @@ pub use identify::{
 };
 pub use pipeline::{
     AuthorOutcome, AuthorRequest, BuildPhase, BuildProgress, IdentifyRequest, PipelineOptions,
-    WaveformEntry, encode_stage, encode_stage_with, run, run_with, validate_json, waveform_stage,
+    SimilaritySetup, WaveformEntry, encode_stage, encode_stage_with, run, run_with,
+    run_with_similarity, similarity_stage, similarity_stage_with, validate_json, waveform_stage,
     waveform_stage_with,
+};
+pub use similarity::{
+    CacheKey, CachedVector, MemSimilarityCache, MsimWriteError, ProducerInput, ProfileError,
+    STATUS_FAILED, STATUS_INSUFFICIENT_AUDIO, STATUS_OK, STATUS_UNSUPPORTED, SimilarityCache,
+    SimilarityProfile, TrackResults, TrackSimilarity, VectorEncoding, fingerprint_hex,
+    profile_slug, status_name, write_msim,
 };

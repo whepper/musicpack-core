@@ -72,6 +72,15 @@ pub enum AuthorError {
     },
     /// The caller cancelled the operation between tracks.
     Cancelled,
+    /// Similarity analysis failed at the stage level (no producer
+    /// configured, invalid profile, unwritable document). Per-track
+    /// producer outcomes are statuses, not errors: only stage-wide
+    /// failures surface here, and a failed stage never invalidates the
+    /// package — the caller falls back to building without similarity.
+    Similarity {
+        /// What failed and why.
+        detail: String,
+    },
 }
 
 impl fmt::Display for AuthorError {
@@ -93,6 +102,7 @@ impl fmt::Display for AuthorError {
             AuthorError::Pack { detail } => write!(f, "pack failed: {detail}"),
             AuthorError::Io { detail } => write!(f, "I/O failure: {detail}"),
             AuthorError::Cancelled => write!(f, "cancelled"),
+            AuthorError::Similarity { detail } => write!(f, "similarity: {detail}"),
         }
     }
 }

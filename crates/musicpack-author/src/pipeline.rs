@@ -51,7 +51,7 @@ use crate::draft::{
 };
 use crate::error::{AuthorError, Result};
 use crate::identify::{self, Confidence, MusicBrainzProvider};
-use crate::{artwork, encode, waveform};
+use crate::{artwork, encode, similarity, waveform};
 
 /// Pipeline options.
 #[derive(Debug, Clone, PartialEq)]
@@ -298,6 +298,43 @@ pub fn run_with(
     request: &AuthorRequest<'_>,
     on_progress: &mut dyn FnMut(&BuildProgress),
 ) -> Result<AuthorOutcome> {
+    run_inner(request, None, on_progress)
+}
+
+/// Similarity execution setup for [`run_with_similarity`] and
+/// [`similarity_stage_with`].
+///
+/// Three states, all explicit: no setup (plain [`run_with`]) or
+/// `enabled: false` means similarity is disabled and the pipeline behaves
+/// exactly as without this feature; `enabled: true` with no producer is a
+/// configuration error; `enabled: true` with a producer executes analysis.
+pub struct SimilaritySetup<'a> {
+    /// Master switch (default off wherever a default is constructed).
+    pub enabled: bool,
+    /// The model-neutral producer. Required when `enabled`.
+    pub producer: Option<&'a dyn similarity::SimilarityProducer>,
+    /// Optional cross-run cache (host-owned). `None` analyzes every track
+    /// unconditionally.
+    pub cache: Option<&'a mut dyn similarity::SimilarityCache>,
+}
+
+/// [`run_with`] plus optional similarity analysis: producer results become
+/// the package's `similarity` analysis document (or nothing, when disabled
+/// or resultless). Existing signatures are untouched so current callers —
+/// including out-of-workspace hosts — keep compiling.
+pub fn run_with_similarity(
+    request: &AuthorRequest<'_>,
+    setup: SimilaritySetup<'_>,
+    on_progress: &mut dyn FnMut(&BuildProgress),
+) -> Result<AuthorOutcome> {
+    run_inner(request, Some(setup), on_progress)
+}
+
+fn run_inner(
+    request: &AuthorRequest<'_>,
+    similarity: Option<SimilaritySetup<'_>>,
+    on_progress: &mut dyn FnMut(&BuildProgress),
+) -> Result<AuthorOutcome> {
     let mut draft = draft::parse(request.draft_json)?;
 
     if let Some(identify) = &request.identify {
@@ -408,13 +445,59 @@ pub fn run_with(
         }
     }
 
+    // ---- similarity vectors from the staged audio (optional) ----
+    // No new BuildPhase: the progress protocol pins six phases, and this
+    // work is observer-silent in full-run mode. Hosts that need per-track
+    // progress and cancellation drive `similarity_stage_with` instead,
+    // exactly as with the waveform split stage.
+    let mut similarity_docs: Vec<StagedAnalysis> = Vec::new();
+    if let Some(setup) = similarity {
+        if setup.enabled {
+            let producer = setup.producer.ok_or_else(|| AuthorError::Similarity {
+                detail: "similarity enabled but no producer configured".into(),
+            })?;
+            let results = analyze_staged_tracks(
+                producer,
+                setup.cache,
+                &draft,
+                &audio,
+                &works,
+                &mut |_, _, _, _, _| true,
+            )?;
+            if !results.is_empty() {
+                let profile = producer.profile();
+                let bytes = similarity::write_msim(profile, &results).map_err(|e| {
+                    AuthorError::Similarity {
+                        detail: format!("cannot write similarity document: {e}"),
+                    }
+                })?;
+                let rel = namer.unique(format!(
+                    "analysis/similarity/{}.msim",
+                    similarity::profile_slug(&profile.profile_id)
+                ));
+                let dest = works.path().join(&rel);
+                create_parent(&dest)?;
+                fs::write(&dest, &bytes).map_err(|e| AuthorError::Io {
+                    detail: format!("cannot write '{}': {e}", dest.display()),
+                })?;
+                similarity_docs.push(StagedAnalysis {
+                    kind: "similarity".into(),
+                    profile: Some(profile.profile_id.clone()),
+                    package: rel.clone(),
+                    work: rel,
+                });
+            }
+        }
+    }
+
     // ---- artwork + document assets ----
     on_progress(&progress(BuildPhase::Assets, 0, 0, None, None));
     let artwork = stage_artwork(&draft, &works, &mut namer)?;
     let booklet = stage_plain(&draft, &draft.booklet, "booklet", &works, &mut namer)?;
     let root_lyrics = stage_plain(&draft, &draft.lyrics, "lyrics", &works, &mut namer)?;
     let extras = stage_plain(&draft, &draft.extras, "extras", &works, &mut namer)?;
-    let analysis = stage_analysis(&draft, &works, &mut namer)?;
+    let mut analysis = stage_analysis(&draft, &works, &mut namer)?;
+    analysis.extend(similarity_docs);
 
     // ---- assemble the core authoring draft ----
     on_progress(&progress(BuildPhase::Draft, 0, 0, None, None));
@@ -697,6 +780,235 @@ pub fn waveform_stage_with(
     ]);
     json_set(&mut root, "waveformAnalysis", block);
     Ok((json::print_canonical(&root), entries))
+}
+
+/// One analyzed track for split-stage callers: identity plus the producer
+/// outcome in the FORMAT_SPEC §6 vocabulary.
+#[derive(Debug, Clone)]
+pub struct SimilarityEntry {
+    /// Manifest disc number.
+    pub disc: i32,
+    /// Manifest track number.
+    pub track: i32,
+    /// Producer outcome (`ok` carries the vector; the others carry no bytes).
+    pub result: similarity::TrackSimilarity,
+}
+
+/// The **similarity** stage: analyzes each track through the configured
+/// producer, writes one package-level `.msim` document into `staging`, and
+/// returns the draft JSON with a `similarityAnalysis` preview block.
+///
+/// The preview carries per-track *statuses*, never vectors. Like the
+/// waveform stage, this is a preview: the full build re-derives the
+/// authoritative document from the staged audio.
+pub fn similarity_stage(
+    draft_json: &[u8],
+    staging: &Path,
+    setup: SimilaritySetup<'_>,
+) -> Result<(String, Vec<SimilarityEntry>)> {
+    similarity_stage_with(draft_json, staging, setup, &mut |_, _, _, _, _| true)
+}
+
+/// [`similarity_stage`] with a per-track progress callback
+/// `(done, total, disc, track, result) -> continue?`. Returning `false`
+/// cancels between tracks ([`AuthorError::Cancelled`]).
+pub fn similarity_stage_with(
+    draft_json: &[u8],
+    staging: &Path,
+    setup: SimilaritySetup<'_>,
+    on_track: &mut dyn FnMut(usize, usize, i32, i32, &similarity::TrackSimilarity) -> bool,
+) -> Result<(String, Vec<SimilarityEntry>)> {
+    let mut root = json::parse(draft_json).map_err(|e| AuthorError::Draft {
+        detail: format!("malformed draft JSON: {e}"),
+    })?;
+    let draft = draft::parse(draft_json)?;
+    fs::create_dir_all(staging).map_err(|e| AuthorError::Io {
+        detail: format!("cannot create '{}': {e}", staging.display()),
+    })?;
+    if !setup.enabled {
+        return Ok((json::print_canonical(&root), Vec::new()));
+    }
+    let producer = setup.producer.ok_or_else(|| AuthorError::Similarity {
+        detail: "similarity enabled but no producer configured".into(),
+    })?;
+    let mut items = Vec::new();
+    for disc in &draft.media {
+        for track in &disc.tracks {
+            let source =
+                draft::resolve_source(&draft.source_root, &track.audio_path).ok_or_else(|| {
+                    AuthorError::Io {
+                        detail: format!("source audio not found: {}", track.audio_path),
+                    }
+                })?;
+            items.push((disc.number, track.number, source));
+        }
+    }
+    if items.is_empty() {
+        return Ok((json::print_canonical(&root), Vec::new()));
+    }
+    let results = analyze_tracks(producer, setup.cache, &items, on_track)?;
+    let profile = producer.profile();
+    let bytes = similarity::write_msim(profile, &results).map_err(|e| AuthorError::Similarity {
+        detail: format!("cannot write similarity document: {e}"),
+    })?;
+    let rel = "similarity.msim".to_string();
+    fs::write(staging.join(&rel), &bytes).map_err(|e| AuthorError::Io {
+        detail: format!("cannot write staged similarity document: {e}"),
+    })?;
+
+    let tracks = Value::Array(
+        results
+            .iter()
+            .map(|((disc, track), result)| {
+                Value::Object(vec![
+                    ("disc".into(), Value::Number(f64::from(*disc))),
+                    ("track".into(), Value::Number(f64::from(*track))),
+                    (
+                        "status".into(),
+                        Value::String(similarity::status_name(result.status_byte()).to_string()),
+                    ),
+                ])
+            })
+            .collect(),
+    );
+    let block = Value::Object(vec![
+        ("status".into(), Value::String("ready".into())),
+        ("profile".into(), Value::String(profile.profile_id.clone())),
+        (
+            "fingerprint".into(),
+            Value::String(similarity::fingerprint_hex(&profile.fingerprint)),
+        ),
+        (
+            "dimensions".into(),
+            Value::Number(f64::from(profile.dimensions)),
+        ),
+        (
+            "encoding".into(),
+            Value::String(profile.encoding.name().into()),
+        ),
+        ("docPath".into(), Value::String(rel)),
+        ("tracks".into(), tracks),
+        (
+            "tracksGenerated".into(),
+            Value::Number(results.len() as f64),
+        ),
+        ("tracksTotal".into(), Value::Number(results.len() as f64)),
+    ]);
+    json_set(&mut root, "similarityAnalysis", block);
+    let entries = results
+        .into_iter()
+        .map(|((disc, track), result)| SimilarityEntry {
+            disc,
+            track,
+            result,
+        })
+        .collect();
+    Ok((json::print_canonical(&root), entries))
+}
+
+/// Shared per-track analysis core for the full run (staged audio paths) and
+/// the split stage (caller-resolved audio paths): cache lookup, producer
+/// call with output validation, cache store, cancellation callback.
+///
+/// `items` carries `(disc, track, audio_path)`; audio identity for the cache
+/// is the SHA-256 of the analyzed bytes, so analyses of different bytes
+/// never share a row even for the same track.
+#[allow(clippy::too_many_arguments)]
+fn analyze_tracks(
+    producer: &dyn similarity::SimilarityProducer,
+    mut cache: Option<&mut dyn similarity::SimilarityCache>,
+    items: &[(i32, i32, PathBuf)],
+    on_track: &mut dyn FnMut(usize, usize, i32, i32, &similarity::TrackSimilarity) -> bool,
+) -> Result<similarity::TrackResults, AuthorError> {
+    use similarity::{CacheKey, CachedVector, TrackSimilarity};
+    let profile = producer.profile();
+    let dim = profile.dimensions as usize;
+    let total = items.len();
+    let mut out = Vec::with_capacity(total);
+    for (done, (disc, track, audio_path)) in items.iter().enumerate() {
+        // Cache identity is the analyzed bytes: hashed lazily, only when a
+        // cache is present. Unreadable bytes skip the cache; the producer
+        // then reports the outcome honestly.
+        let key = match cache.as_ref() {
+            Some(_) => std::fs::read(audio_path).ok().map(|bytes| CacheKey {
+                source_sha256: checksum::sha256_hex(&bytes),
+                fingerprint: profile.fingerprint,
+            }),
+            None => None,
+        };
+        let mut cached: Option<TrackSimilarity> = None;
+        if let (Some(cache_ref), Some(key)) = (cache.as_ref(), key.as_ref()) {
+            if let Some(hit) = cache_ref.lookup(key) {
+                if hit.dimensions == profile.dimensions && hit.vector.len() == dim {
+                    cached = Some(TrackSimilarity::Ok { vector: hit.vector });
+                }
+            }
+        }
+        let result = match cached {
+            Some(result) => result,
+            None => {
+                let mut produced = producer.analyze(&similarity::ProducerInput {
+                    disc: *disc,
+                    track: *track,
+                    audio_path,
+                });
+                // Output validation at the boundary: a malformed producer
+                // result becomes an honest per-track failure, never package
+                // data and never an error.
+                if let TrackSimilarity::Ok { vector } = &produced {
+                    if vector.len() != dim
+                        || vector.iter().any(|v| !v.is_finite())
+                        || vector.iter().all(|v| *v == 0.0)
+                    {
+                        produced = TrackSimilarity::Failed;
+                    }
+                }
+                if let (TrackSimilarity::Ok { vector }, Some(key)) = (&produced, key.as_ref()) {
+                    if let Some(cache_ref) = cache.as_deref_mut() {
+                        cache_ref.store(
+                            key,
+                            CachedVector {
+                                dimensions: profile.dimensions,
+                                vector: vector.clone(),
+                            },
+                        );
+                    }
+                }
+                produced
+            }
+        };
+        out.push(((*disc, *track), result));
+        let reported = &out[out.len() - 1].1;
+        if !on_track(done + 1, total, *disc, *track, reported) {
+            return Err(AuthorError::Cancelled);
+        }
+    }
+    Ok(out)
+}
+
+/// Analyzes the staged audio of a full run through the configured producer.
+/// Shared with [`similarity_stage_with`]'s core; the only difference is
+/// which audio the vectors describe (staged here, source there — the full
+/// build always wins authoritatively).
+fn analyze_staged_tracks(
+    producer: &dyn similarity::SimilarityProducer,
+    cache: Option<&mut dyn similarity::SimilarityCache>,
+    draft: &draft::Draft,
+    audio: &[Vec<StagedAudio>],
+    works: &WorkTree,
+    on_track: &mut dyn FnMut(usize, usize, i32, i32, &similarity::TrackSimilarity) -> bool,
+) -> Result<similarity::TrackResults, AuthorError> {
+    let mut items = Vec::new();
+    for (di, disc) in draft.media.iter().enumerate() {
+        for (ti, track) in disc.tracks.iter().enumerate() {
+            items.push((
+                disc.number,
+                track.number,
+                works.path().join(&audio[di][ti].work),
+            ));
+        }
+    }
+    analyze_tracks(producer, cache, &items, on_track)
 }
 
 fn obj_member_mut<'a>(value: &'a mut Value, key: &str) -> Option<&'a mut Value> {
