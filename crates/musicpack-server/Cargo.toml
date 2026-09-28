@@ -38,3 +38,9 @@ rusqlite = { version = "0.40.2", default-features = false, features = ["bundled"
 # artifact and its dependency direction (nothing depends on the server) are
 # unchanged.
 musicpack-author = { path = "../musicpack-author" }
+
+[features]
+# Discogs-EffNet inference for the similarity e2e test: forwards the author
+# crate's optional runtime. Default-off like its source; default builds never
+# compile rten (effective MSRV stays 1.85).
+discogs-effnet = ["musicpack-author/discogs-effnet"]
