@@ -16,6 +16,18 @@ publish = false
 [dependencies]
 musicpack-core = { path = "../.." }
 musicpack-musepack-encoder = { path = "../musicpack-musepack-encoder" }
+# Discogs-EffNet inference runtime: rten declares rust-version 1.94 while
+# this crate (and the workspace) stays at MSRV 1.85 (G-5 PASS WITH SCOPED
+# EXCEPTION). Optional and default-off: a disabled optional dependency
+# never enters the build graph, so default builds keep the 1.85 promise;
+# enabling `discogs-effnet` requires Rust 1.94 and fails loudly otherwise.
+rten = { version = "=0.26.0", optional = true }
+
+[features]
+# Discogs-EffNet inference runtime. Default-off; the only feature in this
+# crate, so nothing enables it accidentally. Enabling compiles rten
+# (effective MSRV 1.94).
+discogs-effnet = ["dep:rten"]
 
 [[bin]]
 name = "musicpack-author"

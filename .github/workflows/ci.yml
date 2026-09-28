@@ -107,6 +107,26 @@ jobs:
       - name: Check fuzz targets
         run: cargo check --manifest-path fuzz/Cargo.toml
 
+  msrv:
+    name: MSRV 1.85 (default features)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The declared workspace MSRV, tested rather than merely declared.
+      # Nothing here enables optional, higher-MSRV features (notably not
+      # musicpack-author/discogs-effnet, which needs Rust 1.94 via rten):
+      # a lockfile-wide audit shows rten/rten-simd are the only packages
+      # above 1.85. No fmt/clippy here — their output is toolchain-version
+      # sensitive and belongs to the stable job.
+      - uses: dtolnay/rust-toolchain@1.85
+      - name: Check default workspace
+        run: cargo check --workspace --all-targets
+      - name: Test author (default)
+        run: cargo test -p musicpack-author
+      - name: Test server (default)
+        run: cargo test -p musicpack-server
   web:
     name: web player
     needs: changes

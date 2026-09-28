@@ -78,3 +78,16 @@ result as the package's optional `similarity` analysis document:
   may be supported — and whether generated embeddings are legally
   unrestricted — is unresolved (ADR 0017 G-1…G-4). No claim is made here
   either way.
+
+## Toolchain scope (G-5: PASS WITH SCOPED EXCEPTION)
+
+MusicPack baseline remains Rust 1.85. Discogs-EffNet inference is optional
+and default-off behind the `discogs-effnet` cargo feature:
+
+- Default builds never compile `rten` and keep the 1.85 promise; profile
+  metadata, DSP, writer, and cache behavior carry no higher requirement.
+- Enabling the feature compiles `rten 0.26.0` and requires Rust 1.94,
+  which fails loudly (a Cargo MSRV error naming the package) on older
+  toolchains — never silently.
+- This higher requirement does not apply to the default MusicPack build,
+  and the workspace MSRV is unchanged.
