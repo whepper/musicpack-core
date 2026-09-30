@@ -49,8 +49,9 @@ fn fresh_db(name: &str) -> PathBuf {
 /// `schema_version`) and 14 named indexes. SQLite auto-indexes
 /// (`sqlite_autoindex_*`) are internal and excluded, matching the store's
 /// `master_objects` filter. Migration 11 adds the fifteenth index
-/// (`assets_track_idx`); no table is added.
-const EXPECTED_TABLES: [&str; 15] = [
+/// (`assets_track_idx`); migration 12 adds two tables and two indexes
+/// (`similarity_sets`, `similarity_vectors`); no table is added otherwise.
+const EXPECTED_TABLES: [&str; 17] = [
     "artists",
     "release_groups",
     "group_artists",
@@ -66,9 +67,11 @@ const EXPECTED_TABLES: [&str; 15] = [
     "track_waveforms",
     "audio_variants",
     "schema_version",
+    "similarity_sets",
+    "similarity_vectors",
 ];
 
-const EXPECTED_INDEXES: [&str; 14] = [
+const EXPECTED_INDEXES: [&str; 16] = [
     "releases_key_idx",
     "media_release_idx",
     "tracks_media_idx",
@@ -83,10 +86,12 @@ const EXPECTED_INDEXES: [&str; 14] = [
     "track_artists_artist_idx",
     "artists_mbid_idx",
     "audio_variants_track_idx",
+    "similarity_sets_fp_idx",
+    "similarity_vectors_idx",
 ];
 
 #[test]
-fn c_created_fixture_migrates_to_v11_without_conversion() {
+fn c_created_fixture_migrates_to_v12_without_conversion() {
     // Pre-state, read through a raw connection: the committed C fixture
     // carries exactly the ten C migrations and no lyrics columns.
     {
@@ -110,13 +115,13 @@ fn c_created_fixture_migrates_to_v11_without_conversion() {
         );
     }
     // A writable open through the store migrates the C-created database to
-    // v11 in place, keeping every C object and adding exactly the v11
-    // column/index.
+    // v12 in place, keeping every C object and adding exactly the v11
+    // column/index and the v12 similarity tables.
     let path = temp_copy("fixture.db");
     let store = SqliteStore::open(&path).unwrap();
     assert_eq!(
         store.schema_version().unwrap(),
-        11,
+        12,
         "the C fixture migrates to the latest version"
     );
     assert!(store.foreign_keys_enabled().unwrap());
@@ -141,7 +146,11 @@ fn c_created_fixture_migrates_to_v11_without_conversion() {
         assert!(indexes.contains(&index), "fixture missing index {index}");
     }
     assert!(indexes.contains(&"assets_track_idx"));
-    // The migrated columns exist with the declared v11 shape and every
+    for index in ["similarity_sets_fp_idx", "similarity_vectors_idx"] {
+        assert!(indexes.contains(&index), "fixture missing index {index}");
+    }
+    // The migrated columns exist with the declared v11 shape (unchanged by
+    // v12, which only adds tables) and every
     // pre-existing row reads as package-level (NULL).
     let columns = store.table_columns("assets").unwrap();
     let track_id = columns.iter().find(|c| c.name == "track_id").unwrap();
@@ -168,15 +177,15 @@ fn c_created_fixture_migrates_to_v11_without_conversion() {
 #[test]
 fn rust_migrated_schema_is_structurally_identical_to_the_migrated_c_one() {
     // Both starting points — a fresh Rust database and the C-created v10
-    // fixture — must reach the *same* v11 structure (sqlite_master object
+    // fixture — must reach the *same* v12 structure (sqlite_master object
     // kinds, names, parent tables and the original DDL text).
     let rust_path = fresh_db("rust-created.db");
     let rust = SqliteStore::open(&rust_path).unwrap();
-    assert_eq!(rust.schema_version().unwrap(), 11);
+    assert_eq!(rust.schema_version().unwrap(), 12);
 
     let fixture_path = temp_copy("fixture-compare.db");
     let fixture = SqliteStore::open(&fixture_path).unwrap();
-    assert_eq!(fixture.schema_version().unwrap(), 11);
+    assert_eq!(fixture.schema_version().unwrap(), 12);
 
     let rust_objects = rust.master_objects().unwrap();
     let fixture_objects = fixture.master_objects().unwrap();
@@ -202,14 +211,14 @@ fn rust_migrated_schema_is_structurally_identical_to_the_migrated_c_one() {
 fn migration_is_forward_only_and_idempotent() {
     let path = fresh_db("idempotent.db");
     let mut store = SqliteStore::open(&path).unwrap();
-    assert_eq!(store.schema_version().unwrap(), 11);
+    assert_eq!(store.schema_version().unwrap(), 12);
     // Re-migrating an up-to-date database is a no-op.
     store.migrate().unwrap();
-    assert_eq!(store.schema_version().unwrap(), 11);
+    assert_eq!(store.schema_version().unwrap(), 12);
     // Reopening the file preserves everything.
     drop(store);
     let reopened = SqliteStore::open(&path).unwrap();
-    assert_eq!(reopened.schema_version().unwrap(), 11);
+    assert_eq!(reopened.schema_version().unwrap(), 12);
     assert_eq!(reopened.master_objects().unwrap().len(), {
         let fixture = SqliteStore::open(&temp_copy("idempotent-ref.db")).unwrap();
         fixture.master_objects().unwrap().len()
@@ -221,26 +230,26 @@ fn a_newer_database_is_refused_not_guessed() {
     use rusqlite::Connection;
 
     // Craft a "database from the future" one version past the latest
-    // (currently 12 over 11).
+    // (currently 13 over 12).
     let path = fresh_db("from-the-future.db");
     {
         let store = SqliteStore::open(&path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 11);
+        assert_eq!(store.schema_version().unwrap(), 12);
         drop(store);
         let raw = Connection::open(&path).unwrap();
-        raw.execute_batch("UPDATE schema_version SET version = 12;")
+        raw.execute_batch("UPDATE schema_version SET version = 13;")
             .unwrap();
     }
     let error = match SqliteStore::open(&path) {
-        Ok(_) => panic!("a version-12 database must be refused"),
+        Ok(_) => panic!("a version-13 database must be refused"),
         Err(e) => e,
     };
     assert!(
         matches!(
             &error,
             musicpack_server::error::ServerError::DatabaseTooNew {
-                found: 12,
-                supported: 11
+                found: 13,
+                supported: 12
             }
         ),
         "unexpected error: {error}"

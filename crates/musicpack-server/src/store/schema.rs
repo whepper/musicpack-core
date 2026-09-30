@@ -21,9 +21,9 @@
 //! is bootstrapped at version 0 when absent, then each migration runs
 //! inside one `BEGIN` … `UPDATE schema_version` … `COMMIT` transaction.
 
-/// The highest schema version this server understands (ten C migrations
-/// plus the Rust-defined v11).
-pub const SCHEMA_VERSION_LATEST: i64 = 11;
+/// The highest schema version this server understands (ten C migrations,
+/// the Rust-defined v11, and the Rust-defined v12 similarity index).
+pub const SCHEMA_VERSION_LATEST: i64 = 12;
 
 pub(crate) const MIGRATIONS: [&str; SCHEMA_VERSION_LATEST as usize] = [
     /* 0 -> 1: the Phase 4 library schema (collector hierarchy, frozen
@@ -59,6 +59,18 @@ pub(crate) const MIGRATIONS: [&str; SCHEMA_VERSION_LATEST as usize] = [
     invisible to the C server, which no-ops on the higher recorded
     version. */
     r#"ALTER TABLE assets ADD COLUMN track_id INTEGER REFERENCES tracks(id) ON DELETE CASCADE;ALTER TABLE assets ADD COLUMN lang TEXT;CREATE INDEX assets_track_idx ON assets(track_id);"#,
+    /* 11 -> 12: model-neutral similarity index (Slice 0, ADR 0017 §5.7).
+    Two tables, additive only: `similarity_sets` partitions vectors by
+    `profile_fingerprint` (never by the display-only `profile_id`, which is
+    nullable because the manifest does not require it for non-`sonic`
+    types); `similarity_vectors` carries one `f32le` BLOB per contributing
+    track with cascading deletes into both parents, so package sweeps and
+    content replacement cannot leave stale rows. `dimensions` and `encoding`
+    on the set are a fail-closed guard beyond the sketch: a later document
+    that reuses a fingerprint with different dimensions or encoding is not
+    indexed. No album aggregate table: ADR 0017 §5.5.1 decision B deferred
+    it from v1.0, and Slice 0 queries tracks only. */
+    r#"CREATE TABLE similarity_sets (id INTEGER PRIMARY KEY, profile_id TEXT, profile_fingerprint TEXT NOT NULL, dimensions INTEGER NOT NULL, encoding INTEGER NOT NULL, producer_version TEXT, state TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL DEFAULT (datetime('now')));CREATE UNIQUE INDEX similarity_sets_fp_idx ON similarity_sets(profile_fingerprint);CREATE TABLE similarity_vectors (id INTEGER PRIMARY KEY, set_id INTEGER NOT NULL REFERENCES similarity_sets(id) ON DELETE CASCADE, track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE, vector BLOB NOT NULL);CREATE UNIQUE INDEX similarity_vectors_idx ON similarity_vectors(set_id, track_id);"#,
 ];
 
 /// The `schema_version` bootstrap DDL (verbatim from the C `mp_db_migrate`).
@@ -75,10 +87,11 @@ mod tests {
     #[test]
     fn migration_count_matches_the_reference() {
         // The C reference applies exactly ten migrations (schema.c); the
-        // Rust-defined v11 (per-track lyrics association) is appended
-        // additively (docs/musicpack-lyrics-v1.md §7.1).
-        assert_eq!(MIGRATIONS.len(), 11);
-        assert_eq!(SCHEMA_VERSION_LATEST, 11);
+        // Rust-defined v11 (per-track lyrics association) and v12
+        // (similarity index) are appended additively
+        // (docs/musicpack-lyrics-v1.md §7.1; ADR 0017 §5.7).
+        assert_eq!(MIGRATIONS.len(), 12);
+        assert_eq!(SCHEMA_VERSION_LATEST, 12);
         // The appended migration is exactly the additive v11 SQL: two
         // nullable columns plus one index — no rewrites, no data changes.
         assert_eq!(
@@ -87,6 +100,24 @@ mod tests {
              ON DELETE CASCADE;\
              ALTER TABLE assets ADD COLUMN lang TEXT;\
              CREATE INDEX assets_track_idx ON assets(track_id);"
+        );
+        // And v12 is exactly the additive similarity SQL: two tables plus
+        // two unique indexes — no rewrites, no data changes.
+        assert_eq!(
+            MIGRATIONS[11],
+            "CREATE TABLE similarity_sets (id INTEGER PRIMARY KEY, profile_id TEXT, \
+             profile_fingerprint TEXT NOT NULL, dimensions INTEGER NOT NULL, \
+             encoding INTEGER NOT NULL, producer_version TEXT, \
+             state TEXT NOT NULL DEFAULT 'active', \
+             created_at TEXT NOT NULL DEFAULT (datetime('now')));\
+             CREATE UNIQUE INDEX similarity_sets_fp_idx ON \
+             similarity_sets(profile_fingerprint);\
+             CREATE TABLE similarity_vectors (id INTEGER PRIMARY KEY, \
+             set_id INTEGER NOT NULL REFERENCES similarity_sets(id) ON DELETE CASCADE, \
+             track_id INTEGER NOT NULL REFERENCES tracks(id) ON DELETE CASCADE, \
+             vector BLOB NOT NULL);\
+             CREATE UNIQUE INDEX similarity_vectors_idx ON \
+             similarity_vectors(set_id, track_id);"
         );
     }
 

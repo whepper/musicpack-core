@@ -132,6 +132,27 @@ jobs:
         run: cargo test -p musicpack-author
       - name: Test server (default)
         run: cargo test -p musicpack-server
+
+  discogs-effnet:
+    name: Discogs-EffNet feature (stable, no model)
+    needs: changes
+    if: needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      # Live-model tests skip without operator-supplied artifacts
+      # (MUSICPACK_TEST_EFFNET_MULTI/RELEASE); the rest proves the
+      # feature-gated code compiles, lints, and behaves.
+      - name: Clippy with feature
+        run: cargo clippy -p musicpack-author --all-targets --features discogs-effnet -- -D warnings
+      - name: Test author with feature
+        run: cargo test -p musicpack-author --features discogs-effnet --test effnet
+      - name: Test server with feature
+        run: cargo test -p musicpack-server --features discogs-effnet --test similarity_server
+
   web:
     name: web player
     needs: changes

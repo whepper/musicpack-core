@@ -3,9 +3,9 @@
 //! Compatibility surface (see `docs/server-migration.md` D-S2):
 //!
 //! - the exact ten forward-only migrations of the C `schema.c`
-//!   ([`super::schema`]) plus the Rust-defined additive v11
-//!   (per-track lyric association; the C server no-ops on the higher
-//!   recorded version);
+//!   ([`super::schema`]) plus the Rust-defined additive v11 (per-track
+//!   lyric association) and v12 (similarity index); the C server no-ops
+//!   on higher recorded versions);
 //! - the same `schema_version` bootstrap and per-migration transaction
 //!   mechanics as the C `mp_db_migrate`;
 //! - the same pragmas on a writable connection: `busy_timeout` 5000 ms,
@@ -792,6 +792,236 @@ impl Store for SqliteStore {
         self.schema_version().unwrap_or(0)
     }
 
+    fn similarity_ensure_set(
+        &mut self,
+        profile_id: Option<&str>,
+        fingerprint_hex: &str,
+        dimensions: i64,
+        encoding: i64,
+        producer_version: &str,
+    ) -> Result<i64, ServerError> {
+        if let Some(existing) = self.similarity_set_row(fingerprint_hex)? {
+            if existing.dimensions != dimensions || existing.encoding != encoding {
+                // Same fingerprint, different shape: corrupt or mislabelled
+                // document. Refusing beats merging (ADR 0017 §8).
+                return Err(ServerError::Store(format!(
+                    "similarity set exists with dimensions={} encoding={}, \
+                     refusing dimensions={dimensions} encoding={encoding}",
+                    existing.dimensions, existing.encoding
+                )));
+            }
+            return Ok(existing.id);
+        }
+        self.conn
+            .execute(
+                "INSERT INTO similarity_sets
+                     (profile_id, profile_fingerprint, dimensions, encoding,
+                      producer_version, state)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 'inactive')",
+                rusqlite::params![
+                    profile_id,
+                    fingerprint_hex,
+                    dimensions,
+                    encoding,
+                    producer_version
+                ],
+            )
+            .map_err(sqlite_err("cannot insert similarity set"))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    fn similarity_replace_release_vectors(
+        &mut self,
+        set_id: i64,
+        release_id: i64,
+        rows: &[(i64, Vec<u8>)],
+    ) -> Result<usize, ServerError> {
+        let deleted = self
+            .conn
+            .execute(
+                "DELETE FROM similarity_vectors
+                 WHERE set_id = ?1 AND track_id IN (
+                     SELECT t.id FROM tracks t
+                     JOIN media m ON m.id = t.media_id
+                     WHERE m.release_id = ?2
+                 )",
+                rusqlite::params![set_id, release_id],
+            )
+            .map_err(sqlite_err("cannot clear similarity vectors"))?;
+        let _ = deleted;
+        let mut inserted = 0usize;
+        for (track_id, vector) in rows {
+            self.conn
+                .execute(
+                    "INSERT INTO similarity_vectors (set_id, track_id, vector)
+                     VALUES (?1, ?2, ?3)",
+                    rusqlite::params![set_id, track_id, vector],
+                )
+                .map_err(sqlite_err("cannot insert similarity vector"))?;
+            inserted += 1;
+        }
+        Ok(inserted)
+    }
+
+    fn similarity_clear_release(&mut self, release_id: i64) -> Result<usize, ServerError> {
+        let deleted = self
+            .conn
+            .execute(
+                "DELETE FROM similarity_vectors
+                 WHERE track_id IN (
+                     SELECT t.id FROM tracks t
+                     JOIN media m ON m.id = t.media_id
+                     WHERE m.release_id = ?1
+                 )",
+                rusqlite::params![release_id],
+            )
+            .map_err(sqlite_err("cannot clear similarity vectors"))?;
+        Ok(deleted)
+    }
+
+    fn similarity_activate_set(&mut self, set_id: i64) -> Result<(), ServerError> {
+        self.conn
+            .execute(
+                "UPDATE similarity_sets SET state = 'active' WHERE id = ?1",
+                rusqlite::params![set_id],
+            )
+            .map_err(sqlite_err("cannot activate similarity set"))?;
+        Ok(())
+    }
+
+    fn similarity_track_map(&self, release_id: i64) -> Result<Vec<(i64, i64, i64)>, ServerError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT m.disc_number, t.track_number, t.id FROM tracks t
+                 JOIN media m ON m.id = t.media_id
+                 WHERE m.release_id = ?1
+                 ORDER BY m.disc_number, t.track_number",
+            )
+            .map_err(sqlite_err("cannot map similarity tracks"))?;
+        let rows = stmt
+            .query_map(rusqlite::params![release_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .map_err(sqlite_err("cannot map similarity tracks"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(sqlite_err("cannot map similarity tracks"))?);
+        }
+        Ok(out)
+    }
+
+    fn similarity_seed_vector(
+        &self,
+        set_id: i64,
+        track_id: i64,
+    ) -> Result<Option<Vec<u8>>, ServerError> {
+        let found: Option<Vec<u8>> = self
+            .conn
+            .query_row(
+                "SELECT vector FROM similarity_vectors
+                 WHERE set_id = ?1 AND track_id = ?2",
+                rusqlite::params![set_id, track_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(sqlite_err("cannot read similarity vector"))?;
+        Ok(found)
+    }
+
+    fn similarity_candidates(&self, set_id: i64) -> Result<Vec<(i64, Vec<u8>)>, ServerError> {
+        // The VISIBLE gate, exactly as every other read applies it: rows
+        // resolving through a non-visible owner package are absent.
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT sv.track_id, sv.vector FROM similarity_vectors sv
+                 JOIN tracks t ON t.id = sv.track_id
+                 JOIN media m ON m.id = t.media_id
+                 JOIN releases r ON r.id = m.release_id
+                 JOIN packages p ON p.id = r.owner_package_id
+                 WHERE sv.set_id = ?1
+                   AND p.status IN ('valid','warning')
+                   AND p.verify_status IN ('valid','warning')
+                 ORDER BY sv.track_id",
+            )
+            .map_err(sqlite_err("cannot read similarity candidates"))?;
+        let rows = stmt
+            .query_map(rusqlite::params![set_id], |row| {
+                Ok((row.get(0)?, row.get(1)?))
+            })
+            .map_err(sqlite_err("cannot read similarity candidates"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(sqlite_err("cannot read similarity candidates"))?);
+        }
+        Ok(out)
+    }
+
+    fn similarity_set_by_fingerprint(
+        &self,
+        fingerprint_hex: &str,
+    ) -> Result<Option<super::SimilaritySet>, ServerError> {
+        let found: Option<super::SimilaritySet> = self
+            .conn
+            .query_row(
+                "SELECT id, profile_id, profile_fingerprint, dimensions,
+                        encoding, producer_version, state
+                 FROM similarity_sets
+                 WHERE profile_fingerprint = ?1 AND state = 'active'",
+                rusqlite::params![fingerprint_hex],
+                |row| {
+                    Ok(super::SimilaritySet {
+                        id: row.get(0)?,
+                        profile_id: row.get(1)?,
+                        fingerprint_hex: row.get(2)?,
+                        dimensions: row.get(3)?,
+                        encoding: row.get(4)?,
+                        producer_version: row.get(5)?,
+                        state: row.get(6)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(sqlite_err("cannot read similarity set"))?;
+        Ok(found)
+    }
+
+    fn similarity_sets_status(&self) -> Result<Vec<super::SimilaritySetStatus>, ServerError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT s.id, s.profile_id, s.profile_fingerprint, s.dimensions,
+                        s.encoding, s.producer_version, s.state,
+                        (SELECT COUNT(*) FROM similarity_vectors v
+                         WHERE v.set_id = s.id)
+                 FROM similarity_sets s
+                 ORDER BY s.id",
+            )
+            .map_err(sqlite_err("cannot read similarity sets"))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(super::SimilaritySetStatus {
+                    set: super::SimilaritySet {
+                        id: row.get(0)?,
+                        profile_id: row.get(1)?,
+                        fingerprint_hex: row.get(2)?,
+                        dimensions: row.get(3)?,
+                        encoding: row.get(4)?,
+                        producer_version: row.get(5)?,
+                        state: row.get(6)?,
+                    },
+                    vector_count: row.get(7)?,
+                })
+            })
+            .map_err(sqlite_err("cannot read similarity sets"))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.map_err(sqlite_err("cannot read similarity sets"))?);
+        }
+        Ok(out)
+    }
+
     fn resolve_track_audio(&self, track_id: i64) -> Result<Option<super::MediaRef>, ServerError> {
         self.read_track_audio(track_id)
     }
@@ -956,6 +1186,40 @@ impl Store for SqliteStore {
                 .map_err(sqlite_err("cannot delete asset"))?;
         }
         Ok(())
+    }
+}
+
+impl SqliteStore {
+    /// Reads one similarity set row regardless of state (ingest-side
+    /// lookup; queries use the state-gated
+    /// [`Store::similarity_set_by_fingerprint`]).
+    pub(crate) fn similarity_set_row(
+        &self,
+        fingerprint_hex: &str,
+    ) -> Result<Option<super::SimilaritySet>, ServerError> {
+        let found: Option<super::SimilaritySet> = self
+            .conn
+            .query_row(
+                "SELECT id, profile_id, profile_fingerprint, dimensions,
+                        encoding, producer_version, state
+                 FROM similarity_sets
+                 WHERE profile_fingerprint = ?1",
+                rusqlite::params![fingerprint_hex],
+                |row| {
+                    Ok(super::SimilaritySet {
+                        id: row.get(0)?,
+                        profile_id: row.get(1)?,
+                        fingerprint_hex: row.get(2)?,
+                        dimensions: row.get(3)?,
+                        encoding: row.get(4)?,
+                        producer_version: row.get(5)?,
+                        state: row.get(6)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(sqlite_err("cannot read similarity set"))?;
+        Ok(found)
     }
 }
 

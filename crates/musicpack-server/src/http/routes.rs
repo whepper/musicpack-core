@@ -206,6 +206,9 @@ fn route<S: Store>(ctx: &Context<S>, req: &Request, secure: bool) -> Response {
     if path == "/api/v1/tracks" {
         return Response::error(400, "invalid_request", "track list requires an id");
     }
+    if path == "/api/v1/similarity/status" {
+        return handle_similarity_status(ctx);
+    }
     if let Some(rest) = path.strip_prefix("/api/v1/tracks/") {
         return handle_track_sub(ctx, req, rest);
     }
@@ -250,6 +253,12 @@ fn handle_track_sub<S: Store>(
                 return Response::error(400, "invalid_request", "malformed track id");
             };
             handle_track_waveform(ctx, req, id)
+        }
+        "similar" => {
+            let Some(id) = parse_id(id_part) else {
+                return Response::error(400, "invalid_request", "malformed track id");
+            };
+            handle_track_similar(ctx, req, id)
         }
         _ if slash.starts_with("representations/") => {
             // `/representations/{rid}/audio` (or 404 for other shapes).
@@ -940,4 +949,191 @@ fn handle_track_detail<S: Store>(ctx: &Context<S>, id: i64) -> Response {
         o.member("lyrics", lyrics);
     }
     Response::json(200, o.render())
+}
+
+// ---------------------------------------------------------------------
+// similarity (Slice 0, ADR 0017 §5.8)
+// ---------------------------------------------------------------------
+
+/// `GET /api/v1/similarity/status`: capability probe. Always 200 — an empty
+/// index is a normal state (`available: false`), not an error.
+fn handle_similarity_status<S: Store>(ctx: &Context<S>) -> Response {
+    let sets = {
+        let store = ctx.store.lock().unwrap();
+        match store.similarity_sets_status() {
+            Ok(v) => v,
+            Err(_) => return Response::error(500, "internal", "query failed"),
+        }
+    };
+    let mut arr = Json::arr();
+    let mut available = false;
+    for status in &sets {
+        if status.set.state == "active" && status.vector_count > 0 {
+            available = true;
+        }
+        let mut it = Json::obj();
+        it.opt_string("profileId", status.set.profile_id.as_deref());
+        it.string("profileFingerprint", Some(&status.set.fingerprint_hex));
+        it.int("dimensions", status.set.dimensions);
+        it.string(
+            "encoding",
+            Some(&crate::similarity::encoding_name(status.set.encoding as u8)),
+        );
+        it.int("vectorCount", status.vector_count);
+        it.string("state", Some(&status.set.state));
+        arr.push(it);
+    }
+    let mut o = Json::obj();
+    o.boolean("available", available);
+    o.member("sets", arr);
+    Response::json(200, o.render())
+}
+
+/// `GET /api/v1/tracks/{id}/similar?limit=&profile=`: ordered similar
+/// tracks from the user's own collection (Slice 0 product decision).
+///
+/// `profile` is a 64-hex profile fingerprint (the partition key; the
+/// display `profile_id` is never a key). Omitted, it resolves to the single
+/// active non-empty set; zero or several is 404, never a guess. `limit`
+/// follows the existing convention (default 20 here per the ADR sketch,
+/// clamp 1..=200).
+///
+/// Capability absence is always 404 `similarity_unavailable` — never an
+/// empty result masquerading as "nothing is similar" (FORMAT_SPEC §13).
+fn handle_track_similar<S: Store>(ctx: &Context<S>, req: &Request, id: i64) -> Response {
+    let limit = match parse_paged(query_param(&req.query, "limit"), 20, 1, 200) {
+        Some(v) => v,
+        None => {
+            return Response::error(
+                400,
+                "invalid_request",
+                "limit must be a non-negative integer",
+            );
+        }
+    };
+    let profile_param = query_param(&req.query, "profile").map(str::to_ascii_lowercase);
+    if let Some(ref fingerprint) = profile_param {
+        let hex = fingerprint.len() == 64 && fingerprint.bytes().all(|b| b.is_ascii_hexdigit());
+        if !hex {
+            return Response::error(
+                400,
+                "invalid_request",
+                "profile must be a 64-character hexadecimal fingerprint",
+            );
+        }
+    }
+
+    let store = ctx.store.lock().unwrap();
+    // The seed resolves through the normal detail path first, so an unknown
+    // or invisible track reads as absent exactly like every other endpoint.
+    match store.track_detail(id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return Response::error(404, "not_found", "Track not found"),
+        Err(_) => return Response::error(500, "internal", "query failed"),
+    }
+    let set = match resolve_similarity_set(&*store, profile_param.as_deref()) {
+        Ok(Some(set)) => set,
+        Ok(None) => {
+            return Response::error(
+                404,
+                "similarity_unavailable",
+                "no similarity index available",
+            );
+        }
+        Err(message) => return Response::error(404, "similarity_unavailable", message),
+    };
+    let seed = match store.similarity_seed_vector(set.id, id) {
+        Ok(Some(v)) => v,
+        Ok(None) => {
+            return Response::error(
+                404,
+                "similarity_unavailable",
+                "track has no similarity vector in this profile",
+            );
+        }
+        Err(_) => return Response::error(500, "internal", "query failed"),
+    };
+    let seed = match crate::similarity::decode_blob(&seed) {
+        Some(v) => v,
+        None => return Response::error(500, "internal", "query failed"),
+    };
+    let candidates = match store.similarity_candidates(set.id) {
+        Ok(v) => v,
+        Err(_) => return Response::error(500, "internal", "query failed"),
+    };
+    let decoded: Vec<(i64, Vec<f32>)> = candidates
+        .into_iter()
+        .filter(|(candidate_id, _)| *candidate_id != id)
+        .filter_map(|(candidate_id, blob)| {
+            crate::similarity::decode_blob(&blob).map(|vector| (candidate_id, vector))
+        })
+        .collect();
+    let mut ranked = crate::similarity::rank(&seed, &decoded);
+    ranked.truncate(limit as usize);
+
+    let mut neighbors = Json::arr();
+    for (rank, scored) in ranked.iter().enumerate() {
+        let detail = match store.track_detail(scored.track_id) {
+            Ok(Some(v)) => v,
+            // Visible at candidate-load time but gone now (concurrent
+            // rescan): skip rather than fabricate.
+            Ok(None) => continue,
+            Err(_) => return Response::error(500, "internal", "query failed"),
+        };
+        let mut it = Json::obj();
+        it.member("track", track_json(&detail.track));
+        let mut release = Json::obj();
+        release.int("id", detail.release_id);
+        release.string("title", Some(&detail.album_title));
+        release.int("albumId", detail.album_id);
+        it.member("release", release);
+        it.dbl("score", scored.score);
+        it.int("rank", rank as i64 + 1);
+        neighbors.push(it);
+    }
+    let count = neighbors_len(&neighbors);
+    let mut o = Json::obj();
+    o.opt_string("profileId", set.profile_id.as_deref());
+    o.string("profileFingerprint", Some(&set.fingerprint_hex));
+    o.int("count", count);
+    o.member("neighbors", neighbors);
+    Response::json(200, o.render())
+}
+
+/// Resolves the query partition: an explicit fingerprint, else the single
+/// active non-empty set. `Ok(None)` = no index at all; `Err(message)` = an
+/// ambiguous or unknown profile request (still 404, with the reason).
+fn resolve_similarity_set<S: Store>(
+    store: &S,
+    profile: Option<&str>,
+) -> Result<Option<crate::store::SimilaritySet>, &'static str> {
+    if let Some(fingerprint) = profile {
+        let found = store
+            .similarity_set_by_fingerprint(fingerprint)
+            .map_err(|_| "query failed")?;
+        if found.is_none() {
+            return Err("unknown similarity profile");
+        }
+        return Ok(found);
+    }
+    let sets = store.similarity_sets_status().map_err(|_| "query failed")?;
+    let mut active = sets
+        .into_iter()
+        .filter(|status| status.set.state == "active" && status.vector_count > 0)
+        .map(|status| status.set);
+    let Some(first) = active.next() else {
+        return Ok(None);
+    };
+    if active.next().is_some() {
+        return Err("multiple similarity profiles; specify ?profile=");
+    }
+    Ok(Some(first))
+}
+
+/// Array length without a dedicated accessor on the builder.
+fn neighbors_len(neighbors: &Json) -> i64 {
+    match neighbors {
+        Json::Arr(items) => items.len() as i64,
+        _ => 0,
+    }
 }

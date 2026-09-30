@@ -61,6 +61,39 @@ This is a deliberate **superset** of the C reference, which only walked
 `.mpack` directories; `tests/discovery.rs` pins the difference while the
 differential oracles continue to compare only valid packages.
 
+**Stage 8 (complete): model-neutral music similarity (Slice 0).** The server
+indexes supplied `.msim` v1 similarity documents (FORMAT_SPEC.md) into a
+profile-partitioned exact-cosine index and serves ordered similar-track
+queries — with no model, no runtime, no inference and no ANN anywhere in
+this crate (`src/similarity/`, schema v12, `tests/similarity_server.rs`):
+
+- **Optional.** A package without a `similarity` document is completely
+  valid; an empty index is a normal state, not an error.
+- **Model-neutral.** Documents are validated structurally; the server never
+  runs a model and never downloads weights. Discogs-EffNet is a candidate
+  profile, not a cleared production profile; no profile is bundled,
+  named in code, or treated as default.
+- **Profile-isolated.** The header `profile_fingerprint` is the partition
+  key; the display `profile_id` is never a comparison key. Vectors from
+  different fingerprints are never compared, mixed, or converted.
+- **Not identity.** Similarity rows key off track row ids and cascade with
+  the content graph; `group_key`, `release_key` and package identity are
+  untouched by similarity data.
+- **Exact cosine, Slice 0.** Scalar f64 loop in element order; ties break by
+  ascending track id (deterministic; a content-defined key remains open as
+  architecture decision D-4). `f32le` is the indexed representation
+  (G-6 closed as KEEP F32LE); `f16le` documents parse but are not indexed.
+  ANN is deliberately deferred.
+- **Fail-closed.** Malformed, incoherent, dimension-mismatched or
+  unsupported documents yield no rows while the package stays valid and
+  playable; unknown profiles, vectorless tracks and empty indexes answer
+  404 `similarity_unavailable`, never a fabricated score; neighbours from
+  non-visible packages are never returned.
+- **Licensing is separate from the mechanism.** Whether a concrete
+  model/profile may be supported — and whether generated embeddings are
+  legally unrestricted — is unresolved (ADR 0017 G-1…G-4) and is not decided
+  by this code. No claim is made here either way.
+
 ```text
 musicpack-server scan    --library DIR [--database PATH] [--verify]
 musicpack-server serve   --library DIR [--database PATH] [--listen IP]

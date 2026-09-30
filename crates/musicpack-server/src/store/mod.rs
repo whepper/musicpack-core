@@ -465,6 +465,28 @@ pub struct TrackLyricsRow {
 /// surface one-to-one: same statements, same NULL/empty conventions, same
 /// transaction discipline (explicit [`Store::begin`]/[`Store::commit`]/
 /// [`Store::rollback`] around each package, like the reference).
+/// One similarity set: a profile partition of the index (ADR 0017 §5.7).
+/// The fingerprint is the partition and comparison key; `profile_id` is
+/// display text only and may be absent (the manifest does not require it
+/// for non-`sonic` types).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimilaritySet {
+    pub id: i64,
+    pub profile_id: Option<String>,
+    pub fingerprint_hex: String,
+    pub dimensions: i64,
+    pub encoding: i64,
+    pub producer_version: Option<String>,
+    pub state: String,
+}
+
+/// A similarity set plus its indexed vector count (the status surface).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SimilaritySetStatus {
+    pub set: SimilaritySet,
+    pub vector_count: i64,
+}
+
 pub trait Store {
     /// The recorded `schema_version`, or 0 when the table is absent/empty.
     fn schema_version(&self) -> Result<i64, ServerError>;
@@ -727,6 +749,73 @@ pub trait Store {
 
     /// Resolves one track's waveform envelope (`mp_library_track_waveform`).
     fn resolve_waveform(&self, track_id: i64) -> Result<Option<MediaRef>, ServerError>;
+
+    /// Gets or creates the similarity set for a profile fingerprint
+    /// (ADR 0017 §5.7: the fingerprint is the partition key; the display
+    /// `profile_id` is stored but never a key). A set whose stored
+    /// dimensions or encoding differ from the arguments is a corrupt or
+    /// mislabelled document and is refused (`Err`), never merged: vectors
+    /// of different shapes must never share a partition. Created rows start
+    /// `inactive`; the ingest caller activates the set once populated.
+    fn similarity_ensure_set(
+        &mut self,
+        profile_id: Option<&str>,
+        fingerprint_hex: &str,
+        dimensions: i64,
+        encoding: i64,
+        producer_version: &str,
+    ) -> Result<i64, ServerError>;
+
+    /// Replaces one release's vectors in one set: deletes every existing
+    /// row for the release's tracks in the set, then inserts `rows`
+    /// (`(track_id, f32le bytes)`). Returns the inserted count. The caller
+    /// runs inside the package transaction, so a partial population is
+    /// never visible.
+    fn similarity_replace_release_vectors(
+        &mut self,
+        set_id: i64,
+        release_id: i64,
+        rows: &[(i64, Vec<u8>)],
+    ) -> Result<usize, ServerError>;
+
+    /// Deletes every similarity row for a release's tracks across all sets
+    /// (a removed or de-similaritied release leaves no stale vectors).
+    /// Returns the deleted count.
+    fn similarity_clear_release(&mut self, release_id: i64) -> Result<usize, ServerError>;
+
+    /// Marks a similarity set queryable once populated.
+    fn similarity_activate_set(&mut self, set_id: i64) -> Result<(), ServerError>;
+
+    /// One release's `(disc_number, track_number, track_id)` rows ordered
+    /// by `(disc_number, track_number)` — the join key between a similarity
+    /// document's table and the content graph.
+    fn similarity_track_map(&self, release_id: i64) -> Result<Vec<(i64, i64, i64)>, ServerError>;
+
+    /// One track's stored vector in one set (`None` when the track has no
+    /// row: `status != ok`, no document, or a skipped document).
+    fn similarity_seed_vector(
+        &self,
+        set_id: i64,
+        track_id: i64,
+    ) -> Result<Option<Vec<u8>>, ServerError>;
+
+    /// Every `(track_id, vector)` row of one set whose track resolves
+    /// through a VISIBLE package (the same gate every other read applies:
+    /// neighbours from `unavailable`, `invalid` or `conflict` packages are
+    /// never returned). Ordered by `track_id` for determinism; ranking
+    /// happens in Rust (`crate::similarity::rank`).
+    fn similarity_candidates(&self, set_id: i64) -> Result<Vec<(i64, Vec<u8>)>, ServerError>;
+
+    /// Looks up an active set by fingerprint hex (`None` when unknown or
+    /// inactive: an unserved partition, never an error).
+    fn similarity_set_by_fingerprint(
+        &self,
+        fingerprint_hex: &str,
+    ) -> Result<Option<SimilaritySet>, ServerError>;
+
+    /// Every set with its indexed vector count, ordered by id (the
+    /// `/api/v1/similarity/status` surface).
+    fn similarity_sets_status(&self) -> Result<Vec<SimilaritySetStatus>, ServerError>;
 
     /// The recorded `schema_version` for the health endpoint.
     fn health_schema_version(&self) -> i64;

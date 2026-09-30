@@ -15,6 +15,7 @@ pub enum Json {
     Null,
     Int(i64),
     Float(f64),
+    Bool(bool),
     Str(String),
     Arr(Vec<Json>),
     Obj(Vec<(String, Json)>),
@@ -75,6 +76,11 @@ impl Json {
         self.member(key, Json::Null);
     }
 
+    /// Boolean member (`true`/`false` literals).
+    pub fn boolean(&mut self, key: &str, value: bool) {
+        self.member(key, Json::Bool(value));
+    }
+
     /// Renders the value (compact, no whitespace — the C `mp_json_render`).
     pub fn render(&self) -> String {
         let mut out = String::new();
@@ -98,6 +104,7 @@ fn render_into(out: &mut String, value: &Json) {
         Json::Null => out.push_str("null"),
         Json::Int(v) => out.push_str(&v.to_string()),
         Json::Float(v) => out.push_str(&format_g10(*v)),
+        Json::Bool(v) => out.push_str(if *v { "true" } else { "false" }),
         Json::Str(s) => escape_into(out, s),
         Json::Arr(items) => {
             out.push('[');

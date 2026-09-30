@@ -1277,12 +1277,12 @@ fn normalize_row(table: &str, cols: &[String], row: &[String], maps: &IdMaps<'_>
                     );
                     "<UID>".to_string()
                 }
-                // v11 comparison boundary: each side records its own
+                // v12 comparison boundary: each side records its own
                 // latest schema version (the C tops out at 10, the Rust
-                // server at 11 — additive migration, same state).
+                // server at 12 — additive migrations, same state).
                 ("schema_version", "version") => {
                     assert!(
-                        cell == "10" || cell == "11",
+                        cell == "10" || cell == "12",
                         "{table}.{name} is neither implementation's latest: {cell}"
                     );
                     "<VER>".to_string()

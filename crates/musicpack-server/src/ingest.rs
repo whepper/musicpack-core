@@ -283,6 +283,122 @@ fn determine_status(
     }
 }
 
+/// Indexes a package's `similarity` analysis documents into the
+/// profile-partitioned similarity index (ADR 0017 §5.7).
+///
+/// Fail-closed by construction: every failure mode — unreadable member,
+/// malformed document, incoherent member set, unsupported encoding,
+/// dimension mismatch, unresolvable track — yields no rows while the
+/// package itself stays valid and playable. Only the ownership winner's
+/// content is ever indexed (the caller runs this on takeover only), so two
+/// packages never contribute vectors for one release.
+///
+/// Stale rows cannot survive: the release's vectors are cleared first, then
+/// repopulated from the current documents, so removing or replacing the
+/// document removes its rows in the same transaction.
+fn sync_similarity(
+    store: &mut impl Store,
+    source: &PackageSource,
+    manifest: &Manifest,
+    release_id: i64,
+) {
+    if store.similarity_clear_release(release_id).is_err() {
+        return;
+    }
+    for entry in manifest
+        .analysis
+        .iter()
+        .filter(|entry| entry.kind == "similarity")
+    {
+        if index_one_document(store, source, release_id, entry).is_err() {
+            continue;
+        }
+    }
+}
+
+/// Indexes one similarity document. `Err` means "no rows from this
+/// document" — never a package failure.
+fn index_one_document(
+    store: &mut impl Store,
+    source: &PackageSource,
+    release_id: i64,
+    entry: &musicpack_core::format::manifest::Analysis,
+) -> Result<(), ()> {
+    use crate::similarity::reader;
+    use crate::similarity::{IMPLEMENTED_ENCODING, encode_blob};
+
+    // Bound the read before touching the bytes: the largest declarable
+    // v1.0 layout (max members × max dimensions × f32le) plus one.
+    const MAX_DOC_BYTES: u64 = 64 + 12 * 16384 + 16384 * 4096 * 4 + 1;
+    if source.object_size(&entry.asset.path) >= MAX_DOC_BYTES {
+        return Err(());
+    }
+    let Some(object) = source.open_object(&entry.asset.path) else {
+        return Err(());
+    };
+    let mut bytes = Vec::new();
+    use std::io::Read as _;
+    if object.take(MAX_DOC_BYTES).read_to_end(&mut bytes).is_err() {
+        return Err(());
+    }
+    let doc = reader::Document::parse(&bytes).map_err(|_| ())?;
+    if doc.encoding() != IMPLEMENTED_ENCODING {
+        // Well-formed but not implemented for retrieval (notably `f16le`:
+        // G-6 closed as KEEP F32LE). No rows; the package is unaffected.
+        return Err(());
+    }
+    // Package coherence (FORMAT_SPEC §10.4): the document must describe
+    // exactly this package's tracks — no omissions, no strangers.
+    let track_map = store.similarity_track_map(release_id).map_err(|_| ())?;
+    let mut by_member: std::collections::BTreeMap<(i64, i64), i64> = Default::default();
+    for (disc, track, track_id) in track_map {
+        by_member.insert((disc, track), track_id);
+    }
+    let mut doc_members: Vec<(i64, i64)> = Vec::with_capacity(doc.members().len());
+    for member in doc.members() {
+        // u32 to i64 is lossless.
+        doc_members.push((member.disc as i64, member.track as i64));
+    }
+    doc_members.sort_unstable();
+    let mut manifest_members: Vec<(i64, i64)> = by_member.keys().copied().collect();
+    manifest_members.sort_unstable();
+    if doc_members != manifest_members {
+        return Err(());
+    }
+    let fingerprint_hex = reader::hex_lower(&doc.fingerprint());
+    let set_id = store
+        .similarity_ensure_set(
+            entry.profile.as_deref(),
+            &fingerprint_hex,
+            i64::from(doc.dimensions()),
+            i64::from(doc.encoding()),
+            "1.0",
+        )
+        .map_err(|_| ())?;
+    let decoded = doc.decode_f32le().map_err(|_| ())?;
+    let mut rows: Vec<(i64, Vec<u8>)> = Vec::new();
+    for (member, vector) in doc.members().iter().zip(decoded.iter()) {
+        let Some(vector) = vector else { continue };
+        // Consumer-enforced profile rule (FORMAT_SPEC §6.2): a zero-norm
+        // `ok` vector is not indexed. The rest of the document is unaffected.
+        if vector.iter().all(|v| *v == 0.0) {
+            continue;
+        }
+        let Some(track_id) = by_member
+            .get(&(member.disc as i64, member.track as i64))
+            .copied()
+        else {
+            return Err(());
+        };
+        rows.push((track_id, encode_blob(vector)));
+    }
+    store
+        .similarity_replace_release_vectors(set_id, release_id, &rows)
+        .map_err(|_| ())?;
+    store.similarity_activate_set(set_id).map_err(|_| ())?;
+    Ok(())
+}
+
 /// Collects per-track codec probes in disc-major manifest order (the
 /// reference's `collect_track_ingest`, minus the absolute-path struct —
 /// probes resolve paths themselves).
@@ -547,6 +663,11 @@ fn ingest_valid(
                 .replace_release_content(release_id, manifest, source, &probes)
                 .map_err(fail)?;
             store.release_set_owner(release_id, pkg_id).map_err(fail)?;
+            // Similarity indexing rides the same transaction but can never
+            // fail the package: a malformed, incoherent or unsupported
+            // document means no rows, while the package stays valid and
+            // playable (ADR 0017 §5.3; FORMAT_SPEC §12.2).
+            sync_similarity(store, source, manifest, release_id);
         }
         Ok(())
     })();
