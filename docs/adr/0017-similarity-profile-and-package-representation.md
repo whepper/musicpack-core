@@ -6,6 +6,17 @@
   amended, and three further rules were made normative; see §5.5.1 and
   `experiments/music-similarity-eval/FORMAT_SIGNOFF.md`. **No production code
   implements any of it**, and §14 items 1 and 2 remain open and blocking.
+- **Implementation status (2026-09-30; amends the record above without
+  rewriting it).** The mechanism is now implemented and tested: Author
+  producer boundary (`crates/musicpack-author/src/similarity.rs`, `58e062a`);
+  Discogs-EffNet profiles (`similarity_effnet.rs`, `d7e1465`) behind the
+  default-off `discogs-effnet` feature (`1e43ea5`, forwarded by the server in
+  `81bbbf7`); server reader/index/query (`crates/musicpack-server/src/similarity/`,
+  schema v12, `4ef0e65`); `.mpak` round-trip proof (`tests/package_build.rs`,
+  `5ac1d76`). §14 items 2, 3 (as a scoped exception), 4, 5, 5a (as built, not
+  only specified), 6, and 9 are now closed; items 1, 7, and 8 remain open.
+  Licensing G-1…G-4 still block any *supported* profile; G-7 still blocks any
+  quality claim.
 - **Decision type:** Architecture boundary, format extension, and licensing gate
 - **Production impact:** None from this document. No dependency, schema, format,
   API, UI, or runtime behaviour is changed by this ADR. It supersedes and
@@ -559,6 +570,9 @@ loudness measurement, because a learned model is much slower than a loudness
 meter and must be cancellable: a new build phase, a mode option defaulting to
 skip, and a stage entry point whose per-track callback returns `false` to cancel,
 reusing the existing `stage_cancel` mechanism.
+(Built 2026-09-30 in `58e062a` as `run_with_similarity` /
+`similarity_stage_with` over the `SimilarityProducer` boundary, with a
+fingerprint-keyed cache contract; concrete profiles in `d7e1465`.)
 
 Analysis reads the **staged encoded audio**, so the vector describes the bytes
 the package actually ships. The experiment's cross-codec measurements indicate
@@ -606,6 +620,21 @@ The album row is a **server-side derivation from the track rows**, not a
 carry-over from the document: the v1.0 document carries no album aggregate
 (§5.5.1 decision B), and a server that wants one computes it.
 
+> **Implemented as v12 on 2026-09-30 (`4ef0e65`), with two deviations from
+> the sketch above recorded here, not edited away.** First, `similarity_vectors`
+> carries `(set_id, track_id, vector)` only — `dimensions` and `encoding` live
+> on the set, and a document reusing a fingerprint with different dimensions or
+> encoding is refused rather than merged. Second, there is **no
+> `similarity_album_vectors` table**: decision B deferred the aggregate and no
+> album endpoint was built (§5.8). Ingest behavior as built: fail-closed per
+> document (unreadable, malformed, incoherent, unsupported-encoding, or
+> dimension-mismatched documents yield no rows while the package stays valid
+> and playable); zero-norm `ok` vectors are skipped; only the ownership winner's
+> content is indexed; a reingest clears the release's rows first, so removing a
+> document removes its rows in the same transaction. The server crate forwards
+> the author's `discogs-effnet` feature for its gated end-to-end test only;
+> the server itself performs no inference (D-5 holds).
+
 Properties that matter:
 
 - **Separate from `assets`.** Analysis documents are deliberately not indexed as
@@ -634,16 +663,31 @@ is empty: a stable capability-absent code, never an empty result that reads as
 ambiguous result is a reason to disable the feature, not to substitute a model
 (ADR 0016 §5.1).
 
-### 5.8 API shape (sketch only; nothing implemented)
+### 5.8 API shape (implemented 2026-09-30 in `4ef0e65`; the album endpoint below was not built)
 
-Additive and result-oriented. Every pre-existing response must remain a
-byte-prefix, so new fields are omitted entirely when empty.
+Additive and result-oriented. Every pre-existing response remains a
+byte-prefix — the change adds new paths only, and `api_oracle.rs` continues
+to pin the contract.
 
 ```http
 GET /api/v1/similarity/status
 GET /api/v1/tracks/{id}/similar?limit=20
 GET /api/v1/albums/{id}/similar?limit=12
 ```
+
+> **Built status (2026-09-30).** The first two endpoints exist as specified,
+> with these pinned semantics (`tests/similarity_server.rs`, 18 tests plus 1
+> feature-gated live test that skips without operator-supplied artifacts):
+> `limit` defaults to 20 and clamps to 1–200; `profile` is a 64-hex
+> `profile_fingerprint` (the partition key — the display `profile_id` is never
+> a key), defaulting to the single active non-empty set and refusing to guess
+> when zero or several exist; capability absence is always 404
+> `similarity_unavailable`, never an empty result; the seed resolves through
+> the normal track-detail path first, so unknown/invisible tracks read as
+> absent. Ranking is exact cosine, descending, with ascending track id breaking
+> ties (deterministic; a content-defined key remains an open decision). No ANN.
+> The album endpoint was **not** built — decision B deferred the
+> aggregate and Slice 0 queries tracks only.
 
 Responses carry `profileId` and within-model `score`/`rank`, and embed the
 **existing** track/album JSON unchanged so clients reuse their types and caches.
@@ -724,6 +768,10 @@ descriptors.
   library per profile, and 2× that with two profiles.
 - f16 quantization must be **shown** to preserve useful ranking before adoption;
   it has not been measured.
+  (Amended 2026-09-30: G-6 closed as **KEEP F32LE**. The indexed
+  representation is `f32le`; `f16le` documents parse but are refused for
+  retrieval. The f16 storage figures above are historical estimates, not a
+  plan.)
 - The quality of any shipped profile is unvalidated pending human review.
 
 ### 7.3 What this does not claim
@@ -789,13 +837,39 @@ what must be verified. MusicPack's own code is BSD-3-Clause; the analysis
 architecture in this ADR is MusicPack's own design and carries no third-party
 terms.
 
+**Owner scoping decision (2026-09-28; answers no legal question).** Music
+Similarity is an intended optional MusicPack capability (ADR 0016 Slice 0, as
+decided), but individual similarity profiles remain subject to their own
+licensing and usage restrictions: no model is automatically approved,
+Discogs-EffNet remains a candidate and must not be described as a generally
+supported model until G-1…G-4 are resolved, every supported profile must
+document its applicable license and usage restrictions, and
+users/operators must be able to understand those restrictions before enabling
+a profile. G-1…G-4 stay open; the reframed question is whether a particular
+profile/model can be supported under MusicPack's primarily open-source,
+self-hosted product scope, including the optional capability and any
+associated similarity data.
+
+**Concrete profiles, implemented 2026-09-30 (`d7e1465`) — experimental,
+licensing-restricted, not supported.** Two profiles exist over the neutral
+Author boundary: `musicpack-similarity-discogs-effnet-multi-v1` (1280-D) and
+`musicpack-similarity-discogs-effnet-release-v1` (512-D), with exact model
+artifact hashes recorded in code (`MULTI_MODEL_SHA256`,
+`RELEASE_MODEL_SHA256`). Model files are operator-supplied, hash-verified
+before opening, and never downloaded automatically; there is no Essentia and
+no FFmpeg anywhere in the path, and inference runs on `rten 0.26.0`. The live
+production-vs-experiment embedding regression is **BLOCKED — the exact ONNX
+artifacts are unavailable on the development machine** (gated tests skip with
+a notice). This is a missing-artifact status, not a failure, and no pass is
+claimed.
+
 ### 10.1 Layers
 
 | Layer | Current position |
 | --- | --- |
 | MusicPack source (format, document layout, profile namespace, server schema, API) | BSD-3-Clause; no third-party terms; contains no source-derived code and never enters the LGPL-2.1 encoder/tools boundary |
-| Inference runtime | `rten` — MIT OR Apache-2.0. Permissive. **Not** the licensing problem; the **MSRV** is (0.26.x reports 1.94 vs workspace 1.85) |
-| DSP support | `rubato`, `microfft` — permissive |
+| Inference runtime | `rten` — MIT OR Apache-2.0. Permissive. **Not** the licensing problem; the **MSRV** is (0.26.x reports 1.94 vs workspace 1.85). (Resolved 2026-09-30 as G-5 PASS WITH SCOPED EXCEPTION: default-off `discogs-effnet` feature, workspace stays 1.85, feature requires 1.94.) |
+| DSP support | `rubato`, `microfft` — permissive. (Selected 2026-09-30 for the Author DSP: `microfft =0.6.0`, `rubato =0.16.2` with `fft_resampler`; unconditional dependencies, no MSRV or WASM issue.) |
 | Model weights — Discogs-EffNet | Documented **CC BY-NC-SA 4.0**; produced by a project whose library is AGPL/commercial-oriented |
 | Model weights — CLAP `larger_clap_music` | **Apache-2.0**, verified this session from repository and Hub metadata, digest recorded |
 | Training data | **Not audited.** The Discogs research dataset's terms have not been reviewed against the artefact's NC/SA terms |
@@ -863,7 +937,7 @@ activates the lane it reserved (§7/§17).
 | --- | --- |
 | §5.1 model-free first slice | **Unchanged.** This is not that slice. It is the deferred model lane, and it ships no default model |
 | §5.2 capabilities not in the first slice (learned embeddings, model downloads) | **Unchanged.** Learned embeddings remain opt-in with operator-supplied weights; no download path is introduced |
-| §7 Rust ecosystem survey — "reconsider RTen first under a new ADR" | **Activated, conditionally.** `rten` is the candidate; the MSRV gate G-5 is unresolved |
+| §7 Rust ecosystem survey — "reconsider RTen first under a new ADR" | **Activated, conditionally.** `rten =0.26.0` is the runtime, behind the default-off `discogs-effnet` feature; G-5 resolved as a scoped exception (workspace 1.85, feature 1.94) |
 | §9.2 two identifiers (stable id + fingerprint) | **Adopted** and made mandatory (§5.4) |
 | §9.3 package fingerprints are not analysis cache keys; queries must not mix profiles | **Retained and reinforced** (§5.3, §5.6) |
 | §10.1 storage: "store descriptors in `.mpack` → **Not the default**" | **Narrowed, not contradicted.** The portable export deferred there is now specified, and remains **opt-in**, so "not the default" stays literally true. The row's concerns about package-size and stale-travel are addressed by §7.2 and by the index being authoritative |
@@ -928,18 +1002,50 @@ deferred.
 1. **Licensing G-1…G-4** (§10.4) with qualified legal review. *If G-1 fails, the
    capability ships with no supported model and operator-supplied weights only, or
    waits for a permissively licensed candidate.*
+   Owner: `UNASSIGNED — qualified licensing reviewer required`. Expected output:
+   written answers, with evidence, to each of G-1 (meaning of "non-commercial"
+   for MusicPack and its users), G-2 (embedding inheritance and redistribution
+   of `.mpack` carriers), G-3 (dataset-terms compatibility), and G-4 (ONNX
+   through a pure-Rust runtime without the AGPL-oriented library). Until
+   assigned and resolved: no supported model or profile can be determined, and
+   no production analyzer, server index, runtime selection, or placement
+   decision may proceed on a Discogs-EffNet profile.
 2. **Product decision** (ADR 0016 Slice 0): who asks for similar tracks, on which
    collection, and what counts as success **with no human ground truth**? The
    experiment showed two models disagreeing substantially; it did not show that
    either is good.
+   Owner: product owner — **resolved** (decision recorded in ADR 0016
+   Slice 0: optional Player discovery within the user's own collection;
+   Slice 0 exit items satisfied). Expected output per the Slice 0
+   exit gate: a named capability, its owner, the corpus, and success/failure
+   semantics (consumer + what counts as success). Product decision no longer
+   blocking; licensing (item 1) remains the principal prerequisite for
+   selecting a supported model/profile.
 3. **MSRV and dependency policy** for an ONNX runtime in a production crate
    (G-5), and whether an ML runtime is permitted in Author under `AGENTS.md`.
+    **Resolved 2026-09-30 as G-5 PASS WITH SCOPED EXCEPTION** (`1e43ea5`,
+    `81bbbf7`): workspace and crate MSRV stay Rust 1.85; `rten =0.26.0` is an
+    optional, default-off dependency behind the `discogs-effnet` feature, whose
+    effective MSRV is 1.94. Default builds never compile `rten`. Rust 1.85 is
+    tested in CI (`msrv` job, default features); the feature is tested on
+    stable (`discogs-effnet` job). Nothing in MusicPack requires 1.94 except
+    enabling that feature.
 4. **Supersession sign-off** for this ADR's narrowing of ADR 0016 §10.1 and its
    activation of the §7/§17 model lane, recorded explicitly rather than by
    silent edit.
+    **Resolved by this reconciliation (2026-09-30):** the narrowing is effected
+    in the committed implementation (optional package document plus
+    authoritative server index; model lane as opt-in Author profiles), and the
+    original positions above are preserved rather than rewritten.
 5. **`.mpak` round-trip proof** that `analysis[]` members pack through the
    existing `canonical_pack_order` with no new block type — a test, not an
    assumption.
+    **Closed 2026-09-30 (`5ac1d76`):**
+    `similarity_analysis_round_trips_through_pack_and_verification` carries the
+    committed `minimal-ok.msim` fixture through draft, build,
+    `canonical_pack_order`, serialization, parse, and verification with a
+    byte-identical payload, an unchanged manifest entry, no new block type, and
+    a valid package.
 5a. **CLOSED 2026-09-26 — similarity document format spec and reference
    vectors**, reviewable without a model download or a server schema, equivalent
    to the ADR 0016 §17 Slice 1 exit gate. Delivered as
@@ -949,17 +1055,34 @@ deferred.
    deviations are recorded in §5.5.1. **Closing this item did not authorise a
    writer** — items 1 and 2 remain open and blocking, and no production code
    implements the format.
+    (Amended 2026-09-30: the format is now also *built* — Author writer in
+    `58e062a`, server reader in `4ef0e65` — under the section 10 owner-scoping
+    posture: opt-in experimental mechanism, no supported profile until G-1
+    through G-4 resolve.)
 6. **Vector encoding** f16 vs f32, decided by a measured ranking-equivalence test
    (G-6).
+   **Closed 2026-09-30 as KEEP F32LE**: the indexed representation is `f32le`;
+   `f16le` documents parse but are refused for retrieval.
 7. **ANN revisit threshold** expressed as a measured library size or p99 latency,
    not as a library preference.
 8. **Derived-data retention and deletion policy** for the similarity index,
    including behaviour when a source is deleted.
+   (Still open 2026-09-30 as a product policy; implemented mechanics:
+   `ON DELETE CASCADE` on both tables, per-release clearing on reingest, sets
+   `inactive` until populated — but no stated retention rule for inactive sets.)
 9. **Whether the analyzer ever belongs in `musicpack-core`.** Recommend it does
    not: Author-side placement keeps the model runtime out of the WASM-clean
    crates. Revisit only behind a separate WASM/transfer/memory policy.
+   **Resolved 2026-09-30 as placed in Author**: concrete profiles live in
+   `crates/musicpack-author/src/similarity_effnet.rs`; `musicpack-core` gains
+   no model runtime and stays WASM-clean.
 
 Until items 1 and 2 have owners and answers, the correct implementation is no new
 production similarity code. **That remains true after the format gate closed
 (§5.5.1, §14 item 5a): the format is specified and settled, and it is still not
 built.**
+
+(Amended 2026-09-30: item 2 is resolved and implementation exists — see the
+status block at the top of this document. What remains true is the licensing
+half: until item 1 (G-1…G-4) has owners and answers, there is no *supported*
+profile, and Discogs-EffNet stays experimental with operator-supplied weights.)

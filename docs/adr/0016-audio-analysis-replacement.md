@@ -4,6 +4,13 @@
 - **Decision type:** Architecture boundary and future activation gate
 - **Production impact:** None from this document. No dependency, API, schema, UI, or runtime behavior is changed by this ADR.
 - **Related decisions:** ADR 0008 (offline model), ADR 0009 (library jobs), ADR 0012 (Author runtime cutover), ADR 0014 (server production cutover)
+- **Implementation status (2026-09-30):** Slice 0 is decided (see §17) and the
+  deferred model lane is implemented: Author similarity producer (`58e062a`),
+  Discogs-EffNet profiles behind a default-off feature (`1e43ea5`, `d7e1465`,
+  `81bbbf7`), server similarity index/query at schema v12 (`4ef0e65`), and a
+  `.mpak` round-trip proof (`5ac1d76`). ADR 0017 records the mechanism. The
+  study text below is preserved; dated amendments mark where implementation
+  superseded it.
 
 ## 1. Decision summary
 
@@ -17,6 +24,8 @@
    100 ms `peak-rms-u8` waveform envelopes. Metadata search is not audio analysis.
    There is no current server, web, or Author workflow that consumes similarity
    vectors, fingerprints, tempo, key, or semantic labels.
+   (Amended 2026-09-30: server and Author similarity workflows now exist;
+   web consumption and tempo/key/semantic work still do not.)
 3. **If a content-analysis product decision is later accepted, the first slice
    should be narrow:** an explicit, optional, collection-local *acoustic-neighbor*
    capability based on a compact, deterministic track descriptor and an
@@ -26,11 +35,18 @@
    compatibility with historical Sonic v1 embeddings. A fingerprint for
    duplicate/near-duplicate detection is a separate capability and is deferred
    until that workflow is requested.
+   (Amended 2026-09-30: the path taken was the deferred model lane, not this
+   model-free slice — Discogs-EffNet profiles via ADR 0017, opt-in and
+   experimental. No model-free descriptor profile has been built.)
 4. **Do not put the new derived index in `.mpack` by default.** Keep the existing
    manifest `analysis[]` references structurally validated, hash-protected, and
    semantically opaque. Store future descriptors in an author-local cache and,
    if activated, a server-local versioned index. A portable analysis export can
    be designed later; it must not be an accidental side effect of analysis.
+   (Amended 2026-09-30: ADR 0017 narrowed this for similarity — the package
+   may optionally carry the document as portable input while the server index
+   stays authoritative. "Not the default" remains literally true: production
+   is explicit opt-in.)
 5. **The ownership boundary is:** `musicpack-core::audio` owns a typed,
    streaming, storage-independent analysis primitive; `musicpack-author` owns
    source selection, explicit invocation, progress, cache, and export policy;
@@ -41,6 +57,10 @@
    FFT, resampling, and numerical policy remain an explicit benchmark/audit
    gate. Learned embeddings and general ML runtimes are not part of the first
    replacement slice.
+   (Amended 2026-09-30: for the similarity model lane, `rten =0.26.0`,
+   `microfft =0.6.0`, and `rubato =0.16.2` are now selected in Author —
+   `rten` behind the default-off `discogs-effnet` feature under G-5 PASS WITH
+   SCOPED EXCEPTION. No ML runtime exists in core or server.)
 
 This is deliberately an activation boundary, not a promise to ship a Sonic
 replacement immediately.
@@ -74,8 +94,8 @@ with loudness, waveform data, or a package integrity reference.
 | Hostile input | `src/audio/mod.rs`: analysis feeds sanitize NaN/infinities and do not trust untrusted lengths | A new stream must preserve total, bounded, deterministic behavior. |
 | Manifest | `src/format/manifest/mod.rs`: `Analysis { kind, profile, asset }`; unknown kinds are forward-compatible | `analysis[]` is a generic reference contract in the current Rust implementation. |
 | Verification | `src/validation/mod.rs`: analysis paths receive normal containment, budget, and SHA-256 checks; Sonic semantics are deferred | Do not claim that a Sonic document is semantically validated by the Rust verifier today. |
-| Author | `author/src-tauri/src/lib.rs`: the Rust backend returns `sonic_retired`; `crates/musicpack-author/src/pipeline.rs` stages analysis bytes opaquely | Existing analysis references survive inspect/rebuild, but Author does not produce new Sonic data. |
-| Server | `crates/musicpack-server/src/jobs.rs`: only `Scan` and `Verify`; `store/sqlite.rs` deliberately does not index analysis documents | There is no current analysis database, route, or job. |
+| Author | `author/src-tauri/src/lib.rs`: the Rust backend returns `sonic_retired`; `crates/musicpack-author/src/pipeline.rs` stages analysis bytes opaquely | Existing analysis references survive inspect/rebuild, but Author does not produce new Sonic data. (Amended 2026-09-30: Author now produces similarity vectors through the model-neutral producer boundary plus opt-in Discogs-EffNet profiles; Sonic stays retired.) |
+| Server | `crates/musicpack-server/src/jobs.rs`: only `Scan` and `Verify`; `store/sqlite.rs` deliberately does not index analysis documents | There is no current analysis database, route, or job. (Amended 2026-09-30: superseded for similarity — schema v12 carries `similarity_sets`/`similarity_vectors`, and `similarity/status` plus `tracks/{id}/similar` routes exist. `JobKind` stays `Scan | Verify`.) |
 | Web | `web/app/src/lib/offline/plan.ts` defers analysis; the analysis UI shows loudness and waveform | There is no client contract for embeddings or similarity. |
 
 The current `.mpack` builder already measures loudness from primary audio and
@@ -291,8 +311,8 @@ mean “no unsafe code anywhere in the dependency graph.”
 | --- | --- | --- | --- |
 | [`rustfft`](https://docs.rs/rustfft/latest/rustfft/) | Pure Rust; MIT OR Apache-2.0; current 6.x line; arbitrary sizes; AVX/SSE/Neon and optional WASM SIMD; the normal planner chooses algorithms based on the machine; SIMD implementations contain upstream `unsafe` intrinsics | Strong DSP candidate and WASM-capable in principle. CPU-dependent algorithm selection means “bit-identical on every CPU” is not a safe promise without a scalar/reference policy and differential tests. `FftPlannerScalar`/disabled fast-path features are the reproducibility path to evaluate | **Conditional performance candidate; not selected yet** |
 | [`realfft`](https://github.com/HEnquist/realfft) | MIT convenience wrapper over RustFFT for real transforms; propagates RustFFT SIMD/WASM features | Avoids carrying unused complex-transform machinery for real PCM, but inherits RustFFT's upstream `unsafe`, CPU dispatch, and numeric-policy questions; it is an API convenience, not a new determinism guarantee | **Conditional convenience candidate; not selected yet** |
-| [`microfft`](https://docs.rs/microfft/latest/microfft/) | Pure Rust, MIT, `no_std` capable, in-place radix-2 FFT for fixed power-of-two sizes; no C/FFI/build script; no explicit WASM CI claim; latest published release is older than the other candidates | Very small deterministic reference candidate with no dynamic planner/SIMD selection. Fixed sizes and lower ecosystem activity are real limits; its tables/code size also need measurement | **Strongest strict primitive candidate; not selected yet** |
-| [`rubato`](https://docs.rs/rubato/latest/rubato/) | Pure Rust; MIT OR Apache-2.0; chunked sinc and FFT resamplers; current 5.x metadata reports MSRV 1.87; SIMD/interpolator paths contain upstream `unsafe` and the project has rapid major-version churn | Resampling is useful, but current MSRV is above this workspace's 1.85, WASM support is not established by the survey, and CPU dispatch/numerical behavior is profile-defining | **Admit only after MSRV/WASM/unsafe/numerical audit or use a smaller local fixed resampler** |
+| [`microfft`](https://docs.rs/microfft/latest/microfft/) | Pure Rust, MIT, `no_std` capable, in-place radix-2 FFT for fixed power-of-two sizes; no C/FFI/build script; no explicit WASM CI claim; latest published release is older than the other candidates | Very small deterministic reference candidate with no dynamic planner/SIMD selection. Fixed sizes and lower ecosystem activity are real limits; its tables/code size also need measurement | **Strongest strict primitive candidate; selected 2026-09-30 for the Author similarity DSP (`microfft =0.6.0`, `size-512`)** |
+| [`rubato`](https://docs.rs/rubato/latest/rubato/) | Pure Rust; MIT OR Apache-2.0; chunked sinc and FFT resamplers; current 5.x metadata reports MSRV 1.87; SIMD/interpolator paths contain upstream `unsafe` and the project has rapid major-version churn | Resampling is useful, but current MSRV is above this workspace's 1.85, WASM support is not established by the survey, and CPU dispatch/numerical behavior is profile-defining | **Admitted 2026-09-30 for the Author similarity DSP (`rubato =0.16.2`, `fft_resampler`) — Author-side only, behind no feature gate; numerical policy pinned by the profile** |
 | [`Symphonia`](https://github.com/pdeljanov/Symphonia) | 100% safe/pure Rust decoder framework; MPL-2.0; 0.6.x MSRV 1.85; broad codec support; its README lists a WASM API as planned rather than as a current tested target | Good future codec candidate, but the core already owns WAV/FLAC/Musepack decoding and Symphonia's format list does not replace the native Musepack decoder. MPL, feature, and target review are additional work | **Do not add for this study** |
 | [`ebur128`](https://github.com/sdroege/ebur128) / `ebur128-stream` | MIT, established pure-Rust EBU R128 implementation; the newer stream crate advertises no-std/WASM and bounded streaming but is much newer | MusicPack already has a compatibility-oriented hand port with an explicit oracle and tolerance policy. Replacing it would add a dependency without solving a current product need; a future loudness redesign would need a separate numerical decision | **Do not replace the existing meter** |
 | `hound` / `ndarray` | Hound is a pure-Rust Apache-2.0 WAV utility; ndarray is MIT/Apache-2.0 with optional native/parallel features | Either duplicates an existing seam or adds a broad dependency for a small fixed descriptor | **Do not add by default** |
@@ -303,7 +323,7 @@ mean “no unsafe code anywhere in the dependency graph.”
 | [`rusty-chromaprint`](https://github.com/darksv/rusty-chromaprint) | MIT pure-Rust Chromaprint port; README calls it in progress; depends on `rustfft` and an older `rubato`; intended for identification/duplicate detection | Better semantic fit than a general ML crate for fingerprints, but incomplete presets and non-reference-compatible resampling/behavior are reported; not a similarity engine | **Benchmark only for a new private format if duplicate detection is activated** |
 | `chromaprint-next` | Pure-Rust project with strict Chromaprint parity goals, but its resampler is derived from FFmpeg and carries LGPL source-derived terms | It would introduce a licensing/provenance boundary even if the Rust wrapper itself is permissive; it is also a fingerprint format, not a similarity descriptor | **Reject under the current provenance boundary** |
 | `chromaprint` C bindings | C API/FFI; compact fingerprints | Violates the no-FFI/no-C production boundary and adds a native runtime | **Reject** |
-| [`rten`](https://github.com/robertknight/rten) | End-to-end Rust ONNX runtime; MIT OR Apache-2.0; CPU plus AVX/NEON/WASM SIMD; current 0.26.x metadata reports MSRV 1.94 | The cleanest future pure-Rust/WASM inference candidate in the survey, but it is above the workspace MSRV, uses architecture-specific SIMD/parallel execution, and still has no approved audio model or MusicPack parity result | **Best future model-runtime candidate; not current-core selectable** |
+| [`rten`](https://github.com/robertknight/rten) | End-to-end Rust ONNX runtime; MIT OR Apache-2.0; CPU plus AVX/NEON/WASM SIMD; current 0.26.x metadata reports MSRV 1.94 | The cleanest future pure-Rust/WASM inference candidate in the survey, but it is above the workspace MSRV, uses architecture-specific SIMD/parallel execution, and still has no approved audio model or MusicPack parity result | **Selected 2026-09-30 for the Author model lane (`rten =0.26.0`, default-off `discogs-effnet` feature, G-5 scoped exception); still not a core dependency** |
 | [`tract-onnx`](https://docs.rs/tract-onnx/latest/tract-onnx/) | MIT OR Apache-2.0 Rust ONNX/TensorFlow inference with CPU/ARM/GPU and browser support, but the repository-relevant native linear-algebra path uses a build script/toolchain and upstream `unsafe` kernels; no MusicPack audio frontend or approved model | Technically capable, but the full dependency/build policy and architecture-specific kernels fail the current core boundary even where a WASM branch exists | **Hard no for the current core; revisit only behind a future policy decision** |
 | [`candle-core`](https://docs.rs/candle-core/latest/candle_core/) | MIT/Apache Rust ML framework with CPU/CUDA/Metal and browser/WASM examples; core/backend code contains unsafe pointer/conversion paths and optional native FFI/build-script paths | Broad framework and model runtime for a problem that does not yet have a product requirement; no ready MusicPack audio model; backend rounding is not cross-target exact | **Defer; not a current-core candidate** |
 | [`ort`](https://docs.rs/ort/latest/ort/) / `onnxruntime` | MIT/Apache-2.0 Rust facade over ONNX Runtime's C API; current builds exist for several targets including WASM, but `ort-sys` is explicitly unsafe FFI and links/downloads a native runtime | Target availability does not remove the C API/FFI/native-runtime boundary. It would recreate the old deployment burden | **Reject under current architecture** |
@@ -319,7 +339,8 @@ profile is easier to test, package, explain, and keep WASM-clean than a learned
 model whose quality and license are unresolved. If a learned model is later
 approved, RTen is the strongest pure-Rust/WASM candidate in this survey, but its
 current MSRV and SIMD policy still require a separate exception or upgrade
-decision.
+decision. (That exception has now been made once, for Author only: G-5 PASS
+WITH SCOPED EXCEPTION, 2026-09-30.)
 
 ## 8. Proposed future profile and API shape
 
@@ -479,6 +500,11 @@ would be a projection of the package, not a second authority; a future new
 descriptor index is independently derived and must not masquerade as a package
 asset.
 
+(Amended 2026-09-30: ADR 0017 adopted the hybrid the table defers — an
+explicit portable-export use case was accepted for similarity, with the
+package document as input only and the server index authoritative. The table
+above is preserved as the original recommendation.)
+
 ### 10.2 Author-local storage
 
 An Author-side cache should live outside the package staging tree, for example
@@ -515,6 +541,9 @@ The current server schema and `scan`/`verify` behavior must remain unchanged
 until a separate API/schema decision is accepted. In particular, analysis
 documents currently pass generic verification but are deliberately not indexed;
 this ADR preserves that behavior.
+(Amended 2026-09-30: that decision has been accepted for similarity — schema
+v12 plus `similarity/status` and `tracks/{id}/similar`, additive only, with
+`scan`/`verify` semantics otherwise unchanged.)
 
 If a future API is approved, it should be result-oriented: expose readiness,
 profile identity, and explainable neighbor scores, not raw vectors, model
@@ -559,12 +588,19 @@ sanitization are the required upstream seam.
 stage/track progress and cancellation. It must not grow a second package
 serializer, a Tauri-specific DSP implementation, or a hidden model download.
 The default Rust Author runtime remains Sonic-free.
+(Amended 2026-09-30: Author now orchestrates similarity production through the
+neutral producer boundary with explicit opt-in profiles; weights are
+operator-supplied and hash-verified, never downloaded.)
 
 ### Server
 
 The server may call the core analyzer over an already-resolved audio object and
 own persistence/query behavior. It must not put analysis in the serving
 request path. Analysis is maintenance work, not playback work.
+(Amended 2026-09-30: the server performs no inference — it indexes
+Author-produced documents served through two read-only query endpoints. That
+preserves this paragraph: no model runtime, no analysis in the serving-request
+path beyond indexed lookups.)
 
 ### Web/WASM
 
@@ -715,6 +751,44 @@ whether analysis is opt-in, and whether results must travel with a package.
 
 **Exit:** a named capability, owner, corpus, and success/failure semantics.
 
+**Status: DECIDED (2026-09-28, product-owner decision).** Owner: product
+owner — resolved; no personal name per repository convention. The decision:
+
+- **Capability:** Music Similarity is an optional MusicPack Player discovery
+  capability that finds tracks in the user's own MusicPack collection that
+  are musically similar to a selected track.
+- **Consumer:** MusicPack Player / Web UI. The Server provides the
+  infrastructure/API and maintains the similarity index; it is not itself
+  the end-user capability.
+- **Corpus:** the user's own MusicPack collection. Not external catalogs,
+  not global or collaborative similarity.
+- **Input:** one selected/current track. **Output:** an ordered list of
+  similar tracks from the user's own collection.
+- **Purpose:** music discovery — "find something similar to what I am
+  currently listening to." Playlist generation, radio, collaborative
+  filtering, and external-catalog recommendations are future extensions at
+  most, not part of Slice 0.
+- **Optionality:** MusicPack remains fully functional without similarity.
+  Similarity data is not required for `.mpack`; an `.mpack` without it
+  remains valid; a server without the capability remains functional;
+  similarity is enabled independently; package creation, distribution,
+  playback, and collection management never depend on it.
+- **Model/profile independence:** the capability is independent of any
+  model or profile. Discogs-EffNet is not synonymous with Music Similarity;
+  a model becomes supported only when its licensing and product requirements
+  are satisfied.
+- **Success:** a human listening review finds the returned results
+  meaningfully useful as similar-track results for the selected track.
+  **Failure:** results consistently judged not meaningfully similar/useful.
+  No numerical quality threshold; cosine values and benchmark metrics do not
+  substitute for the listening criterion. G-7 remains the evaluation
+  mechanism.
+- **Commercial scope:** MusicPack is primarily an open-source, self-hosted
+  project; commercial or hosted use is not currently a target product
+  requirement. This prohibits nothing and promises nothing — future
+  commercial/hosted use is simply not specified — and no legal conclusion
+  follows from it.
+
 ### Slice 1 — profile specification
 
 Write a versioned profile document before writing an analyzer. Define input
@@ -723,6 +797,15 @@ numeric tolerance, limits, short-track behavior, and profile fingerprint rules.
 
 **Exit:** a fixture format and scalar/reference vectors that can be reviewed
 without a model download or server schema.
+
+**Implementation record (2026-09-30).** Slice 1's exit is satisfied by the
+similarity format gate (ADR 0017 §5.5.1, fixtures plus conformance tests).
+Slices 2–4 are built for the model lane rather than the model-free prototype:
+frozen DSP plus `rten` inference in Author, the producer/cache boundary with
+an opt-in cancellable stage (Slice 3 shape), and the v12 server index with
+query endpoints (Slice 4 shape). Slice 5 (web consumption) is not built. The
+deferred model lane below is activated, conditionally, for Discogs-EffNet as
+an experimental profile only.
 
 ### Slice 2 — core streaming prototype
 
@@ -773,6 +856,9 @@ core without that decision, and `ort` is not an acceptable shortcut.
 
 1. Is “find acoustically related tracks/albums” a real user problem in the
    self-hosted collection, or was Sonic only an aspirational historical feature?
+   (Partly answered 2026-09-28 by the Slice 0 product decision: the capability
+   is wanted as optional Player discovery. Whether results are *useful* is
+   still G-7, wide open.)
 2. What corpus and human/quantitative quality bar make a descriptor useful
    enough to expose? The historical OpenL3/Discogs results cannot be reused as
    a guarantee for a new profile.
@@ -803,12 +889,19 @@ new production analysis.
   semantic validation.
 - `tests/package_build.rs` — executable evidence that hash-correct but invalid
   Sonic bytes are currently accepted under the generic asset contract.
+  (Plus, 2026-09-30: the `.mpak` similarity round-trip proof carrying the
+  committed `minimal-ok.msim` fixture byte-identically.)
 - `src/authoring/build.rs`, `crates/musicpack-author/src/pipeline.rs`,
   `crates/musicpack-author/src/inspect.rs` — current package construction and
   opaque analysis preservation.
+  (Plus, 2026-09-30: `crates/musicpack-author/src/similarity.rs`,
+  `similarity_effnet.rs`, and `tests/effnet.rs` — the producer boundary and
+  the Discogs-EffNet profiles.)
 - `author/src-tauri/src/lib.rs` — `sonic_retired` default and legacy-only path.
 - `crates/musicpack-server/src/jobs.rs`, `store/sqlite.rs`, `store/read.rs`,
   `http/routes.rs` — current job/index/API boundary.
+  (Plus, 2026-09-30: `src/similarity/`, the v12 similarity tables, the ingest
+  hook, the status/similar endpoints, and `tests/similarity_server.rs`.)
 - `web/app/src/lib/offline/plan.ts` and analysis UI — current client scope.
 - Sibling historical `specs/musicpack-sonic-v1.md` and
   `research/sonic/reports/results.md` — frozen historical contract and measured
@@ -855,3 +948,7 @@ C+ONNX deployment, automatic model path, and package-coupled index are not
 requirements worth recreating. The next implementation should earn its way from
 a product use case and a measured profile, not from the existence of an old
 binary or an aspirational recommendation screen.
+(Amended 2026-09-30: the Slice 0 use case was accepted and the model lane
+built accordingly — opt-in Author profiles, portable document as input only,
+authoritative server index, no revived sidecar, no automatic model path. The
+model-free descriptor slice above remains unbuilt.)
