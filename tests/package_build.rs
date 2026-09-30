@@ -28,6 +28,7 @@ use musicpack_core::format::checksum;
 use musicpack_core::format::manifest::{
     Album, Artist, Identifiers, MediumFormat, ParsedManifest, ReleaseType,
 };
+use musicpack_core::format::mpak::{self, canonical_pack_order};
 use musicpack_core::storage::directory::verify_directory;
 use musicpack_core::{identity, storage};
 
@@ -713,6 +714,177 @@ fn existing_destination_is_refused() {
     }]);
     let err = build_directory(&draft, &root, &out, &BuildOptions::omitting_loudness()).unwrap_err();
     assert!(err.to_string().contains("already exists"), "{err}");
+}
+
+// ---------------------------------------------------------------------
+// similarity analysis (ADR 0017 §14 item 5 — `.mpak` round-trip proof)
+// ---------------------------------------------------------------------
+
+/// The committed f32le similarity document used as the payload, identified
+/// exactly as `FORMAT_SPEC.md` §3 names it (that snippet records this very
+/// `sha256`), with the profile identity from
+/// `fixtures/similarity-doc/MANIFEST.txt`.
+const SIMILARITY_FIXTURE: &str =
+    "experiments/music-similarity-eval/fixtures/similarity-doc/minimal-ok.msim";
+const SIMILARITY_PATH: &str = "analysis/similarity/fixture-v1.msim";
+const SIMILARITY_PROFILE: &str = "musicpack-similarity-fixture-v1";
+const SIMILARITY_SHA256: &str = "abab581082ff61b12916d2065d006df89e6592f560f2edcf6cb81004d7cf5a47";
+const SIMILARITY_FINGERPRINT: [u8; 32] = [
+    0x51, 0xd0, 0xd4, 0xb1, 0x99, 0x7b, 0x75, 0x78, 0xfa, 0x29, 0x0d, 0xcc, 0x2b, 0x89, 0x85, 0x8f,
+    0x25, 0x5b, 0x44, 0x93, 0x02, 0x22, 0x82, 0xa4, 0x37, 0x3b, 0x73, 0xca, 0x6c, 0x2c, 0xbe, 0xee,
+];
+
+/// ADR 0017 §14 item 5: an `.mpak` package can carry a `type = "similarity"`
+/// `analysis[]` entry through draft → build → `canonical_pack_order` →
+/// serialization → parse → integrity verification using the existing
+/// package representation — no new block type, no special parser path.
+#[test]
+fn similarity_analysis_round_trips_through_pack_and_verification() {
+    let temp = TempDir::new("similarity");
+    let root = source_root(&temp);
+    fs::copy(fixture("flac-mono-44k.flac"), root.join("one.flac")).unwrap();
+    let fixture_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(SIMILARITY_FIXTURE);
+    let payload = fs::read(&fixture_path).expect("committed similarity fixture");
+    // The payload is the committed fixture: length and digest pinned by the
+    // format specification, never regenerated here.
+    assert_eq!(payload.len(), 92, "fixture length per MANIFEST.txt");
+    assert_eq!(checksum::sha256_hex(&payload), SIMILARITY_SHA256);
+    fs::write(root.join("similarity.msim"), &payload).unwrap();
+
+    let draft = AuthoringDraft {
+        analysis: vec![DraftAnalysis {
+            kind: "similarity".into(),
+            profile: Some(SIMILARITY_PROFILE.into()),
+            asset: DraftAsset::new(SIMILARITY_PATH, "similarity.msim"),
+        }],
+        ..draft_with(vec![DraftDisc {
+            number: 1,
+            format: None,
+            title: None,
+            tracks: vec![track(1, "One", "audio/01 - One.flac", "one.flac")],
+        }])
+    };
+
+    // draft → build (staging, materialization, manifest write, verify).
+    let out = temp.path().join("Similarity.mpack");
+    let outcome = build_directory(&draft, &root, &out, &BuildOptions::omitting_loudness()).unwrap();
+    assert!(outcome.report.is_ok(), "{:?}", outcome.report.findings());
+
+    // --- A. analysis identity in the built manifest ---
+    let (manifest_bytes, parsed) = read_manifest(&out);
+    let m = parsed.manifest();
+    assert_eq!(m.analysis.len(), 1);
+    let entry = &m.analysis[0];
+    assert_eq!(entry.kind, "similarity");
+    assert_eq!(entry.profile.as_deref(), Some(SIMILARITY_PROFILE));
+    assert_eq!(entry.asset.path, SIMILARITY_PATH);
+    assert_eq!(entry.asset.sha256, SIMILARITY_SHA256);
+    // Canonical bytes are stable under a re-serialization round trip.
+    assert_eq!(
+        m.write_canonical().unwrap().as_bytes(),
+        manifest_bytes,
+        "the similarity entry must survive canonical re-serialization"
+    );
+
+    // --- B. payload identity in the built package directory ---
+    let built_payload = fs::read(out.join(SIMILARITY_PATH)).unwrap();
+    assert_eq!(built_payload, payload, "payload must be byte-identical");
+    // The document header facts the format requires, read from those bytes:
+    // magic, format major, profile fingerprint, dimensions, encoding=f32le.
+    assert_eq!(&built_payload[0..4], b"MSIM");
+    assert_eq!(u16::from_be_bytes([built_payload[4], built_payload[5]]), 1);
+    assert_eq!(built_payload[6], 0);
+    assert_eq!(built_payload[7], 0);
+    assert_eq!(&built_payload[8..40], &SIMILARITY_FINGERPRINT);
+    assert_eq!(
+        u16::from_be_bytes([built_payload[40], built_payload[41]]),
+        4,
+        "dimensions"
+    );
+    assert_eq!(built_payload[42], 1, "vector_encoding = f32le");
+    assert_eq!(built_payload[43], 0, "reserved flags are zero in v1.0");
+
+    // Normal directory validation covers the analysis member's digest too.
+    let dir_report = verify_directory(&out).unwrap();
+    assert!(dir_report.is_ok(), "{:?}", dir_report.findings());
+
+    // --- D. canonical ordering: present exactly once, documented group order,
+    //     digest unchanged; no similarity-specific rule involved. ---
+    let order = canonical_pack_order(m);
+    let in_order: Vec<_> = order
+        .iter()
+        .filter(|(path, _)| *path == SIMILARITY_PATH)
+        .collect();
+    assert_eq!(
+        in_order.len(),
+        1,
+        "the similarity member appears exactly once in canonical pack order"
+    );
+    assert_eq!(in_order[0].1, SIMILARITY_SHA256);
+    // `analysis` is the final group of the existing canonical order.
+    assert_eq!(
+        order.last().expect("non-empty order").0,
+        SIMILARITY_PATH,
+        "documented canonical order: analysis is last"
+    );
+
+    // Real writer: build directory → `.mpak`.
+    let mpak_path = temp.path().join("Similarity.mpak");
+    storage::directory::pack_directory(&out, &mpak_path).unwrap();
+
+    // --- E. no new block type: the container is only INDX/MANF/DATA/TAIL. ---
+    let bytes = fs::read(&mpak_path).unwrap();
+    let mut pos = mpak::HEADER_LEN;
+    let mut block_types: Vec<String> = Vec::new();
+    while pos + mpak::BLOCK_HEADER_LEN <= bytes.len() {
+        block_types.push(String::from_utf8_lossy(&bytes[pos..pos + 4]).into_owned());
+        let payload_len =
+            u64::from_be_bytes(bytes[pos + 4..pos + 12].try_into().expect("8 bytes")) as usize;
+        pos += mpak::BLOCK_HEADER_LEN + payload_len;
+    }
+    assert_eq!(pos, bytes.len(), "block walk must consume the file exactly");
+    for kind in &block_types {
+        assert!(
+            matches!(kind.as_str(), "INDX" | "MANF" | "DATA" | "TAIL"),
+            "unexpected block type {kind:?}: similarity must not need a new one"
+        );
+    }
+    assert!(block_types.iter().any(|kind| kind == "TAIL"));
+    assert!(block_types.iter().any(|kind| kind == "INDX"));
+
+    // --- C. package integrity: SHA-256 + TAIL through the shared verifier. ---
+    let report = storage::mpak::verify_mpak_file(&mpak_path).unwrap();
+    assert!(report.is_ok(), "{:?}", report.findings());
+    assert_eq!(report.errors(), 0);
+
+    // --- Read back through the container backend (parse + payload). ---
+    let backend = storage::mpak::MpakBackend::open_file(&mpak_path).unwrap();
+    let reader = backend.reader();
+    assert!(
+        reader.indx_present() && reader.indx_valid(),
+        "INDX covers the member"
+    );
+    assert!(
+        reader.tail_present() && !reader.tail_malformed(),
+        "TAIL present and well-formed"
+    );
+    assert_eq!(reader.duplicate_members(), 0);
+    // The embedded manifest carries the entry unchanged, byte-identically
+    // with the canonical manifest on disk.
+    assert_eq!(backend.manifest_bytes(), manifest_bytes);
+    let embedded = ParsedManifest::parse(backend.manifest_bytes()).unwrap();
+    let em = embedded.manifest();
+    assert_eq!(em.analysis.len(), 1);
+    assert_eq!(em.analysis[0].kind, "similarity");
+    assert_eq!(em.analysis[0].profile.as_deref(), Some(SIMILARITY_PROFILE));
+    assert_eq!(em.analysis[0].asset.path, SIMILARITY_PATH);
+    assert_eq!(em.analysis[0].asset.sha256, SIMILARITY_SHA256);
+    // The payload itself, byte-for-byte, from the serialized container.
+    let extracted = backend.read_member(SIMILARITY_PATH, 1 << 20).unwrap();
+    assert_eq!(
+        extracted, payload,
+        "container payload must be byte-identical"
+    );
 }
 
 // ---------------------------------------------------------------------
