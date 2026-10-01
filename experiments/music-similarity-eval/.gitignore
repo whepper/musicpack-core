@@ -7,3 +7,7 @@
 *.rten
 *.jsonl
 *.json
+
+# G-7 listening sets — optional/reusable infrastructure, local-only
+# (contains hidden mapping/manifest — never commit)
+/g7-set1/

@@ -44,7 +44,7 @@
 | **G-4** | Does using an ONNX graph through a pure-Rust runtime satisfy the producing project's terms | **open, blocking** |
 | **G-5** | MSRV exception for an inference runtime (1.94 vs 1.85), and whether an ML runtime is permitted in Author | **open, blocking** for any dependency change |
 | **G-6** | Does f16 quantization preserve useful ranking, measured rather than assumed | **open.** The experiment is specified in `FORMAT_SPEC.md` §7.3 with predeclared thresholds; it has not been run and the thresholds have not been agreed |
-| **G-7** | Human listening review of the stratified case set | **open.** No perceptual claim is made anywhere |
+| **G-7** | Human listening review of the stratified case set | **CLOSED 2026-10-01 as a technical release gate** (ADR 0017 §10.5). Listening is optional product feedback, not an acceptance criterion; no perceptual claim is made anywhere |
 | ADR 0016 Slice 0 | The product decision: who asks for similar tracks, on what collection, and what counts as success with no human ground truth | **open, blocking** |
 | ADR 0017 §14 item 5 | `.mpak` round-trip proof through `canonical_pack_order` | **open.** The registration already exists (`src/format/mpak/write.rs:119`); the round-trip test does not |
 | ADR 0017 §14 item 9 | Where a production reader lives | **open.** The recommendation is *not* `musicpack-core` |
@@ -540,7 +540,8 @@ Unchanged by this memo, and unaffected by any of A–D:
   Still blocking for any profile at all.
 - ADR 0016 Slice 0 — the product decision. No user story has been named, so no
   consumer exists for anything this format might eventually carry.
-- G-7 — human listening review. Nothing here is a quality claim.
+- G-7 — human listening review. Nothing here is a quality claim. **Closed as a
+  technical release gate (ADR 0017 §10.5); optional product feedback only.**
 - The `.mpak` round-trip test (ADR 0017 §14 item 5). Note the *registration* is
   already in place: `canonical_pack_order` pushes the `analysis` group
   (`src/format/mpak/write.rs:119`). What is missing is the test, not the code —

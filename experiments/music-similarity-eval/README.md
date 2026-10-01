@@ -62,6 +62,152 @@ cargo test --manifest-path experiments/music-similarity-eval/Cargo.toml docfmt
 never run by CI: the committed bytes are the contract, and the test suite requires
 the committed bytes and the encoder to agree.
 
+## G-6: f16 versus f32 ranking equivalence
+
+[`G6_F16.md`](G6_F16.md) is a **numerical experiment, not a decision**. It asks
+one question: does storing a similarity vector as binary16 instead of the
+reference binary32 change rankings beyond a predeclared tolerance?
+
+Its acceptance criteria were written into `FORMAT_SPEC.md` §7.3 *before* the
+experiment existed and are used verbatim; C7–C10 were added in `G6_F16.md` §2
+before any run. The verdict is **FAIL** against two of the ten, and §9.2 shows
+that both failures are threshold-formulation problems rather than evidence
+against f16 — the reference f32 world fails C2 identically, and every C6 reversal
+crossed a reference margin an order of magnitude below the f16 noise floor.
+
+G-6 remains **OPEN**. Nothing here changes the reference encoding, which stays
+`f32le`.
+
+```sh
+# the full report, printed
+cargo run --manifest-path experiments/music-similarity-eval/Cargo.toml --bin g6
+
+# regenerate the committed artefact
+cargo run --manifest-path experiments/music-similarity-eval/Cargo.toml \
+  --bin g6 -- --out experiments/music-similarity-eval/fixtures/g6
+
+# the experiment's tests (determinism, instrument sanity, artefact agreement)
+cargo test --manifest-path experiments/music-similarity-eval/Cargo.toml g6
+```
+
+The corpus is a deterministic **surrogate** — 45 tracks in 15 clusters at 1280
+dimensions, generated from a SHA-256 counter-mode stream — because the recorded
+Discogs-EffNet run outputs are not in this repository. That limitation is
+recorded in `G6_F16.md` §3 before the run, and §10 states the mechanical step
+that would resolve it. No model, audio, CLAP or inference is involved.
+
+### G-6A — review of the acceptance criteria
+
+[`G6A_CRITERIA_REVIEW.md`](G6A_CRITERIA_REVIEW.md) assesses whether C1–C10 were
+the right instruments. The G-6 verdict is unchanged — **FAIL, keep f32** — because
+the experiment found that **C2 and C6 failed for reasons unconnected to f16**:
+C2 is a statement about the corpus that the *unmodified f32 reference* also
+fails, and every one of C6's reversals sat inside the quantization noise floor,
+below a resolvability bound derived from binary16's significand width.
+
+The proposed revised set (`R-A*`, `R-B*`, `R-C*`) separates numerical fidelity,
+retrieval fidelity and representational safety, derives every threshold from
+binary16's structure rather than from the observed result, and is **stricter**
+than the original wherever the reference can resolve a difference. One property —
+whether quantization demotes similar tracks below a relevance threshold — is
+**not definable yet**, because no relevance threshold exists; that is recorded as
+an open product decision rather than filled with an invented number.
+
+G-6A changes no code, re-runs nothing, and leaves the closed format gate
+untouched. The proposed criteria require human approval and a real-corpus run
+before any G-6 re-run.
+
+### G-6B — reconciled methodology and corrected instrument
+
+[`G6B_METHODOLOGY.md`](G6B_METHODOLOGY.md) reconciles the G-6A criteria with
+the independent review ([`G6A_GLM_REVIEW.md`](G6A_GLM_REVIEW.md)) and defines
+the methodology for the final real-corpus re-run. The G-6 verdict is unchanged
+— **FAIL, keep f32** — and the historical artefacts are untouched.
+
+Two corrections carry the document. First, the **instrument**: the historical
+pairwise metrics quantized only one operand of each pair, while the declared
+experiment (and the architecture: a similarity query is itself a stored track
+vector, ADR 0017 §5.8) puts **both** operands through the f16 storage path.
+`src/g6b.rs` measures the symmetric regime and carries the historical mixed
+regime alongside; the correction is 1.52×/1.53×/1.29× at 1280/512/16
+dimensions. `src/g6.rs` is deliberately untouched so the committed G-6
+artefact keeps matching the code that produced it. Second, the **methodology**:
+a numerical error bound is never used to decide that an ordering change does
+not matter. Retrieval events are recorded unconditionally — the verified
+f32-ULP flip (f32 distinguishes two candidates, f16 reverses them, the
+presented top-1 changes, 712× inside the old floor) is committed as a
+deterministic reproduction in `g6b::ulp_flip_case`.
+
+Seven frozen gates result (B-A1/A2 numerical, B-B1/B2 retrieval identity at
+k ∈ {1,5,10,12,20}, B-C1/2/3 profile safety), each with a threshold that is a
+theorem or a definition; six product decisions are recorded rather than
+invented. `fixtures/g6b/REPORT.txt` is an **instrument check only** — the
+same-data prohibition (§14) forbids evaluating the criteria against the
+surrogate that motivated the G-6A repair.
+
+Status: **`G-6B: READY FOR REAL-CORPUS RUN`**. The instrument is complete:
+the B-C1/B-C2/B-C3 profile measurements, the album-level k=12 comparison over
+per-world recomputed aggregates, the frozen seven-gate evaluator, and the
+real-corpus runner (`--bin g6b_real`) with per-track digest verification and
+the §17.5 criteria-freeze check (see §18 of the methodology and
+`G6B_IMPLEMENTATION.md`). The real-corpus experiment (§13: four corpora —
+{multi, release} × {hop 61, 62} — read from recorded `embeddings.json`, pure
+post-processing, no inference) has now been run as G-6C (below).
+
+### G-6C — real-corpus evaluation: FAIL, keep `f32le`
+
+The real-corpus run is complete
+([`G6C_EVALUATION_RESULTS.md`](G6C_EVALUATION_RESULTS.md)). The two hop-62
+`embeddings.json` files were recovered exact; the two hop-61 vector sets were
+recovered digest-verified (45/45) from historical `neighbors.json` and
+re-containerized per the admissibility review
+([`G6C_ADMISSIBILITY_REVIEW.md`](G6C_ADMISSIBILITY_REVIEW.md)); both
+reconstructions were independently verified before any evaluator run
+(forensics: [`G6C_ARTIFACT_FORENSICS.md`](G6C_ARTIFACT_FORENSICS.md)).
+
+Result under the frozen semantics: **FAIL**. Multi/1280-D passed 7/7 on both
+hops; release/512-D failed B-B2 on both hops — f16 storage changes presented
+ordered sequences the f32 reference resolves (a top-5 order change at 15
+ULPs, a top-20 boundary crossing at 57 ULPs, an album top-12 order change at
+11 ULPs). All numerical gates pass everywhere (worst `|Δcos|` 3.27e-5, ~30×
+inside the ceiling); top-1 holds 45/45 on all corpora. Two independent runs
+were byte-identical (exit 1 both, fail-closed).
+
+Three things, kept distinct: numerical deviations were small; they were still
+sufficient to change ordered retrieval results for the release profile; and
+because the frozen semantics require exact ordered retrieval identity,
+**similarity vectors remain stored as `f32le`**. This is scoped to the tested
+release/512-D profile under exact-identity semantics — not a claim that f16
+is inaccurate in general, and the multi/1280-D PASS is evidence within a
+failed run, not an approval. G-6C is closed; no G-6D is planned. G-7 is
+**closed as a technical release gate** (see below); licensing gates G-1…G-4
+remain open, as do the ADR 0017 product decisions (D-1…D-6); the similarity
+feature is not production-ready.
+
+## G-7: human listening review — closed as a technical release gate
+
+**G-7 is CLOSED (2026-10-01) as a technical release gate.** Human listening
+validation is not required for technical acceptance. The full disposition is
+recorded in ADR 0017 §10.5:
+
+- Discogs-EffNet's established model evaluation (the creators' own, ISMIR 2022)
+  is accepted as evidence about the underlying model.
+- MusicPack's own validation (determinism, dimensions, reproducibility,
+  retrieval, cross-hop and cross-codec stability, top-1 stability, numerics,
+  f32 precision, server index/query, `.mpak` round-trip) covers the
+  implementation and integration risks.
+- Optional human listening may still be performed later as product-quality
+  feedback; it must not block the technical implementation.
+- MusicPack does **not** claim to have independently validated the model's
+  scientific quality. No perceptual or quality claim is made anywhere in this
+  repository.
+
+The listening infrastructure in this directory (`MANUAL_REVIEW.md`,
+`BLIND_REVIEW.md`, `SANITY_REVIEW.md`, `STRATIFIED_SANITY.md`, and the
+gitignored `g7-set1/`) is **preserved as optional, reusable experiment
+infrastructure**. It is not a release gate, and no ratings exist or are
+required.
+
 ## Scope
 
 The experiment may:

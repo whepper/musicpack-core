@@ -783,6 +783,9 @@ owner — resolved; no personal name per repository convention. The decision:
   No numerical quality threshold; cosine values and benchmark metrics do not
   substitute for the listening criterion. G-7 remains the evaluation
   mechanism.
+  *(Amended 2026-10-01: G-7 is closed as a technical release gate — ADR 0017
+  §10.5. Listening remains optional product-quality feedback under this
+  criterion; it no longer blocks technical acceptance.)*
 - **Commercial scope:** MusicPack is primarily an open-source, self-hosted
   project; commercial or hosted use is not currently a target product
   requirement. This prohibits nothing and promises nothing — future
@@ -857,8 +860,9 @@ core without that decision, and `ort` is not an acceptable shortcut.
 1. Is “find acoustically related tracks/albums” a real user problem in the
    self-hosted collection, or was Sonic only an aspirational historical feature?
    (Partly answered 2026-09-28 by the Slice 0 product decision: the capability
-   is wanted as optional Player discovery. Whether results are *useful* is
-   still G-7, wide open.)
+   is wanted as optional Player discovery. Whether results are *useful* was
+   G-7; G-7 is closed as a technical release gate (ADR 0017 §10.5), and
+   product usefulness feedback remains optional.)
 2. What corpus and human/quantitative quality bar make a descriptor useful
    enough to expose? The historical OpenL3/Discogs results cannot be reused as
    a guarantee for a new profile.

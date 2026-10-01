@@ -1,7 +1,7 @@
 # Music Similarity Evaluation Spike — Findings and Evidence Record
 
 - **Date:** 2026-09-25
-- **Status:** Phase-2 worksheet, patch-hop sensitivity, and cross-codec diagnostics complete; human review and product decision remain open.
+- **Status:** Phase-2 worksheet, patch-hop sensitivity, and cross-codec diagnostics complete; the product decision is resolved (ADR 0017 §14 item 2) and G-7 is closed as a technical release gate (ADR 0017 §10.5, 2026-10-01). The evidence record below is preserved unchanged; the listening infrastructure it describes is optional, reusable experiment infrastructure.
 - **Scope:** Isolated empirical evaluation only. This document does not authorize a production dependency, `.mpack` change, API, Server, Author, Web, Player, or Sonic change.
 
 ## 1. Repository and toolchain findings

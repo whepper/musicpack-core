@@ -1,5 +1,10 @@
 # Stratified qualitative sanity check
 
+> **Status: preserved optional infrastructure, not a release gate.** G-7 is
+> closed as a technical release gate (ADR 0017 §10.5, 2026-10-01). This
+> procedure is retained as reusable experiment infrastructure for optional
+> product-quality feedback. No ratings exist and none are required.
+
 A small, deliberately stratified listening review. It answers one question:
 
 > Does our MusicPack integration produce plausibly useful similar-track results

@@ -13,8 +13,9 @@
 > artefacts are a reference codec and a fixture set inside the excluded
 > experiment crate, which exist so the bytes can be checked rather than believed.
 >
-> **G-6 (f16 vs f32), G-1…G-5 (licensing, MSRV) and G-7 (human review) are all
-> still open.** Nothing in this document closes them.
+> **G-6 (f16 vs f32) and G-1…G-5 (licensing, MSRV) are still open.** G-7
+> (human review) is **closed as a technical release gate** (ADR 0017 §10.5).
+> Nothing in this document closes any of them.
 >
 > It is the deliverable of ADR 0017 §14 item 5a
 > ("Similarity document format spec and reference vectors, reviewable without a
@@ -23,7 +24,8 @@
 >
 > **This document does not claim that music similarity works.** It describes a
 > container for numbers produced by a profile. Whether those numbers are
-> perceptually meaningful is unvalidated (ADR 0017 §2.2, §7.3, gate G-7).
+> perceptually meaningful is not validated by MusicPack and is not required for
+> technical acceptance (ADR 0017 §2.2, §7.3, §10.5).
 
 ---
 
@@ -491,8 +493,9 @@ and the format is unchanged. There is no third outcome in which a document is
 silently rewritten.
 
 **What this gate is not:** it says nothing about whether either encoding produces
-*perceptually* meaningful neighbours. That is G-7, it needs human review, and no
-fixture in this directory speaks to it.
+*perceptually* meaningful neighbours. That question belonged to G-7, which is
+closed as a technical release gate (ADR 0017 §10.5); no fixture in this
+directory speaks to it.
 
 ### 7.4 The binary16 conversion rule
 
@@ -1087,7 +1090,7 @@ format gate, and none may be treated as settled:
 | 1 | **G-1…G-4 licensing** (non-commercial meaning, embedding redistribution, dataset terms, AGPL) | **open, blocking.** No profile can be supported until answered |
 | 2 | **G-5 MSRV and dependency policy** for an inference runtime | **open, blocking** for any dependency change |
 | 3 | **G-6 f16 vs f32** (§7.3) | **open.** The experiment is specified; it has not been run and the predeclared thresholds have not been agreed |
-| 4 | **G-7 human listening review** | **open.** No perceptual claim is made anywhere |
+| 4 | **G-7 human listening review** | **CLOSED 2026-10-01 as a technical release gate** (ADR 0017 §10.5). No perceptual claim is made anywhere |
 | 5 | **ADR 0016 Slice 0** — the product decision | **open, blocking.** No user story, therefore no consumer for anything in this format |
 | 6 | **An album aggregate** (§9) | **deferred.** Requires a future decision covering all seven items in §9 |
 | 7 | **`.mpak` round-trip proof** through `canonical_pack_order` | **open** (ADR 0017 §14 item 5). The registration already exists at `src/format/mpak/write.rs:119`; the round-trip **test** does not |

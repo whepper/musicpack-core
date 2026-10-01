@@ -15,8 +15,10 @@
   schema v12, `4ef0e65`); `.mpak` round-trip proof (`tests/package_build.rs`,
   `5ac1d76`). §14 items 2, 3 (as a scoped exception), 4, 5, 5a (as built, not
   only specified), 6, and 9 are now closed; items 1, 7, and 8 remain open.
-  Licensing G-1…G-4 still block any *supported* profile; G-7 still blocks any
-  quality claim.
+  Licensing G-1…G-4 still block any *supported* profile. **G-7 is CLOSED
+  (2026-10-01) as a technical release gate** — human listening validation is not
+  required for technical acceptance; see §10.5. No quality claim is made
+  anywhere in this repository.
 - **Decision type:** Architecture boundary, format extension, and licensing gate
 - **Production impact:** None from this document. No dependency, schema, format,
   API, UI, or runtime behaviour is changed by this ADR. It supersedes and
@@ -55,7 +57,10 @@
 8. **No approximate-nearest-neighbour index.** Exact cosine over a
    profile-partitioned table, revisited only on a measured threshold.
 9. **Similarity quality is not claimed.** The representation is deterministic and
-   stable under the tested conditions; perceptual relevance is unvalidated.
+   stable under the tested conditions; perceptual relevance is not validated, and
+   no independent validation of the model's scientific quality is claimed. G-7
+   (human listening review) is **closed as a technical release gate** (§10.5):
+   listening is optional product-quality feedback, not an acceptance criterion.
 10. **Sonic stays retired.** Nothing here revives it, converts its vectors, or
     reuses its runtime.
 
@@ -90,6 +95,13 @@ no external service. Measured results, in the narrow scope of that experiment:
 - **Cross-codec stability was sampled, not proven.** Five pairs per configuration
   is a signal, not a contract.
 - **Licence terms are unresolved** (§10).
+
+> **G-7 disposition (2026-10-01).** The absence of human ground truth is
+> recorded above as a fact about this research, not as an open gate. G-7 is
+> **closed as a technical release gate** (§10.5): the model creators' established
+> evaluation is accepted as evidence about the underlying model, MusicPack's own
+> validation covers the implementation/integration risks, and optional human
+> listening may still be performed later as product-quality feedback.
 
 ### 2.3 Why the mechanism is worth defining despite 2.2
 
@@ -772,12 +784,15 @@ descriptors.
   representation is `f32le`; `f16le` documents parse but are refused for
   retrieval. The f16 storage figures above are historical estimates, not a
   plan.)
-- The quality of any shipped profile is unvalidated pending human review.
+- The quality of any shipped profile is not validated by MusicPack. G-7 is
+  **closed as a technical release gate** (§10.5): human listening is optional
+  product-quality feedback, not an acceptance criterion, and no quality claim
+  is made.
 
 ### 7.3 What this does not claim
 
 - It does not claim music similarity "works" perceptually. No human ground truth
-  exists.
+  exists, and none is required for technical acceptance (§10.5).
 - It does not claim cross-codec stability as a contract; five sampled pairs per
   configuration is a signal.
 - It does not claim any model is better than another. The experiment's models
@@ -920,13 +935,47 @@ path proceeds on the mechanism alone.
 | **G-4** | Does using an ONNX graph through a pure-Rust runtime satisfy the producing project's terms, without the AGPL-oriented library? | Production use of the artefact |
 | **G-5** | MSRV exception for an ONNX runtime in a production crate (1.94 vs 1.85), and is an ML runtime permitted under `AGENTS.md`? | Any dependency change |
 | **G-6** | Does f16 quantization preserve useful ranking, measured rather than assumed? | Adopting f16 |
-| **G-7** | Human listening review of the stratified case set | Any user-facing quality claim |
+| **G-7** | Human listening review of the stratified case set | Any user-facing quality claim. **CLOSED 2026-10-01 as a technical release gate** (§10.5): not required for technical acceptance; optional product feedback only |
 
 G-1, G-2, G-3, and G-4 require qualified legal review. **Until G-1 through G-4
 have answers, Discogs-EffNet cannot be a supported or default MusicPack profile
 and the capability cannot be a documented MusicPack feature.** It may exist as an
 opt-in, operator-supplied, explicitly experimental capability — the posture the
 experiment already took.
+
+### 10.5 G-7 disposition (recorded 2026-10-01)
+
+**G-7 is CLOSED as a technical release gate.** Human listening validation is not
+required for technical acceptance of the similarity implementation or of any
+Discogs-EffNet profile. The disposition, in five parts:
+
+1. **Human listening validation is not required for technical acceptance.** The
+   technical gates are the licensing gates G-1…G-4, the format gate (closed), the
+   product decision (resolved), G-5 (resolved), and G-6 (closed as KEEP F32LE).
+   A 15- or 20-track subjective listening study would revalidate the model, not
+   the implementation.
+2. **Discogs-EffNet's established model evaluation is accepted as evidence about
+   the underlying model.** Discogs-EffNet is an established, published
+   music-similarity model (Alonso-Jiménez, Serra & Bogdanov, ISMIR 2022) whose
+   creators have already evaluated it. That evaluation is accepted as evidence
+   about the model itself.
+3. **MusicPack's own validation covers the implementation/integration risks.**
+   Determinism, embedding dimensions, reproducibility, cosine retrieval,
+   cross-hop stability, cross-codec stability, top-1 stability, numerical
+   behavior, f32 precision, server indexing/query behavior, and the `.mpak`
+   similarity-document round-trip are measured and recorded. These are the risks
+   MusicPack can control.
+4. **Optional human listening may be performed later as product-quality
+   feedback.** It must not block the technical implementation. The listening
+   infrastructure (`MANUAL_REVIEW.md`, `BLIND_REVIEW.md`, `SANITY_REVIEW.md`,
+   `STRATIFIED_SANITY.md`, `g7-set1/`) is preserved as optional, reusable
+   experiment infrastructure.
+5. **MusicPack does not claim to have independently validated the model's
+   scientific quality.** No user-facing quality claim is made anywhere in this
+   repository.
+
+This disposition changes no technical result and closes no licensing gate.
+G-1…G-4 remain open and blocking for any *supported* profile.
 
 ## 11. Relationship to ADR 0016
 

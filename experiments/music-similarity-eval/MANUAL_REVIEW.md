@@ -1,5 +1,11 @@
 # Manual similarity review
 
+> **Status: preserved optional infrastructure, not a release gate.** G-7 is
+> closed as a technical release gate (ADR 0017 §10.5, 2026-10-01). This
+> procedure and the worksheet below are retained as reusable experiment
+> infrastructure for optional product-quality feedback. No ratings exist and
+> none are required.
+
 The review worksheet is generated outside Git because it contains local paths
 and metadata. Generate one for each patch-hop configuration with:
 
