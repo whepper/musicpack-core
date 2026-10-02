@@ -612,6 +612,16 @@ impl Sonic52ReferenceNetwork {
     /// are enforced by construction ([`Sonic52MelPatch`] is 187×96 by
     /// type, so no runtime shape check is needed here).
     pub fn forward(&self, patch: &Sonic52MelPatch) -> Result<[f32; 52], ForwardError> {
+        Ok(self.forward_detailed(patch)?.embedding)
+    }
+
+    /// Forward evaluation exposing the pre-sigmoid 52-D logits alongside
+    /// the embedding. Research-safe wiring for the BCE-with-logits
+    /// oracle (Slice 6/7): the logits exist only as a training-
+    /// mathematics input, never as a persisted representation — the
+    /// stored embedding stays the post-sigmoid output (Slice 4
+    /// contract, unchanged).
+    pub fn forward_detailed(&self, patch: &Sonic52MelPatch) -> Result<ForwardDetail, ForwardError> {
         let tensor = mel_patch_to_tensor(patch)?;
         let convolved = conv2d_valid(&tensor, &self.conv, &self.conv_weights, &self.conv_bias)?;
         check_finite(&convolved.data)?;
@@ -623,9 +633,14 @@ impl Sonic52ReferenceNetwork {
         let logits = self.dense_output.forward(&hidden)?;
         check_finite(&logits)?;
         let activated = sigmoid_slice(&logits);
-        let mut output = [0.0f32; DENSE_OUTPUT];
-        output.copy_from_slice(&activated);
-        Ok(output)
+        let mut logits_out = [0.0f32; DENSE_OUTPUT];
+        logits_out.copy_from_slice(&logits);
+        let mut embedding = [0.0f32; DENSE_OUTPUT];
+        embedding.copy_from_slice(&activated);
+        Ok(ForwardDetail {
+            logits: logits_out,
+            embedding,
+        })
     }
 
     /// One 52-D vector per patch, in order.
@@ -635,6 +650,19 @@ impl Sonic52ReferenceNetwork {
     ) -> Result<Vec<[f32; 52]>, ForwardError> {
         patches.iter().map(|patch| self.forward(patch)).collect()
     }
+}
+
+/// Pre-sigmoid logits alongside the post-sigmoid embedding from one
+/// forward evaluation. The logits feed the BCE-with-logits oracle; the
+/// embedding is the persisted representation. Keeping both visible (and
+/// separately digested) is what makes the loss wiring auditable instead
+/// of accidental.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForwardDetail {
+    /// Raw `Dense(52)` outputs (training mathematics only).
+    pub logits: [f32; 52],
+    /// Post-sigmoid outputs in [0, 1] (the stored representation).
+    pub embedding: [f32; 52],
 }
 
 /// Aggregates 52-D reference vectors with a Slice 3 aggregation into a

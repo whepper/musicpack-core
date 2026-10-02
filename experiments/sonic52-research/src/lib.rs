@@ -41,10 +41,22 @@ pub mod corpus;
 pub mod experiment;
 /// Slice 1 deterministic H0 log-mel frontend.
 pub mod frontend;
+/// Slice 9 deterministic backpropagation (gradients only, no updates).
+pub mod gradient;
 /// Slice 2 real-audio ingestion: decode → sanitize → downmix → resample.
 pub mod ingest;
 /// Slice 4B tiny 52-D reference network (plumbing only, untrained).
 pub mod network;
+/// Slice 7 learning objective & training design (formulation only, no training).
+pub mod objective;
+/// Slice 8 deterministic training sample + forward pipeline (no learning).
+pub mod sample;
+/// Slice 6 training-readiness gate: dataset/model/weight/loss/eval contracts.
+pub mod training;
+/// Slice 11 deterministic multi-step loop (scaffolding only, no trainer).
+pub mod trajectory;
+/// Slice 10 deterministic SGD update (one step, no loop).
+pub mod update;
 
 // ---------------------------------------------------------------------
 // profile identity

@@ -311,6 +311,196 @@ deterministic manifest per run:
 **Reference-vector digests demonstrate reproducible plumbing, not
 embedding quality.**
 
+## Slice 6: training-readiness gate (`src/training.rs`, ADR 0019)
+
+The complete deterministic contract Slice 7 needs — **no training
+implemented** (no gradients, optimizers, loops, checkpoints, learned
+weights, corpus, or quality evaluation):
+
+- **Dataset manifest** (`sonic52-dataset-v1`): metadata+identity only,
+  rows sorted by track id, duplicate/missing-metadata rejection,
+  canonical serialization + digest. Identity levels kept separate:
+  source, dataset, preprocessing, sample, model, weight.
+- **Sample identity**: SHA-256 over
+  dataset|version|track|preprocessing|patch-index — path-, order-,
+  timing-independent; version-sensitive (leak detection relies on it).
+- **Splits/leakage** (`split-v1`): deterministic hash-bucket assignment
+  (version participates, ratios validated); one track one split by
+  construction; cross-manifest leakage detector. Track-level separation
+  is the minimum — artist/album relations explicitly out of scope.
+- **Model contract**: decided fields (52-D, sigmoid, hidden 200 + relu
+  as S1-reported, Mean aggregation as v1 choice) beside explicit
+  `undecided` fields (conv config, normalization, …); `is_complete()`
+  is false by design. Reference network stays a plumbing artifact.
+- **Weight contract** (`sonic52-weights-v1`): named tensors, shape/dtype/finiteness validation, canonical bytes, digest.
+  No learned weights exist.
+- **Loss oracle**: numerically stable binary cross-entropy with logits
+  (f64 accumulation), hand golden `ln(2)`, full rejection vocabulary.
+  Assumes multi-label sigmoid outputs (lineage formulation) — a
+  softmax future would supersede, not reuse, it.
+- **Provenance gate**: eligible-with-id admitted; excluded/unknown
+  fail closed. No corpus downloaded, no licences invented.
+- **Evaluation pre-registered** (`sonic52-eval-v1`): held-out
+  disjointness validator, fixed pipeline steps, human-listening
+  *procedure* (not performed), Discogs-EffNet baselines named but never
+  invoked, 52/128 arms open with no superiority claim.
+- **Slice 7 boundary**: explicit MAY / MUST-NOT-REDEFINE lists.
+
+## Slice 7: learning objective & training design (`src/objective.rs`)
+
+What Sonic52 should learn, and the smallest defensible training
+design — **formulation only, no training** (no optimizer, loops,
+checkpoints, learned weights, corpus, or quality claims):
+
+- **Candidates**: multi-label BCE-52 (retained v1 assumption: lineage
+  formulation + only head compatible with reported sigmoid outputs),
+  triplet / supervised-contrastive / classification-derived as
+  documented alternatives blocked on pair/label data. Identity +
+  target/output compatibility checked per objective.
+- **Target semantics**: six relationship candidates, each with its
+  stated shortcut risk (artist→production fingerprints,
+  genre→vocabulary boundaries, …). No target selected.
+- **BCE assumption audit**: why sigmoid⊗BCE fits multi-label duty;
+  test-only softmax comparison proving what changes; logits vs
+  sigmoid-embedding decision (persist sigmoid — training target ≡
+  stored representation); post-aggregation normalization UNDECIDED.
+- **Synthetic validation**: deterministic 2-sample toy with hand
+  golden (≈1.078215), nonzero-gradient check, central-difference
+  agreement with hand-derived gradients to 1e-7 (formulation check —
+  no autodiff built, no parameter ever updated), f32-oracle-vs-f64
+  agreement.
+- **Experiment matrix** (5 arms, mostly unrun): v1 baseline, width-128,
+  agg variant, triplet/classification documented-blocked.
+- **Dataset requirements** per objective (labels, pairs, leakage,
+  imbalance, licensing via the Slice 6 gate — no dataset invented).
+- **Framework deferred**: no stack justifiable yet; production
+  no-heavyweight-runtime constraint stands; any future trainer must
+  export frozen weights through the Slice 6 weight contract.
+- **Reproducibility**: `TrainingRunManifest` (dataset/digest,
+  preprocessing, arch, init, seed, objective, augmentation, optimizer,
+  schedule, batch, budget, toolchain, weights, eval digests) with
+  per-axis identity tests; explicit validation frontier
+  (`VALIDATION_TABLE`) marking what needs learned weights.
+
+## Slice 8: deterministic training sample + forward pipeline (`src/sample.rs`)
+
+Sample → forward → target → loss proven correct before any learning
+exists — still no gradients, optimizer, loops, checkpoints, or learned
+weights:
+
+- **Sample representation**: manifest row + [`training_sample_id`]
+  (Slice 6 chain) + input tensor + synthetic target; identity carries
+  no paths, timestamps, host facts, or ordering.
+- **Selection**: manifest order, optional split filter + track cap,
+  patch indices `0..patch_count`; `SampleSelection` digest joins the
+  scientific identity. Filesystem/hash-map/random order impossible by
+  construction.
+- **Preprocessing**: existing decoder → H0 frontend → v1 layout,
+  unchanged and un-duplicated; chunking-independent as proven before.
+- **Reference network**: frozen Slice 4 weights plus a research-safe
+  `forward_detailed` exposing pre-sigmoid **logits** beside the
+  embedding (persisted representation stays post-sigmoid). Logits feed
+  the BCE oracle; embeddings persist — wiring auditable, not accidental.
+- **Synthetic target** (`synthetic-rule-v1`): 52 bits of a sample-bound
+  digest as 0/1 — deterministic, dimension-correct, BCE-valid. Never
+  artist/album/genre/tag metadata; rule id recorded in every trace.
+- **Track view**: per-patch traces + v1 Mean aggregate + mean patch
+  loss; zero patches → `None`/`None` (Slice 5 null-policy preserved).
+- **Forward trace**: dataset/sample/track/patch/network/weight/logit/
+  embedding/target identities + digests + loss, printable, path-free.
+- **Training-example identity**: dataset, version, selection, sample,
+  preprocessing, model, weight, objective, target axes — each proven
+  to change it; timing/host/path have no fields.
+- End-to-end golden (3 s sine → 1 patch → loss ≈ 0.8226401) pinned
+  after intermediate verification (patch digest recomputed, loss
+  recomputed from the oracle directly) across debug/release/1.85.
+
+## Slice 9: deterministic backpropagation (`src/gradient.rs`)
+
+Gradients only — **no parameter is ever updated**. Explicit analytical
+derivatives (no autodiff system) for the fixed reference topology,
+chosen because the network is tiny enough to audit by hand:
+
+- **Equations** (documented in code): BCE-mean `dL/dz=(σ(z)−t)/52`
+  (Slice 8 reduction preserved; logits-direct, no double-sigmoid —
+  proven by an independent recomputation test); ReLU 1/0 with 0→0;
+  dense `dW=dy⊗x, db=dy, dx=Wᵀdy`; valid strided conv transpose with
+  the forward's exact layout. Track gradients are the mean of
+  per-patch gradients (adjoint of mean-of-losses, proven by test).
+- **Ordering**: `conv.weight/bias, dense200.weight/bias,
+  dense52.weight/bias` — fixed, hashed into the gradient digest.
+- **Validation**: exact tiny goldens (dense 1×1, conv dW/db/dIn,
+  flatten order, ReLU zero, sigmoid-vs-f64); scatter-vs-gather conv
+  agreement; central-difference checker (eps 1e-3, documented) over
+  29 representative parameters (first/middle/last + interior per
+  tensor): max abs 3.2e-3, max rel 1.4e-2 — dense layers at pure
+  rounding noise (~1e-5), conv max consistent with ReLU-kink exposure
+  (conv perturbations fan out to all 200 hidden units; dense52 touches
+  no ReLU mask at all, matching the observed error ordering).
+- **Identity/serialization**: `grad-v1` canonical form + digest;
+  `SG01` research-only serialization with full validation
+  (unknown/duplicate/missing/shape/non-finite/trailing rejected).
+  `GradientRecord` binds sample/weight/objective/gradient digests.
+- **Null policy**: zero patches → explicit error, never zero
+  gradients. Non-finite params/gradients rejected, never sanitized
+  (audio sanitization stays at audio boundaries).
+- All Slice 8 forward/loss goldens byte-identical (forward untouched
+  except an additive logits accessor).
+
+## Slice 10: deterministic SGD update (`src/update.rs`)
+
+One plain-SGD step over the trusted chain — **no loop, no learning**:
+`updated[i] = parameter[i] − lr × gradient[i]`, f32, canonical order,
+functional semantics (inputs untouched):
+
+- Optimizer `sonic52-optimizer-sgd-v1` (research choice, not Plex
+  evidence); positive-finite `LearningRate` only (NaN/Inf/zero/
+  negative rejected — zero would mint distinct identities for
+  identical states); no momentum/schedules/decay/clipping.
+- `ParameterState`: exactly the six canonical tensors, validated
+  (names, order, shapes, finiteness); built from the reference network
+  or by hand for tiny goldens (scalar 2−0.1·0.5=1.95 exact-checked
+  against f64; negative/zero-gradient behavior; f64-ordered
+  independent reference over mixed tensors, element-exact).
+- `UpdateRecord` binds optimizer/initial/gradient/lr-bits/updated
+  digests; lr identity is raw f32 bits, so every axis provably changes
+  the identity. `SP01` state serialization reuses the Slice 9 byte
+  codec (distinct magic; round-trip + full rejection taxonomy).
+- Full-network golden (reference weights + Slice 9 gradients, lr 0.01):
+  digest pinned, debug ≡ release ≡ MSRV; count 13,922,692 and shapes
+  preserved; all finite; repeated runs byte-identical.
+- All Slice 8/9 goldens byte-identical (forward/gradient code
+  untouched except an additive codec refactor proven by unchanged
+  round-trip tests).
+
+## Slice 11: deterministic multi-step loop (`src/trajectory.rs`)
+
+Loop scaffolding over the trusted chain — **no trainer, no learning**:
+explicit `for each sample: forward → loss → gradients → SGD` with
+per-step provenance. Step 0 is the initial state; step N (1-based) is
+the state after the Nth update.
+
+- Two entries, one chaining core: precomputed `(state, gradients)`
+  steps (tiny-reference checks) and the real path (gradients derived
+  through Slice 9 `backward`); both enforce identical chaining,
+  identity, and null-policy semantics.
+- One-step loop over the Slice 10 golden inputs is byte-identical to
+  the Slice 10 digest (`37a27fee…`) — composition proven, no new golden.
+- Multi-step trajectory (3 formula patches/targets, lr 0.01) pinned
+  (`20886ce2…`); repeated runs structurally identical; provenance
+  chain verified link by link (each step consumes the previous
+  updated digest, anchored at the initial digest).
+- Independent tiny reference (f64 scalar loops, different code shape)
+  reproduced exactly modulo documented f32/f64 accumulation tolerance.
+- Empty loop is a valid no-op (final == initial, zero steps).
+  Zero-patch tracks stay errors, never zero gradients. Non-finite
+  params/grads, shape mismatches, and bad updates fail closed naming
+  their step. Initial state provably unmutated.
+- Trajectory identity binds initial/selection/optimizer/lr digests +
+  ordered step records (sample, loss-bits, update provenance); sample
+  order, lr, initial state, sample identity, and selection each proven
+  to change it. Timings/hosts/paths/PIDs absent by construction.
+
 ## Future experiment contract (documented, not implemented)
 
 ```
