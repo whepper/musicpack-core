@@ -109,8 +109,11 @@ Licensing posture, stated plainly because it constrains use:
   clarification resolves them. This profile is optional and experimental;
   similarity stays optional end to end.
 - Precision: deterministic `f32le` output (G-6 closed as KEEP F32LE).
-  G-7 (human listening review) remains open: technical completeness claims
-  nothing about musical usefulness.
+  G-7 (human listening review) is closed as a technical release gate (ADR
+  0017 §10.5): technical completeness claims nothing about musical
+  usefulness, and MusicPack does not claim to have independently validated
+  the model's scientific quality. Optional human listening may still be
+  performed as product-quality feedback.
 
 ## Toolchain scope (G-5: PASS WITH SCOPED EXCEPTION)
 

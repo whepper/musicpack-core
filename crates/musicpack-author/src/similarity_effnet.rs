@@ -24,8 +24,11 @@
 //!   responsible for complying with the applicable model license.
 //! - The profile is optional and experimental until G-1…G-4 are resolved by
 //!   qualified review. Similarity itself stays optional end to end.
-//! - G-7 (human listening review) remains open: technical completeness
-//!   claims nothing about musical usefulness.
+//! - G-7 (human listening review) is closed as a technical release gate
+//!   (ADR 0017 §10.5): technical completeness claims nothing about musical
+//!   usefulness, and MusicPack does not claim to have independently validated
+//!   the model's scientific quality. Optional human listening may still be
+//!   performed as product-quality feedback.
 //!
 //! # Provenance
 //!
