@@ -1,0 +1,15 @@
+[package]
+name = "sonic52-research"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Sonic52 independent similarity-model research scaffold (research only: no weights, no training, no inference, no production wiring)"
+license = "BSD-3-Clause"
+publish = false
+
+# Standalone research crate. The [workspace] table below keeps this crate
+# out of the production Cargo workspace (same isolation pattern as
+# experiments/music-similarity-eval): no workspace membership, no
+# dependencies, no path dependencies on production crates.
+
+[workspace]
