@@ -733,6 +733,17 @@ new asset kind and a release-level vector surface — a separate product decisio
 **No client-side analysis.** The browser does not decode audio to compute
 descriptors.
 
+> **Built 2026-10-02 (Slice 5, ADR 0016).** The web consumption described
+> above is now implemented: `web/app/src/lib/api/client.ts`
+> (`similarityStatus`, `trackSimilar`), hand-written types in
+> `web/app/src/lib/api/types.ts`, a similarity store in
+> `web/app/src/lib/state/similarity.ts` with an explicit `unavailable` state,
+> and a `TrackSimilaritySection` on the track page. The track page has no
+> `?section=` mechanism (only the album page does), so the section renders
+> inline alongside the other track sections. Capability absence is an explicit
+> unavailable state, never an empty result (Slice 5 exit: explicit
+> stale/missing-result state).
+
 ## 6. Alternatives considered
 
 | Alternative | Reason rejected |

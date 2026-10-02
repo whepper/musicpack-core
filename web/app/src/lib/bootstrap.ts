@@ -7,6 +7,7 @@ import { ApiClient } from './api/client';
 import { bindSession, setOfflineContentProbe, type SessionStore } from './auth/session';
 import { browserCanPlay } from './playback/capability';
 import { createLibraryStore, type LibraryStore } from './state/library';
+import { createSimilarityStore, type SimilarityStore } from './state/similarity';
 import { createAudioPreferenceStore } from './state/preferences';
 import {
   createQueueStore,
@@ -29,6 +30,12 @@ import { repairingStorage } from './playback/duration-repair-storage';
 export const api = new ApiClient({});
 export const session: SessionStore = bindSession(api);
 export const library: LibraryStore = createLibraryStore(api);
+// Music Similarity (Slice 0, ADR 0017 §5.9): capability probe + per-track
+// similar-tracks fetch, with an explicit `unavailable` state.
+export const similarity: SimilarityStore = createSimilarityStore(api);
+// The per-track similar-tracks store, exported directly so components can
+// auto-subscribe with `$similarityTracks` (the `$offlineStates` pattern).
+export const similarityTracks = similarity.tracks;
 // Representation preference (Phase 4): persisted web-app setting; selection
 // happens only at itemForTrack() construction time.
 export const audioPreference = createAudioPreferenceStore();

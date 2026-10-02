@@ -12,7 +12,7 @@ SPDX-License-Identifier: BSD-3-Clause
   // This page OWNS: data loading, the play/queue actions, and navigation.
   // Derived facts live in `track-facts.ts`; the sections and the right
   // rail render from `ui/track/*` components.
-  import { api, library, player, playerModel, queue, audioPreference, offline, offlineStates, router } from '../bootstrap';
+  import { api, library, player, playerModel, queue, audioPreference, offline, offlineStates, router, similarity, similarityTracks } from '../bootstrap';
   import type { AudioPreference } from '../state/representation-selection';
   import type { ReleaseDetail, TrackDetail } from '../api/types';
   import Artwork from './Artwork.svelte';
@@ -34,6 +34,7 @@ SPDX-License-Identifier: BSD-3-Clause
   import TrackLyricsSection from './track/TrackLyricsSection.svelte';
   import TrackAudioSection from './track/TrackAudioSection.svelte';
   import TrackAnalysisSection from './track/TrackAnalysisSection.svelte';
+  import TrackSimilaritySection from './track/TrackSimilaritySection.svelte';
   import TrackMetadataSection from './track/TrackMetadataSection.svelte';
   import TrackPackageSection from './track/TrackPackageSection.svelte';
   import TrackRail from './track/TrackRail.svelte';
@@ -63,6 +64,11 @@ SPDX-License-Identifier: BSD-3-Clause
       // the library cache so a stale release JSON never lingers on this page.
       rel = await library.refreshRelease(d.context.releaseId);
       if (offline.enabled) void offline.checkForUpdate(rel);
+      // Music Similarity (Slice 0): capability probe, then per-track
+      // neighbours when available. Fired without awaiting so it never blocks
+      // the main track load; the section handles its own loading/unavailable
+      // states.
+      void similarity.loadForTrack(trackId);
     } catch (e) {
       error = e instanceof Error ? e.message : 'Could not open this track.';
     } finally {
@@ -231,6 +237,7 @@ SPDX-License-Identifier: BSD-3-Clause
 
         <TrackAudioSection {t} {repRows} />
         <TrackAnalysisSection {t} {rel} {facts} {gains} />
+        <TrackSimilaritySection state={$similarityTracks} />
         <TrackMetadataSection {t} {rel} {facts} />
         <TrackPackageSection {rel} {facts} {offlineChip} packageHref={goPackage} onNav={navSection} />
       </article>

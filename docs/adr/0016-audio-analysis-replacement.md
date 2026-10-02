@@ -846,6 +846,14 @@ offline. Never make a package profile trigger a download or model execution.
 
 **Exit:** API/UI tests and an explicit stale/missing-result state.
 
+**Status: BUILT 2026-10-02.** The web consumption is implemented in the
+`web/` frontend: API client methods (`similarityStatus`, `trackSimilar`),
+hand-written types, a similarity store with an explicit `unavailable` state,
+and a `TrackSimilaritySection` on the track page. The explicit
+stale/missing-result state is covered by unit tests (store) and an e2e test
+(track page unavailable state). Offline consumption remains a separate product
+decision (not added to the offline asset plan).
+
 ### Deferred model lane
 
 A learned model requires a separate ADR covering model/weights license,

@@ -94,3 +94,15 @@ test('the audio / package sections deep-link from the track inspector', async ({
   await expect(page.getByRole('heading', { name: 'Synthetic Test Compilation' })).toBeVisible();
   expect(page.url()).toContain('section=package');
 });
+
+test('the Similar tracks section shows an explicit unavailable state', async ({ page }) => {
+  const { title } = await openFirstTrack(page, 'Synthetic Test Compilation');
+  await expect(page.getByRole('heading', { name: title })).toBeVisible();
+
+  // The fixture library has no similarity index, so the section must show the
+  // explicit unavailable state — never an empty result that reads as "nothing
+  // is similar" (ADR 0016 Slice 5 exit: explicit stale/missing-result state).
+  const section = page.locator('.album-section', { hasText: 'Similar tracks' });
+  await expect(section).toBeVisible();
+  await expect(section).toContainText(/not available/i);
+});

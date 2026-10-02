@@ -293,3 +293,45 @@ export interface LibraryStatus {
     failed?: number;
   };
 }
+
+// ---- music similarity (Slice 0, ADR 0017 §5.8) ---------------------------
+
+/** One similarity set as the status surface reports it. */
+export interface SimilaritySetStatus {
+  profileId?: string;
+  profileFingerprint: string;
+  dimensions: number;
+  encoding: string;
+  vectorCount: number;
+  state: string;
+}
+
+/** `GET /api/v1/similarity/status` — the capability probe. `available` is
+ *  true only when at least one set is `active` and non-empty. */
+export interface SimilarityStatus {
+  available: boolean;
+  sets: SimilaritySetStatus[];
+}
+
+/** One ranked neighbour in a similar-tracks response. The `track` is the
+ *  existing `Track` resource embedded unchanged; `release` is a minimal
+ *  owning-release ref. `score` is a within-model cosine, `rank` is 1-based. */
+export interface SimilarTrack {
+  track: Track;
+  release: {
+    id: number;
+    title: string;
+    albumId: number;
+  };
+  score: number;
+  rank: number;
+}
+
+/** `GET /api/v1/tracks/{id}/similar` — ordered similar tracks from the
+ *  user's own collection. */
+export interface TrackSimilarResponse {
+  profileId?: string;
+  profileFingerprint: string;
+  count: number;
+  neighbors: SimilarTrack[];
+}

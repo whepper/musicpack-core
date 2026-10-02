@@ -10,8 +10,10 @@ import type {
   LibraryStatus,
   ReleaseDetail,
   SessionInfo,
+  SimilarityStatus,
   Track,
   TrackDetail,
+  TrackSimilarResponse,
 } from './types';
 
 export interface ApiClientOptions {
@@ -178,6 +180,29 @@ export class ApiClient {
 
   libraryStatus(): Promise<LibraryStatus> {
     return this.json('/api/v1/library/status');
+  }
+
+  // ---- music similarity (Slice 0, ADR 0017 §5.8) -------------------------
+
+  /** Capability probe. Always 200 — an empty index is a normal state
+   *  (`available: false`), never an error. */
+  similarityStatus(): Promise<SimilarityStatus> {
+    return this.json('/api/v1/similarity/status');
+  }
+
+  /** Ordered similar tracks for one track. `profile` is an optional 64-hex
+   *  fingerprint; omitted, it resolves to the single active non-empty set.
+   *  Capability absence is a 404 `similarity_unavailable` (mapped to a
+   *  typed `ApiError` by `json`). */
+  trackSimilar(
+    id: number | string,
+    params: { limit?: number; profile?: string } = {},
+  ): Promise<TrackSimilarResponse> {
+    const q = new URLSearchParams();
+    if (params.limit !== undefined) q.set('limit', String(params.limit));
+    if (params.profile) q.set('profile', params.profile);
+    const qs = q.toString();
+    return this.json(`/api/v1/tracks/${id}/similar${qs ? `?${qs}` : ''}`);
   }
 }
 

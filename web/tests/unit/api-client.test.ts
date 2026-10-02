@@ -279,4 +279,82 @@ describe('ApiClient', () => {
     const rel = await api.release(8);
     expect(rel.trackLyrics).toBeUndefined();
   });
+
+  it('similarityStatus parses the capability probe', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(200, {
+          available: true,
+          sets: [
+            {
+              profileId: 'musicpack-similarity-discogs-effnet-multi-v1',
+              profileFingerprint: 'ab'.repeat(32),
+              dimensions: 1280,
+              encoding: 'f32le',
+              vectorCount: 42,
+              state: 'active',
+            },
+          ],
+        }),
+      ),
+    );
+    const api = new ApiClient();
+    const status = await api.similarityStatus();
+    expect(status.available).toBe(true);
+    expect(status.sets).toHaveLength(1);
+    expect(status.sets[0]?.profileId).toBe('musicpack-similarity-discogs-effnet-multi-v1');
+    expect(status.sets[0]?.vectorCount).toBe(42);
+  });
+
+  it('trackSimilar requests the endpoint with limit and parses neighbours', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(200, {
+          profileId: 'musicpack-similarity-discogs-effnet-multi-v1',
+          profileFingerprint: 'ab'.repeat(32),
+          count: 1,
+          neighbors: [
+            {
+              track: {
+                id: 7,
+                number: 1,
+                title: 'Kind of Blue',
+                artists: [{ id: 1, name: 'Miles Davis' }],
+                codec: { codec: 'flac', mimeType: 'audio/flac' },
+                audio: { id: 7, size: 1, sha256: 'cd'.repeat(32), url: '/api/v1/tracks/7/audio' },
+              },
+              release: { id: 2, title: 'Kind of Blue', albumId: 2 },
+              score: 0.91,
+              rank: 1,
+            },
+          ],
+        }),
+      ),
+    );
+    const api = new ApiClient();
+    const res = await api.trackSimilar(30, { limit: 10 });
+    expect(res.count).toBe(1);
+    expect(res.neighbors[0]?.track.title).toBe('Kind of Blue');
+    expect(res.neighbors[0]?.score).toBeCloseTo(0.91);
+    expect(res.neighbors[0]?.rank).toBe(1);
+    const url = (vi.mocked(fetch).mock.calls[0]?.[0] as string) ?? '';
+    expect(url).toContain('/api/v1/tracks/30/similar?');
+    expect(url).toContain('limit=10');
+  });
+
+  it('trackSimilar maps a 404 similarity_unavailable to a typed ApiError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(
+        jsonResponse(404, { error: { code: 'similarity_unavailable', message: 'no similarity index available' } }),
+      ),
+    );
+    const api = new ApiClient();
+    await expect(api.trackSimilar(30)).rejects.toMatchObject({
+      code: 'similarity_unavailable',
+      status: 404,
+    });
+  });
 });
