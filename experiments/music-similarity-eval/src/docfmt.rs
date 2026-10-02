@@ -930,7 +930,10 @@ pub fn from_hex(text: &str) -> Option<Vec<u8>> {
     }
     let mut out = Vec::with_capacity(text.len() / 2);
     let bytes = text.as_bytes();
-    for pair in bytes.chunks_exact(2) {
+    // `as_chunks` (not `chunks_exact`): the length is already a multiple of 2,
+    // so the remainder is always empty. The newer stable clippy lint
+    // `chunks_exact_to_as_chunks` requires this form.
+    for pair in bytes.as_chunks::<2>().0 {
         let high = (pair[0] as char).to_digit(16)?;
         let low = (pair[1] as char).to_digit(16)?;
         out.push((high * 16 + low) as u8);
