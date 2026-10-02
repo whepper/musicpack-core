@@ -10,6 +10,17 @@ publish = false
 # Standalone research crate. The [workspace] table below keeps this crate
 # out of the production Cargo workspace (same isolation pattern as
 # experiments/music-similarity-eval): no workspace membership, no
-# dependencies, no path dependencies on production crates.
+# production code changes. Slice 2 adds two dependencies, both already
+# used by the production tree with identical versions:
+# - musicpack-core (path): read-only consumer of the existing audio
+#   decoder (`musicpack_core::audio`). Production code is not modified.
+# - rubato =0.16.2 (registry, MIT, pure Rust, no build script):
+#   experimental resampling policy, same version and feature set as
+#   `musicpack-author` (`fft_resampler`: FftFixedIn). MSRV 1.61,
+#   compatible with this crate's 1.85 floor.
 
 [workspace]
+
+[dependencies]
+musicpack-core = { path = "../.." }
+rubato = { version = "=0.16.2", default-features = false, features = ["fft_resampler"] }

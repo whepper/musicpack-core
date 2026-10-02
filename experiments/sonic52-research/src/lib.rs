@@ -20,6 +20,10 @@
 //!   unknown is labelled as unknown ([`PREPROCESSING_TABLE`],
 //!   [`Sonic52InputContract`]);
 //! - the future dimensionality-experiment ladder ([`DIMENSIONALITY_LADDER`]).
+//! - the Slice 1 deterministic H0 log-mel frontend ([`frontend`]), which
+//!   consumes caller-provided mono 16 kHz PCM and emits `[187, 96]`
+//!   research patches. The frontend performs no audio decoding,
+//!   resampling, or downmixing; those stay caller-side explicit choices.
 //!
 //! It must never gain a dependency on a production crate, a model runtime,
 //! or a model artifact. The one deliberate reuse relationship goes the
@@ -30,6 +34,17 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+/// Slice 5 corpus-scale research runner (manifests, ablation, timings).
+pub mod corpus;
+/// Slice 3 patch-level behavioural harness: layout, aggregation, digests.
+pub mod experiment;
+/// Slice 1 deterministic H0 log-mel frontend.
+pub mod frontend;
+/// Slice 2 real-audio ingestion: decode → sanitize → downmix → resample.
+pub mod ingest;
+/// Slice 4B tiny 52-D reference network (plumbing only, untrained).
+pub mod network;
 
 // ---------------------------------------------------------------------
 // profile identity
