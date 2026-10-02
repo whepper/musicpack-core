@@ -339,11 +339,14 @@ fn draft_isrcs(draft: &Draft) -> Vec<String> {
     let mut out = Vec::new();
     for disc in &draft.media {
         for track in &disc.tracks {
-            if let Some(id) = &track.identifiers
-                && let Some(isrc) = &id.isrc
-                && !isrc.is_empty()
-            {
-                out.push(isrc.clone());
+            // Nested `if`s, not a let-chain: `if let … && …` needs Rust 1.88 and this
+            // crate's MSRV is 1.85 (enforced by the `msrv` CI job).
+            if let Some(id) = &track.identifiers {
+                if let Some(isrc) = &id.isrc {
+                    if !isrc.is_empty() {
+                        out.push(isrc.clone());
+                    }
+                }
             }
         }
     }
@@ -366,10 +369,10 @@ pub fn match_confidence(
     let draft_id = asserted_mbid
         .map(str::to_string)
         .or_else(|| draft.identifiers.as_ref()?.musicbrainz_release_id.clone());
-    if let (Some(a), Some(b)) = (draft_id.as_deref(), release.id.as_deref())
-        && a == b
-    {
-        return Confidence::Exact;
+    if let (Some(a), Some(b)) = (draft_id.as_deref(), release.id.as_deref()) {
+        if a == b {
+            return Confidence::Exact;
+        }
     }
 
     let barcode_hit = draft
@@ -429,14 +432,15 @@ pub fn apply_release(draft: &mut Draft, release: &MbRelease, confidence: Confide
     if let Some(r) = release
         .release_type()
         .and_then(|t| musicpack_core::format::manifest::ReleaseType::parse(&t))
-        && draft.album.release_type.is_none()
     {
-        draft.album.release_type = Some(r);
+        if draft.album.release_type.is_none() {
+            draft.album.release_type = Some(r);
+        }
     }
-    if draft.album.title.is_empty()
-        && let Some(title) = &release.title
-    {
-        draft.album.title = title.clone();
+    if draft.album.title.is_empty() {
+        if let Some(title) = &release.title {
+            draft.album.title = title.clone();
+        }
     }
     if draft.album.original_release_date.is_none() {
         draft.album.original_release_date = release.first_release_date.clone();
@@ -481,11 +485,15 @@ pub fn apply_release(draft: &mut Draft, release: &MbRelease, confidence: Confide
             continue;
         };
         // Medium format hint (reference fills an empty disc format).
-        if disc.format.is_none()
-            && let Some(format) = &medium.format
-            && let Some(mf) = musicpack_core::format::manifest::MediumFormat::parse(format)
-        {
-            disc.format = Some(mf);
+        // Not a let-chain: `if let … && …` needs Rust 1.88; MSRV is 1.85.
+        if disc.format.is_none() {
+            let parsed = medium
+                .format
+                .as_deref()
+                .and_then(musicpack_core::format::manifest::MediumFormat::parse);
+            if let Some(mf) = parsed {
+                disc.format = Some(mf);
+            }
         }
         for track in &mut disc.tracks {
             let Some(candidate) = medium.tracks.iter().find(|t| t.number == track.number) else {
@@ -501,10 +509,10 @@ pub fn apply_release(draft: &mut Draft, release: &MbRelease, confidence: Confide
             if ids.musicbrainz_recording_id.is_none() {
                 ids.musicbrainz_recording_id = candidate.recording_id.clone();
             }
-            if track.title.is_empty()
-                && let Some(title) = &candidate.title
-            {
-                track.title = title.clone();
+            if track.title.is_empty() {
+                if let Some(title) = &candidate.title {
+                    track.title = title.clone();
+                }
             }
         }
     }

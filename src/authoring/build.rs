@@ -194,12 +194,14 @@ pub fn build_directory_with(
         ),
     })?;
 
-    if let Some(parent) = output.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        fs::create_dir_all(parent).map_err(|e| Error::Io {
-            detail: format!("cannot create '{}': {e}", parent.display()),
-        })?;
+    // Nested `if`, not a let-chain: `if let … && …` needs Rust 1.88 and this
+    // workspace's MSRV is 1.85 (enforced by the `msrv` CI job).
+    if let Some(parent) = output.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|e| Error::Io {
+                detail: format!("cannot create '{}': {e}", parent.display()),
+            })?;
+        }
     }
 
     let staging = staging_path(output);
@@ -517,13 +519,14 @@ fn validate_draft(draft: &AuthoringDraft) -> Result<(), Error> {
                 )));
             }
             for lyrics in &track.lyrics {
-                if let Some(lang) = &lyrics.lang
-                    && (lang.is_empty() || lang.chars().any(char::is_control))
-                {
-                    return Err(invalid(format!(
-                        "disc {} track {}: lyrics \"lang\" must be a non-empty string without control characters",
-                        disc.number, track.number
-                    )));
+                // Not a let-chain: `if let … && …` needs Rust 1.88; MSRV is 1.85.
+                if let Some(lang) = &lyrics.lang {
+                    if lang.is_empty() || lang.chars().any(char::is_control) {
+                        return Err(invalid(format!(
+                            "disc {} track {}: lyrics \"lang\" must be a non-empty string without control characters",
+                            disc.number, track.number
+                        )));
+                    }
                 }
             }
             paths.push(&track.audio.path);

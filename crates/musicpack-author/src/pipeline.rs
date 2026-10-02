@@ -357,12 +357,14 @@ fn run_inner(
             ),
         });
     }
-    if let Some(mpak) = &request.options.mpak
-        && mpak.exists()
-    {
-        return Err(AuthorError::Io {
-            detail: format!("output '{}' already exists", mpak.display()),
-        });
+    // Nested `if`, not a let-chain: `if let … && …` needs Rust 1.88 and this
+    // crate's MSRV is 1.85 (enforced by the `msrv` CI job).
+    if let Some(mpak) = &request.options.mpak {
+        if mpak.exists() {
+            return Err(AuthorError::Io {
+                detail: format!("output '{}' already exists", mpak.display()),
+            });
+        }
     }
 
     let works = WorkTree::create(request.output)?;
