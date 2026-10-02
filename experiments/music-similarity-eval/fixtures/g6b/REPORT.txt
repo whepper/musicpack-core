@@ -1,0 +1,80 @@
+# G-6B storage-path instrument check - surrogate, measurements only
+# NOT criteria evidence: the criteria were frozen in G6B_METHODOLOGY.md
+# before this artefact was generated, and the surrogate that motivated
+# the G-6A repair may never be used to evaluate them (same-data prohibition).
+corpus=surrogate (g6::Corpus, unchanged parameters)
+storage_path=f32 -> binary16 serialize -> binary16 decode -> cosine, BOTH operands
+cosine=eval::cosine ranking=eval::nearest aggregate=eval::aggregate_albums
+retrieval_k=1,5,10,12,20
+numerical_ceiling_context_only=9.765625e-4
+gate_evaluation=real-corpus only (same-data prohibition); this artefact carries measurements only
+
+[corpus:primary] dimension=1280 tracks=45 pairs=1980
+  symmetric_max_abs_delta_cosine=2.7827e-5  mean=6.7057e-6
+  mixed_max_abs_delta_cosine=1.8353e-5  (historical instrument; ratio sym/mixed=1.52)
+  min_cosine_reference=-0.076395817 min_cosine_stored=-0.076385580 sign_crossings=0
+  spearman_excluding_self=0.999999431 max_norm_deviation=2.1177e-5 new_ties=0
+  aggregate_cosine_min=1.000000000000e0 mean=1.000000000000e0 (report only)
+  profile_max_norm_deviation=2.0001e-9 max_subnormal_energy_fraction=9.0612e-9 storage_path_rejections=0 (B-C measurements, never gated here)
+  top1_changed_seeds=0
+  k=1  sequence_changed_seeds=0 min_boundary_margin=1.695e-4 max_boundary_population=2 (population within numerical ceiling: context)
+  k=5  sequence_changed_seeds=0 min_boundary_margin=1.353e-4 max_boundary_population=3 (population within numerical ceiling: context)
+  k=10 sequence_changed_seeds=0 min_boundary_margin=8.840e-5 max_boundary_population=4 (population within numerical ceiling: context)
+  k=12 sequence_changed_seeds=0 min_boundary_margin=1.179e-4 max_boundary_population=5 (population within numerical ceiling: context)
+  k=20 sequence_changed_seeds=0 min_boundary_margin=1.775e-5 max_boundary_population=6 (population within numerical ceiling: context)
+  albums=15 (aggregates recomputed per world from that world's stored vectors)
+  album k=12 sequence_changed_seeds=0 min_boundary_margin=2.608e-3 (album gate k)
+  album_top1_changed_seeds=0 album_reversals=0 (recorded unconditionally)
+  reversals=3 (recorded unconditionally; no exemption floor)
+    seed=25 a=00 b=02 ranks=(37,38) margin=1.428e-6 = 24.0 f32 ULPs
+    seed=25 a=07 b=08 ranks=(29,28) margin=2.491e-6 = 41.8 f32 ULPs
+    seed=37 a=05 b=13 ranks=(29,28) margin=1.185e-6 = 19.9 f32 ULPs
+
+[corpus:secondary] dimension=512 tracks=45 pairs=1980
+  symmetric_max_abs_delta_cosine=5.2296e-5  mean=1.0632e-5
+  mixed_max_abs_delta_cosine=3.4243e-5  (historical instrument; ratio sym/mixed=1.53)
+  min_cosine_reference=-0.132554457 min_cosine_stored=-0.132553250 sign_crossings=0
+  spearman_excluding_self=0.999999419 max_norm_deviation=3.1124e-5 new_ties=0
+  aggregate_cosine_min=1.000000000000e0 mean=1.000000000000e0 (report only)
+  profile_max_norm_deviation=3.7150e-9 max_subnormal_energy_fraction=3.1381e-9 storage_path_rejections=0 (B-C measurements, never gated here)
+  top1_changed_seeds=0
+  k=1  sequence_changed_seeds=0 min_boundary_margin=1.899e-3 max_boundary_population=1 (population within numerical ceiling: context)
+  k=5  sequence_changed_seeds=0 min_boundary_margin=1.406e-4 max_boundary_population=4 (population within numerical ceiling: context)
+  k=10 sequence_changed_seeds=0 min_boundary_margin=6.543e-5 max_boundary_population=4 (population within numerical ceiling: context)
+  k=12 sequence_changed_seeds=1 min_boundary_margin=2.618e-5 max_boundary_population=4 (population within numerical ceiling: context)
+  k=20 sequence_changed_seeds=1 min_boundary_margin=1.831e-5 max_boundary_population=7 (population within numerical ceiling: context)
+  albums=15 (aggregates recomputed per world from that world's stored vectors)
+  album k=12 sequence_changed_seeds=0 min_boundary_margin=2.683e-3 (album gate k)
+  album_top1_changed_seeds=0 album_reversals=0 (recorded unconditionally)
+  reversals=4 (recorded unconditionally; no exemption floor)
+    seed=04 a=06 b=36 ranks=(35,34) margin=3.677e-6 = 61.7 f32 ULPs
+    seed=08 a=14 b=21 ranks=(23,22) margin=2.507e-6 = 42.1 f32 ULPs
+    seed=18 a=00 b=04 ranks=(12,11) margin=2.618e-5 = 439.2 f32 ULPs
+    seed=30 a=18 b=32 ranks=(30,31) margin=3.840e-5 = 644.3 f32 ULPs
+
+[corpus:tiny] dimension=16 tracks=45 pairs=1980
+  symmetric_max_abs_delta_cosine=1.8090e-4  mean=4.6049e-5
+  mixed_max_abs_delta_cosine=1.4007e-4  (historical instrument; ratio sym/mixed=1.29)
+  min_cosine_reference=-0.271821439 min_cosine_stored=-0.271690220 sign_crossings=0
+  spearman_excluding_self=0.999999270 max_norm_deviation=1.8286e-4 new_ties=0
+  aggregate_cosine_min=1.000000000000e0 mean=1.000000000000e0 (report only)
+  profile_max_norm_deviation=2.5718e-8 max_subnormal_energy_fraction=0.0000e0 storage_path_rejections=0 (B-C measurements, never gated here)
+  top1_changed_seeds=0
+  k=1  sequence_changed_seeds=0 min_boundary_margin=1.909e-3 max_boundary_population=1 (population within numerical ceiling: context)
+  k=5  sequence_changed_seeds=0 min_boundary_margin=2.292e-4 max_boundary_population=3 (population within numerical ceiling: context)
+  k=10 sequence_changed_seeds=0 min_boundary_margin=4.232e-4 max_boundary_population=2 (population within numerical ceiling: context)
+  k=12 sequence_changed_seeds=0 min_boundary_margin=1.070e-4 max_boundary_population=3 (population within numerical ceiling: context)
+  k=20 sequence_changed_seeds=0 min_boundary_margin=2.486e-4 max_boundary_population=3 (population within numerical ceiling: context)
+  albums=15 (aggregates recomputed per world from that world's stored vectors)
+  album k=12 sequence_changed_seeds=0 min_boundary_margin=7.364e-4 (album gate k)
+  album_top1_changed_seeds=0 album_reversals=0 (recorded unconditionally)
+  reversals=3 (recorded unconditionally; no exemption floor)
+    seed=21 a=07 b=09 ranks=(26,25) margin=8.166e-6 = 137.0 f32 ULPs
+    seed=34 a=05 b=39 ranks=(21,20) margin=3.690e-5 = 619.0 f32 ULPs
+    seed=42 a=03 b=09 ranks=(32,31) margin=3.666e-5 = 615.0 f32 ULPs
+
+[ulp-flip-case] deterministic reproduction of the f32-resolvable ordering flip
+  found=true trials=1
+  dimension=1280 reference_margin=2.742e-6 = 46.0 f32 ULPs
+  reference_top1=t01 stored_top1=t02 (the presented answer changes)
+  margin vs old 2^-9 floor: 712.3x inside; f32 distinguishes the pair, f16 reverses it

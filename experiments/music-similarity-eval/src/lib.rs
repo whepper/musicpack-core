@@ -6,6 +6,15 @@ pub mod corpus;
 pub mod docfixtures;
 pub mod docfmt;
 pub mod eval;
+// The G-6 binary16-vs-binary32 experiment. Design-only, never production;
+// see `G6_F16.md`.
+pub mod g6;
+// G-6B: the corrected storage-path instrument for the future G-6 re-run.
+// Design-only, never production; see `G6B_METHODOLOGY.md`.
+pub mod g6b;
+// G-6B: real-corpus ingestion (recorded `embeddings.json`, digest-verified).
+// Design-only, never production; see `G6B_METHODOLOGY.md` §13/§18.
+pub mod g6b_real;
 pub mod mel;
 pub mod model;
 pub mod report;
@@ -20,6 +29,10 @@ pub mod worksheet;
 mod docfmt_tests;
 #[cfg(test)]
 mod docfmt_tlv_tests;
+#[cfg(test)]
+mod g6_tests;
+#[cfg(test)]
+mod g6b_tests;
 #[cfg(test)]
 mod selection_tests;
 #[cfg(test)]
